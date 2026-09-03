@@ -153,7 +153,7 @@ holds several rather than depending on filesystem order. A symlink counts becaus
 
 | Model | Resolution order |
 |---|---|
-| Agent | `$JENOVA_MODEL` if set → otherwise `models/agent/*.gguf` → otherwise `models/*.gguf` in the flat root → otherwise empty |
+| Agent | `$JENOVA_MODEL` if set → otherwise `models/agent/active.gguf` → otherwise `models/agent/*.gguf` → otherwise `models/*.gguf` in the flat root → otherwise empty |
 | Draft | `$JENOVA_DRAFT_MODEL` if set → otherwise `models/draft/*.gguf` → otherwise empty |
 | Embed | `$JENOVA_EMBED_MODEL` if set → otherwise `models/embed/*.gguf` → otherwise empty |
 
@@ -162,7 +162,16 @@ embedding model — if `models/draft/` and `models/embed/` are empty, those path
 empty string. A `.gguf.old` backup left by a model switch is not discovered, because it no longer
 ends in `.gguf`.
 
-`jenova-core models list` prints what discovery resolved.
+**`models/agent/active.gguf` is the exception to the alphabetical rule, and it is the point.**
+A switch always writes the link under that one name, so where a switch has run the slot is read by
+lookup and nothing else in the directory can change the answer. The alphabetical scan is the
+fallback for a slot no switch has written — an install predating the fixed name, or one you fill by
+hand. Before it, a second `.gguf` in `models/agent/` — dropped in yourself, or left behind by a
+cleanup that could not remove it — sorted ahead of the switched model and quietly became the model
+that ran.
+
+`jenova-core models list` prints what discovery resolved, following the link so it names the model
+rather than the slot.
 
 ### Discovery is not the same set the switcher offers
 
@@ -229,12 +238,14 @@ jenova-core models switch thinking
 ```
 
 It picks the alphabetically first `.gguf` in the target directory that is not a `.old` backup and
-symlinks it into `models/agent/` **by a relative path**, so the tree survives being moved. Whatever
-was active is preserved by renaming it to `.old` (or `.old.<n>` if that name is taken); an entry
-that already resolves to the same file is removed rather than backed up, since a second name for
-one file is pointless. The replacement link is built under a temporary name and its resolved target
-checked before anything active is touched, and the swap itself is a rename — so a failure part way
-leaves the old model in place, and no reader ever sees `models/agent/` without one.
+symlinks it to `models/agent/active.gguf` **by a relative path**, so the tree survives being moved.
+The link is always that name, never the model's own — which is what lets discovery read the slot by
+lookup. Whatever was active is preserved by renaming it to `.old` (or `.old.<n>` if that name is
+taken); an entry that already resolves to the same file is removed rather than backed up, since a
+second name for one file is pointless. The replacement link is built under a temporary name and its
+resolved target checked before anything active is touched, and the swap itself is a rename — so a
+failure part way leaves the old model in place, and no reader ever sees `models/agent/` without
+one.
 
 **Run headless, it does not restart the backend** — the window and tray do that for you. From the
 command line, follow it with `jenova-core backends restart`.

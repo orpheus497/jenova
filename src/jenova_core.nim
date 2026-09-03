@@ -185,9 +185,16 @@ proc main() =
       case sub
       of "list":
         let c = config.load(p)
-        echo "agent: ", c.get("MODEL_PATH")
-        echo "draft: ", c.get("MODEL_DRAFT")
-        echo "embed: ", c.get("MODEL_EMBED")
+        # The agent slot is a link under a fixed name, so printing the path
+        # would answer `active.gguf` and name no model. Resolving it is also
+        # what the operator wants for a link they made themselves.
+        proc resolved(path: string): string =
+          if path.len == 0 or not symlinkExists(path): path
+          else:
+            try: path.expandFilename except OSError: path
+        echo "agent: ", resolved(c.get("MODEL_PATH"))
+        echo "draft: ", resolved(c.get("MODEL_DRAFT"))
+        echo "embed: ", resolved(c.get("MODEL_EMBED"))
         quit(0)
       of "switch":
         if args.len < 3:
@@ -1907,7 +1914,7 @@ proc main() =
               rows.filterIt(it.name == "beta.gguf")[0].active == false)
 
         # Relative, not absolute — an absolute link works until the tree moves.
-        let link = expandSymlink(home / "models" / "agent" / "alpha.gguf")
+        let link = expandSymlink(home / "models" / "agent" / models.ActiveLink)
         check("the link target is relative", link.startsWith(".."), link)
 
         let beta = home / "models" / "thinking" / "beta.gguf"
@@ -1922,10 +1929,10 @@ proc main() =
         # the chain the USER saw only appears once a model is displaced twice, so
         # the assertion has to come back to where it started.
         check("switching does not leave a backup behind",
-              agentEntries() == @["beta.gguf"], $agentEntries())
+              agentEntries() == @[models.ActiveLink], $agentEntries())
         discard models.switchToPath(home, alpha)
         check("switching back leaves exactly one entry, still no backup",
-              agentEntries() == @["alpha.gguf"], $agentEntries())
+              agentEntries() == @[models.ActiveLink], $agentEntries())
         check("the round trip put the active flag back",
               models.available(home).filterIt(it.name == "alpha.gguf")[0].active)
 
@@ -1937,14 +1944,45 @@ proc main() =
         block activeSlotIsNotASource:
           var refused = false
           try:
-            discard models.switchToPath(home, home / "models" / "agent" / "alpha.gguf")
+            discard models.switchToPath(
+              home, home / "models" / "agent" / models.ActiveLink)
           except ModelError:
             refused = true
           check("a model already in the active slot is refused", refused)
           check("and the switch that was there is untouched",
-                agentEntries() == @["alpha.gguf"], $agentEntries())
+                agentEntries() == @[models.ActiveLink], $agentEntries())
           check("and it still resolves to a real file",
-                fileExists(expandFilename(home / "models" / "agent" / "alpha.gguf")))
+                fileExists(expandFilename(
+                  home / "models" / "agent" / models.ActiveLink)))
+
+        # Action purpose: the defect the fixed link name exists for. A second
+        # `.gguf` in the slot — dropped in by hand, or left by a cleanup that
+        # could not clear it — sorted ahead of the switched one and became the
+        # model that ran, while the switch had already reported success.
+        block aSecondEntryDoesNotOverrideTheSwitch:
+          let intruder = home / "models" / "agent" / "aaa-first.gguf"
+          createSymlink("../thinking/beta.gguf", intruder)
+          check("discovery still answers the active link, not the earlier name",
+                models.agentModel(home / "models" / "agent") ==
+                  home / "models" / "agent" / models.ActiveLink,
+                models.agentModel(home / "models" / "agent"))
+          check("and it still resolves to the switched model",
+                models.activeAgentPath(home) == expandFilename(alpha),
+                models.activeAgentPath(home))
+          removeFile(intruder)
+
+        # A slot no switch has written keeps the collation rule, because that is
+        # all an install predating the fixed name has.
+        block theFallbackStillReadsAHandMadeSlot:
+          let spare = getTempDir() / "jenova-models-legacy"
+          removeDir(spare)
+          createDir(spare)
+          writeFile(spare / "zulu.gguf", "z")
+          writeFile(spare / "alpha.gguf", "a")
+          check("without an active link the first in collation order wins",
+                models.agentModel(spare) == spare / "alpha.gguf",
+                models.agentModel(spare))
+          removeDir(spare)
 
 
         # The other side of the same rule: a real `.gguf` the user dropped into

@@ -100,13 +100,13 @@ echo "test_models: switching"
     ln -s ../thinking/qwen-thinking.gguf qwen-thinking.gguf)
 
 "$CORE" models switch instruct >/dev/null 2>&1
-assert_eq "switch installs the target as a symlink" \
-    "$(readlink "$SCRATCH/models/agent/qwen-instruct.gguf" 2>/dev/null)" \
+assert_eq "switch installs the target under the fixed active name" \
+    "$(readlink "$SCRATCH/models/agent/active.gguf" 2>/dev/null)" \
     "../instruct/qwen-instruct.gguf"
 
 # The link target must be RELATIVE. An absolute one works until the tree is
 # moved or deployed, and then silently points outside it.
-case "$(readlink "$SCRATCH/models/agent/qwen-instruct.gguf" 2>/dev/null)" in
+case "$(readlink "$SCRATCH/models/agent/active.gguf" 2>/dev/null)" in
     /*) fail "link target is relative, not absolute" ;;
     ../*) pass "link target is relative, not absolute" ;;
     *) fail "link target is relative, not absolute" "unexpected form" ;;
@@ -144,19 +144,33 @@ rm -f "$SCRATCH/models/agent/manual.gguf.old"
 
 # A .old backup must never be selected as the active model, or a switch would
 # resurrect the model it just replaced.
+# `models list` resolves the link, so this names the source file rather than
+# repeating the slot's fixed name. `pwd -P` because the resolution is
+# `expandFilename`, and a symlinked /tmp would otherwise fail this on the path
+# rather than on the behaviour.
+INSTRUCT_REAL=$(cd "$SCRATCH/models/instruct" && pwd -P)
 out=$("$CORE" models list 2>&1)
 assert_eq "a .old backup is not discovered as the agent model" \
     "$(printf '%s\n' "$out" | awk '/^agent:/{print $2}')" \
-    "$SCRATCH/models/agent/qwen-instruct.gguf"
+    "$INSTRUCT_REAL/qwen-instruct.gguf"
+
+# Action purpose: the switch above reported qwen-instruct. A second entry that
+# sorts ahead of it used to become the model that actually ran.
+ln -s ../thinking/qwen-thinking.gguf "$SCRATCH/models/agent/aaa-first.gguf"
+out=$("$CORE" models list 2>&1)
+assert_eq "a second entry in the slot does not override the switch" \
+    "$(printf '%s\n' "$out" | awk '/^agent:/{print $2}')" \
+    "$INSTRUCT_REAL/qwen-instruct.gguf"
+rm -f "$SCRATCH/models/agent/aaa-first.gguf"
 
 # Switching to the same target twice: the existing entry already resolves to the
 # target, so it is removed rather than preserved. Without this the directory
 # accumulates a .old per switch for a file that never changed.
 "$CORE" models switch instruct >/dev/null 2>&1
-n_old=$(find "$SCRATCH/models/agent" -name 'qwen-instruct.gguf.old*' 2>/dev/null | wc -l | tr -d ' ')
+n_old=$(find "$SCRATCH/models/agent" -name '*.old*' 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "re-switching to the same model leaves no redundant .old" "$n_old" "0"
 assert_eq "re-switching leaves the target active" \
-    "$(readlink "$SCRATCH/models/agent/qwen-instruct.gguf" 2>/dev/null)" \
+    "$(readlink "$SCRATCH/models/agent/active.gguf" 2>/dev/null)" \
     "../instruct/qwen-instruct.gguf"
 
 echo "test_models: refusals"
