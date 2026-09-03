@@ -16,12 +16,16 @@ native widgets exist.
 | | Available | Used by `gui.nim` |
 |---|---|---|
 | `owlkettle/widgets.nim` renderables | **62** | — |
-| `owlkettle/adw.nim` renderables | **23** | — |
-| **Total** | **85** | **18 distinct types** |
+| `owlkettle/adw.nim` renderables | **21** | — |
+| **Total** | **83** | **18 distinct types** |
+
+> **Corrected, session 7.** The adw figure was 23. `grep -c "renderable [A-Z]"
+> owlkettle/adw.nim` at `v3.0.0` returns **21**, guarded declarations included. The
+> conclusion is unchanged; the number is not.
 
 Of ~160 widget instances in `gui.nim`, **130 are `Button` (72) or `Label` (58)**.
 
-That ratio is the finding. A native toolkit offering 85 widgets is being used as though it
+That ratio is the finding. A native toolkit offering 83 widgets is being used as though it
 offered two, with structure expressed through nested `Box`es and CSS classes. It is a web
 document tree rendered by GTK.
 
@@ -43,12 +47,19 @@ widget guarded `{.since: AdwVersion >= (1, x).}` does not exist in the binary:
 | Widget | Since | What it is |
 |---|---|---|
 | `OverlaySplitView` | 1.4 | The modern adaptive sidebar. **The window uses `Flap` instead** |
-| `ToolbarView` | 1.4 | Header/content/footer layout with correct adaptive styling |
 | `SwitchRow` | 1.4 | A labelled switch row — the native settings primitive |
 | `EntryRow` | 1.2 | A labelled text-entry row |
 | `PasswordEntryRow` | 1.2 | Ditto, masked |
-| `Banner` | 1.3 | Inline dismissable message strip |
+| `Banner` | 1.3 | Inline message strip with an optional button |
 | `AboutWindow` | 1.2 | The standard About dialog |
+
+> **Corrected, session 7. `ToolbarView` was listed here and does not exist.** It is
+> not gated by `AdwVersion` — it is absent from owlkettle 3.0.0 altogether:
+> `grep -rn ToolbarView owlkettle/` returns nothing, in `adw.nim` and in
+> `bindings/adw.nim` alike. The six above are real, and every one of them is now in
+> the binary: `-d:adwminor=4` is set in `jenova_core.nimble` and `Banner` is in use
+> in `gui.nim`'s chat column. The guards are `when AdwVersion >= (1, x) or
+> defined(owlkettleDocs)` at `adw.nim:488`, `:714`, `:1061`, `:1251`, `:1281`.
 
 Plus **13 individual properties** on widgets that do compile, among them `StatusPage.description`
 (1.4), `ActionRow.titleLines`/`subtitleLines` (1.3), `ButtonContent.canShrink` (1.4).
@@ -92,9 +103,9 @@ the right widget, not a bigger lid.
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
 | Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
-| Transient notification | `ToastOverlay` | A one-line notice label |
-| Empty states | `StatusPage` | A dim `Label` |
-| Inline messages | `Banner` | — |
+| Transient notification | `ToastOverlay` — **absent from owlkettle, see below** | A one-line notice label |
+| Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
+| Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
 | Menus | `PopoverMenu`, `ModelButton`, `ContextMenu` | 1 `Popover`, 1 `MenuButton` |
 | Split primary action | `SplitButton` | Two buttons |
@@ -120,9 +131,30 @@ Where owlkettle lacks a widget, you declare one. `owlkettle.nim:25` exports `wid
 **"owlkettle does not have widget X" is therefore never a wall.** It is roughly forty lines of
 `renderable` plus `importc`, and the author has written it four times already.
 
-What owlkettle genuinely does not expose (verified absent from `adw.nim`): `NavigationView`,
-`TabView`, `AdwDialog`/`AlertDialog`, `BottomSheet`. All are reachable by the same hatch if
-wanted; none is needed for the plan below.
+What owlkettle genuinely does not expose (verified absent from `owlkettle/` entirely at
+`v3.0.0` — `adw.nim` and `bindings/adw.nim` both): `NavigationView`, `TabView`,
+`AdwDialog`/`AlertDialog`, `BottomSheet`, **`ToolbarView`**, **`ToastOverlay` and `Toast`**, and
+**`BreakpointBin`**/`AdwBreakpoint`. All are reachable by the same hatch if wanted.
+
+**The last three are needed by the plan, and were listed as though they were available:**
+
+* `ToolbarView` — report 05's Phase 3 and §2 above both named it. It is not gated; it is not
+  there. Its job (header / content / footer with adaptive styling) is what `gui.nim`'s chat
+  column does with a `Box`, so nothing is broken — but "switch to `ToolbarView`" is a binding
+  job, not a substitution.
+* `ToastOverlay` — report 05's Phase 3 assigns **P-B1** (the error surface) to it. There is no
+  `adw_toast_*` symbol anywhere in owlkettle's bindings, so this is ~50 lines of `renderable`
+  plus five `importc`s, and it has one design problem to solve first that the other widgets do
+  not: **a toast is an event, and a `renderable` property is a state.** Firing one on every
+  redraw whose `notice` is non-empty would raise a toast per frame; firing only on change loses
+  the second of two identical messages. Whatever carries it needs a serial, not just a string.
+* `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
+  folds itself on a narrow window through `FlapFoldAuto`, which is what
+  `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that
+  something must drive, and the something libadwaita intends is a breakpoint on the window.
+  **Swapping the two without binding it trades a deprecated widget for a sidebar that no longer
+  adapts** — so that item is larger than "replacing `Flap`" suggests, and should be planned as
+  the pair.
 
 ---
 
