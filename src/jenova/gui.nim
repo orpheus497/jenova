@@ -3616,100 +3616,109 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
 ## `viewItem` hands back exactly this for one index.
 proc messageCard(app: AppState, i: int, m: Message): Widget =
   gui:
-    Frame:
-      # a system turn is neither the user's nor the model's, and
-      # labelling it "JENOVA" is the visible half of presenting the
-      # persona as something the model said. The Web UI draws it as
-      # its own kind (`ChatMessageSystem.svelte`) and so does this.
-      style = [StyleClass("msg-card"),
-               StyleClass(case m.role
-                          of rUser: "msg-user"
-                          of rSystem: "msg-system"
-                          else: "msg-agent")]
-      Box(orient = OrientY, spacing = 4, margin = 10):
-        # `Avatar` beside the name, which is the GNOME idiom for "who said
-        # this" and what report 06 §4 lists this row as doing without. It is
-        # `iconName`-driven rather than `showInitials`: initials of "JENOVA"
-        # and "YOU" would be a J and a Y, which say less than a face and a
-        # spark do, and a system turn is neither a person nor the model.
-        #
-        # The name stays. An avatar alone identifies a speaker only to someone
-        # who has already learnt the three icons, and the roles here are not
-        # people whose faces one knows.
-        Box(orient = OrientX, spacing = 8) {.expand: false.}:
-          Avatar {.expand: false, vAlign: AlignCenter.}:
-            size = 20
-            showInitials = false
-            iconName = (case m.role
-                        of rUser: "avatar-default-symbolic"
-                        of rSystem: "emblem-system-symbolic"
-                        else: "starred-symbolic")
-          Label {.expand: true.}:
-            text = (case m.role
-                    of rUser: "YOU"
-                    of rSystem: "SYSTEM"
-                    else: "JENOVA")
-            xAlign = 0.0
-            style = [StyleClass("msg-role"),
-                     StyleClass(case m.role
-                                of rUser: "msg-role-user"
-                                of rSystem: "msg-role-system"
-                                else: "msg-role-agent")]
-        # Editing varies what is *inside* the card, never the card's
-        # own type — the swap happens among a `Box`'s children, which
-        # is the one place owlkettle handles a child changing type.
-        if app.editingMsg.len > 0 and app.editingMsg == m.id:
-          # A TextView owns a TextBuffer rather than a string, so the
-          # edit is driven from `app.editBuffer` and read back on save,
-          # exactly as the note editor is and for the same reason.
-          TextView {.expand: false.}:
-            buffer = app.editBuffer
-          Box(orient = OrientX, spacing = 4) {.expand: false.}:
-            Button {.expand: false.}:
-              text = "Save"
-              style = [ButtonSuggested, StyleClass("row-btn")]
-              proc clicked() = app.saveEdit()
-            Button {.expand: false.}:
-              text = "Cancel"
-              style = [ButtonFlat, StyleClass("row-btn")]
-              proc clicked() = app.cancelEdit()
-        else:
-          # the model's reasoning, above the answer and folded
-          # away. It defaults open only while this turn is streaming
-          # — a reasoning model can think for a long time before its
-          # first answer token, and a collapsed box during that silence
-          # looks like nothing is happening. Once the reply lands the
-          # default flips back to closed, so a finished transcript is
-          # answers rather than working-out, unless the reader said
-          # otherwise by clicking.
-          if m.thinking.len > 0:
-            Expander {.expand: false.}:
-              label = "Reasoning"
-              # Open while this turn is streaming, and open whenever
-              # the answer is empty — a reasoning model can put its
-              # entire reply in `reasoning_content`, and a collapsed box
-              # above an empty card is indistinguishable from the model
-              # having said nothing.
-              # The third case is a setting: `showThoughtInProgress`
-              # makes open-while-generating the standing default
-              # rather than something the reader re-opens each turn.
-              expanded = app.expanded.getOrDefault(
-                "think:" & (if m.id.len > 0: m.id else: "live"),
-                m.text.len == 0 or
-                app.opts.getBool("showThoughtInProgress") or
-                (app.streaming and i == app.messages.len - 1))
-              proc activate(on: bool) =
-                app.expanded["think:" & (if m.id.len > 0: m.id
-                                         else: "live")] = on
-              Label:
-                text = m.thinking
-                xAlign = 0.0
-                wrap = true
-                margin = 6
-                style = [StyleClass("dim-note")]
-          insert(app.messageBody(m)) {.expand: false.}
-          insert(app.messageStats(i, m)) {.expand: false.}
-          insert(app.messageActions(i, m)) {.expand: false.}
+    # **The clamp is per card, not around the transcript**, and that is forced
+    # by the `ListView` below: a `GtkListView` virtualises only when it is the
+    # `GtkScrolledWindow`'s own child, because that is how the scrolled window
+    # finds a `GtkScrollable` to delegate to. A `Clamp` in between is an
+    # ordinary bin, so the list would be given unbounded height inside a
+    # viewport and would build every row after all. Clamping each row instead
+    # puts the reading-width column back with the list still virtualised.
+    Clamp:
+      maximumSize = 760
+      Frame:
+        # a system turn is neither the user's nor the model's, and
+        # labelling it "JENOVA" is the visible half of presenting the
+        # persona as something the model said. The Web UI draws it as
+        # its own kind (`ChatMessageSystem.svelte`) and so does this.
+        style = [StyleClass("msg-card"),
+                 StyleClass(case m.role
+                            of rUser: "msg-user"
+                            of rSystem: "msg-system"
+                            else: "msg-agent")]
+        Box(orient = OrientY, spacing = 4, margin = 10):
+          # `Avatar` beside the name, which is the GNOME idiom for "who said
+          # this" and what report 06 §4 lists this row as doing without. It is
+          # `iconName`-driven rather than `showInitials`: initials of "JENOVA"
+          # and "YOU" would be a J and a Y, which say less than a face and a
+          # spark do, and a system turn is neither a person nor the model.
+          #
+          # The name stays. An avatar alone identifies a speaker only to someone
+          # who has already learnt the three icons, and the roles here are not
+          # people whose faces one knows.
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Avatar {.expand: false, vAlign: AlignCenter.}:
+              size = 20
+              showInitials = false
+              iconName = (case m.role
+                          of rUser: "avatar-default-symbolic"
+                          of rSystem: "emblem-system-symbolic"
+                          else: "starred-symbolic")
+            Label {.expand: true.}:
+              text = (case m.role
+                      of rUser: "YOU"
+                      of rSystem: "SYSTEM"
+                      else: "JENOVA")
+              xAlign = 0.0
+              style = [StyleClass("msg-role"),
+                       StyleClass(case m.role
+                                  of rUser: "msg-role-user"
+                                  of rSystem: "msg-role-system"
+                                  else: "msg-role-agent")]
+          # Editing varies what is *inside* the card, never the card's
+          # own type — the swap happens among a `Box`'s children, which
+          # is the one place owlkettle handles a child changing type.
+          if app.editingMsg.len > 0 and app.editingMsg == m.id:
+            # A TextView owns a TextBuffer rather than a string, so the
+            # edit is driven from `app.editBuffer` and read back on save,
+            # exactly as the note editor is and for the same reason.
+            TextView {.expand: false.}:
+              buffer = app.editBuffer
+            Box(orient = OrientX, spacing = 4) {.expand: false.}:
+              Button {.expand: false.}:
+                text = "Save"
+                style = [ButtonSuggested, StyleClass("row-btn")]
+                proc clicked() = app.saveEdit()
+              Button {.expand: false.}:
+                text = "Cancel"
+                style = [ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.cancelEdit()
+          else:
+            # the model's reasoning, above the answer and folded
+            # away. It defaults open only while this turn is streaming
+            # — a reasoning model can think for a long time before its
+            # first answer token, and a collapsed box during that silence
+            # looks like nothing is happening. Once the reply lands the
+            # default flips back to closed, so a finished transcript is
+            # answers rather than working-out, unless the reader said
+            # otherwise by clicking.
+            if m.thinking.len > 0:
+              Expander {.expand: false.}:
+                label = "Reasoning"
+                # Open while this turn is streaming, and open whenever
+                # the answer is empty — a reasoning model can put its
+                # entire reply in `reasoning_content`, and a collapsed box
+                # above an empty card is indistinguishable from the model
+                # having said nothing.
+                # The third case is a setting: `showThoughtInProgress`
+                # makes open-while-generating the standing default
+                # rather than something the reader re-opens each turn.
+                expanded = app.expanded.getOrDefault(
+                  "think:" & (if m.id.len > 0: m.id else: "live"),
+                  m.text.len == 0 or
+                  app.opts.getBool("showThoughtInProgress") or
+                  (app.streaming and i == app.messages.len - 1))
+                proc activate(on: bool) =
+                  app.expanded["think:" & (if m.id.len > 0: m.id
+                                           else: "live")] = on
+                Label:
+                  text = m.thinking
+                  xAlign = 0.0
+                  wrap = true
+                  margin = 6
+                  style = [StyleClass("dim-note")]
+            insert(app.messageBody(m)) {.expand: false.}
+            insert(app.messageStats(i, m)) {.expand: false.}
+            insert(app.messageActions(i, m)) {.expand: false.}
 
 ## Function purpose: the fullscreen control, and it lives in the bottom action
 ## row rather than the HeaderBar because GTK4 hides a titlebar set through
@@ -3945,156 +3954,174 @@ proc mainArea(app: AppState): Widget =
         # reader left it.
         AutoScroll {.expand: true.}:
           pin = app.streaming and not app.opts.getBool("disableAutoScroll")
-          # `Clamp` is libadwaita's reading-width column, and the transcript is
-          # what it is for: on a maximised window a message card stretched the
-          # full width and a reply became one line of eight hundred pixels,
-          # which is the width nothing is comfortable to read at. It caps the
-          # content and centres it, leaving the *scroller* full width so the
-          # scrollbar stays on the window edge where it belongs.
+          # **Three shapes, and the scroller's child is whichever one applies.**
+          # A `GtkListView` virtualises only when it is the scrolled window's
+          # own child: that is how a `GtkScrolledWindow` finds a
+          # `GtkScrollable` to hand its adjustments to. Put anything in
+          # between — the `Clamp` that used to be here, or a `Box` holding the
+          # note editor beside the transcript — and the list is measured inside
+          # a viewport with unbounded height, so it builds every row and the
+          # virtualisation is silently gone.
           #
-          # 760 is the Web UI's own measure — `max-w-3xl` on its message list
-          # (`ChatMessages.svelte`), which is 48rem at its 16px root. Below that
-          # width the clamp is inert and the column behaves exactly as it did.
-          Clamp:
-            maximumSize = 760
-            Box(orient = OrientY, spacing = 12, margin = 16):
-              if app.openNote.len > 0:
-                Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                  # 8c-3: the title is a heading while reading and a field while
-                  # editing, which is the Web UI's own split. The two are
-                  # different widget types, so owlkettle rebuilds rather than
-                  # reusing state — the safe direction, and the reason the mode
-                  # switch cannot carry a half-updated `Entry` into a `Label`.
+          # So the branch is here rather than inside a wrapper, and the reading
+          # width moves into `messageCard`, which clamps each row instead.
+          # `AutoScroll`'s child hook is `updateChild` over a real setter, so a
+          # child changing type between these three is built and swapped rather
+          # than asserted against — the hazard `mainArea` documents for `Paned`
+          # does not apply to a `ScrolledWindow`.
+          if app.openNote.len > 0:
+            # The note editor keeps its own clamp: it is one document, not a
+            # list, and there is nothing here to virtualise.
+            Clamp:
+              maximumSize = 760
+              Box(orient = OrientY, spacing = 12, margin = 16):
+                  Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                    # 8c-3: the title is a heading while reading and a field while
+                    # editing, which is the Web UI's own split. The two are
+                    # different widget types, so owlkettle rebuilds rather than
+                    # reusing state — the safe direction, and the reason the mode
+                    # switch cannot carry a half-updated `Entry` into a `Label`.
+                    if app.noteEditing:
+                      Entry {.expand: true.}:
+                        text = app.noteTitle
+                        placeholder = "Note title"
+                        proc changed(text: string) = app.noteTitle = text
+                    else:
+                      Label {.expand: true.}:
+                        text = (if app.noteTitle.len > 0: app.noteTitle
+                                else: "Untitled note")
+                        xAlign = 0.0
+                        ellipsize = EllipsizeEnd
+                        style = [StyleClass("brand")]
+                    # the only way to mark a note FOCUS from this window. The
+                    # flag has existed in the schema since it was written and
+                    # `workspace.contextFor` has given it the escape behaviour since
+                    # a FOCUS note reaches every chat in the workspace tree
+                    # rather than only its own level — and until now it could
+                    # be set from nowhere but another client, which is not parity.
+                    # `view-pin-symbolic` is the metaphor the Web UI's own note
+                    # header uses.
+                    #
+                    # It is here and not in the button row below. That was once
+                    # load-bearing: the row held the program's only
+                    # shortcut-carrying button, and owlkettle's `Button.shortcut`
+                    # asserts its value never changes, so a fourth child shifted the
+                    # shortcut onto another button's state and aborted the
+                    # process on opening a note. No button carries a shortcut any
+                    # more — they all live on the window's own controller — so the
+                    # placement is now only a layout choice.
+                    ToggleButton {.expand: false.}:
+                      icon = "view-pin-symbolic"
+                      state = app.noteFocus
+                      tooltip = (if app.noteFocus:
+                                   "FOCUS note: applies across the whole workspace. " &
+                                   "Click to make it a normal note, then Save"
+                                 else:
+                                   "Make this a FOCUS note — a rule the model sees " &
+                                   "in every chat in this workspace. Save to apply")
+                      style = [ButtonFlat]
+                      proc changed(state: bool) = app.noteFocus = state
+                    # 8c-3: one button, two labels — the mode switch. A second
+                    # conditional widget here would be free (nothing in this Box
+                    # carries a shortcut), but one button that says what it does is
+                    # clearer than two that swap places.
+                    Button {.expand: false.}:
+                      text = (if app.noteEditing: "Cancel" else: "Edit")
+                      style = [ButtonFlat]
+                      tooltip = (if app.noteEditing:
+                                   "Discard these changes and go back to reading"
+                                 else: "Edit this note")
+                      proc clicked() =
+                        if app.noteEditing: app.cancelNoteEdit()
+                        else: app.noteEditing = true
+                    # 8c-5: delete over the same confirmation every other delete in
+                    # this window uses, which names the cascade.
+                    #
+                    # A FOCUS note is refused rather than hidden. The Web UI
+                    # omits the button entirely; a disabled one with the reason on
+                    # it says why, and a control that vanishes reads as a bug. The
+                    # protection is the same: a workspace-wide rule should not go in
+                    # one click from the note it happens to be written in.
+                    Button {.expand: false.}:
+                      icon = "user-trash-symbolic"
+                      style = [ButtonFlat, StyleClass("row-btn")]
+                      sensitive = not app.noteFocus
+                      tooltip = (if app.noteFocus:
+                                   "Un-pin this note before deleting it — it is a " &
+                                   "FOCUS rule for the whole workspace"
+                                 else: "Delete this note")
+                      proc clicked() =
+                        let id = app.openNote
+                        app.deleteNode("notes", id)
                   if app.noteEditing:
-                    Entry {.expand: true.}:
-                      text = app.noteTitle
-                      placeholder = "Note title"
-                      proc changed(text: string) = app.noteTitle = text
-                  else:
-                    Label {.expand: true.}:
-                      text = (if app.noteTitle.len > 0: app.noteTitle
-                              else: "Untitled note")
+                    # A TextView owns a TextBuffer rather than a string, so it is
+                    # driven from `app.noteBuffer` and read back on save — it
+                    # cannot be bound to state per redraw the way an Entry is.
+                    TextView:
+                      buffer = app.noteBuffer
+                  elif app.noteOrigContent.len == 0:
+                    # 8c-6: an empty note says so. A blank pane is indistinguishable
+                    # from a note that failed to load.
+                    Label {.expand: false.}:
+                      text = "This note is empty. Click Edit to write in it."
                       xAlign = 0.0
-                      ellipsize = EllipsizeEnd
-                      style = [StyleClass("brand")]
-                  # the only way to mark a note FOCUS from this window. The
-                  # flag has existed in the schema since it was written and
-                  # `workspace.contextFor` has given it the escape behaviour since
-                  # a FOCUS note reaches every chat in the workspace tree
-                  # rather than only its own level — and until now it could
-                  # be set from nowhere but another client, which is not parity.
-                  # `view-pin-symbolic` is the metaphor the Web UI's own note
-                  # header uses.
-                  #
-                  # It is here and not in the button row below. That was once
-                  # load-bearing: the row held the program's only
-                  # shortcut-carrying button, and owlkettle's `Button.shortcut`
-                  # asserts its value never changes, so a fourth child shifted the
-                  # shortcut onto another button's state and aborted the
-                  # process on opening a note. No button carries a shortcut any
-                  # more — they all live on the window's own controller — so the
-                  # placement is now only a layout choice.
-                  ToggleButton {.expand: false.}:
-                    icon = "view-pin-symbolic"
-                    state = app.noteFocus
-                    tooltip = (if app.noteFocus:
-                                 "FOCUS note: applies across the whole workspace. " &
-                                 "Click to make it a normal note, then Save"
-                               else:
-                                 "Make this a FOCUS note — a rule the model sees " &
-                                 "in every chat in this workspace. Save to apply")
-                    style = [ButtonFlat]
-                    proc changed(state: bool) = app.noteFocus = state
-                  # 8c-3: one button, two labels — the mode switch. A second
-                  # conditional widget here would be free (nothing in this Box
-                  # carries a shortcut), but one button that says what it does is
-                  # clearer than two that swap places.
-                  Button {.expand: false.}:
-                    text = (if app.noteEditing: "Cancel" else: "Edit")
-                    style = [ButtonFlat]
-                    tooltip = (if app.noteEditing:
-                                 "Discard these changes and go back to reading"
-                               else: "Edit this note")
-                    proc clicked() =
-                      if app.noteEditing: app.cancelNoteEdit()
-                      else: app.noteEditing = true
-                  # 8c-5: delete over the same confirmation every other delete in
-                  # this window uses, which names the cascade.
-                  #
-                  # A FOCUS note is refused rather than hidden. The Web UI
-                  # omits the button entirely; a disabled one with the reason on
-                  # it says why, and a control that vanishes reads as a bug. The
-                  # protection is the same: a workspace-wide rule should not go in
-                  # one click from the note it happens to be written in.
-                  Button {.expand: false.}:
-                    icon = "user-trash-symbolic"
-                    style = [ButtonFlat, StyleClass("row-btn")]
-                    sensitive = not app.noteFocus
-                    tooltip = (if app.noteFocus:
-                                 "Un-pin this note before deleting it — it is a " &
-                                 "FOCUS rule for the whole workspace"
-                               else: "Delete this note")
-                    proc clicked() =
-                      let id = app.openNote
-                      app.deleteNode("notes", id)
-                if app.noteEditing:
-                  # A TextView owns a TextBuffer rather than a string, so it is
-                  # driven from `app.noteBuffer` and read back on save — it
-                  # cannot be bound to state per redraw the way an Entry is.
-                  TextView:
-                    buffer = app.noteBuffer
-                elif app.noteOrigContent.len == 0:
-                  # 8c-6: an empty note says so. A blank pane is indistinguishable
-                  # from a note that failed to load.
-                  Label {.expand: false.}:
-                    text = "This note is empty. Click Edit to write in it."
-                    xAlign = 0.0
-                    style = [StyleClass("dim-note")]
+                      style = [StyleClass("dim-note")]
+                  else:
+                    # 8c-3: rendered through the transcript's own block renderer, so
+                    # a note's tables, code blocks and emphasis look exactly as they
+                    # do in a reply rather than nearly so.
+                    #
+                    # Action purpose: the source is `noteOrigContent`, not
+                    # `noteBuffer.text()`, and that is the Step 7c rule rather than a
+                    # preference. `view` runs on every frame and nothing in it may
+                    # do work proportional to a payload; reading a `TextBuffer`
+                    # copies the whole note out of GTK each time, which is the same
+                    # defect as the per-frame `sha256` that froze the window on an
+                    # attachment. The memo behind `blocksFor` would
+                    # still have re-parsed nothing, but the copy happens before it.
+                    #
+                    # It is also exactly right: view mode is only ever reachable
+                    # with the buffer equal to the stored text. Edit mode's only
+                    # exits are Cancel, which restores, and Save, which writes and
+                    # then re-baselines — so there is no state in which the rendered
+                    # note and the buffer disagree.
+                    Box(orient = OrientY, spacing = 8) {.expand: false.}:
+                      for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
+                        insert(app.mdBlock(b)) {.expand: false.}
+          elif app.messages.len == 0:
+            # The empty state cannot live inside the list — a `ListView` with
+            # `size = 0` draws nothing at all, and this is the one thing that
+            # has to be on screen when there is nothing to list.
+            StatusPage:
+              iconName = "user-available-symbolic"
+              title = "Ask Jenova something"
+              # Read from the classifier's own table rather than restated, so a
+              # prefix cannot be added there and go unmentioned here. Nothing on
+              # either surface has ever shown these.
+              description = "Attach a file, or start a message with " &
+                            intentHint() & " to steer it."
+          else:
+            # **The transcript, virtualised** (report 06 §3). Every message used
+            # to be a live widget subtree held for the life of the
+            # conversation, which is what made `BlockMemo`, `ParseMemo` and
+            # `thumbCache` unbounded by design: the window needed every rendered
+            # message at once. A `ListView` builds a row when it scrolls into
+            # view and drops it when it leaves, so the working set is the
+            # viewport rather than the conversation.
+            ListView:
+              size = app.messages.len
+              # **The bounds check is not defensive padding.** owlkettle's
+              # update hook re-runs `viewItem` for every *currently bound* row
+              # (`widgets.nim`, `ListView`'s `update`), and those indices are
+              # from before this redraw — so deleting a message or switching to
+              # a shorter conversation asks for a row that no longer exists.
+              # This runs inside a `cdecl` callback, where an `IndexDefect`
+              # has no useful place to go.
+              proc viewItem(index: int): Widget =
+                if index >= 0 and index < app.messages.len:
+                  app.messageCard(index, app.messages[index])
                 else:
-                  # 8c-3: rendered through the transcript's own block renderer, so
-                  # a note's tables, code blocks and emphasis look exactly as they
-                  # do in a reply rather than nearly so.
-                  #
-                  # Action purpose: the source is `noteOrigContent`, not
-                  # `noteBuffer.text()`, and that is the Step 7c rule rather than a
-                  # preference. `view` runs on every frame and nothing in it may
-                  # do work proportional to a payload; reading a `TextBuffer`
-                  # copies the whole note out of GTK each time, which is the same
-                  # defect as the per-frame `sha256` that froze the window on an
-                  # attachment. The memo behind `blocksFor` would
-                  # still have re-parsed nothing, but the copy happens before it.
-                  #
-                  # It is also exactly right: view mode is only ever reachable
-                  # with the buffer equal to the stored text. Edit mode's only
-                  # exits are Cancel, which restores, and Save, which writes and
-                  # then re-baselines — so there is no state in which the rendered
-                  # note and the buffer disagree.
-                  Box(orient = OrientY, spacing = 8) {.expand: false.}:
-                    for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
-                      insert(app.mdBlock(b)) {.expand: false.}
-              # Every child here is `expand: false`, and the annotations are
-              # the whole point. `Box`'s adder defaults to `expand: true`,
-              # which in a *vertical* Box sets `vexpand` — so an unannotated
-              # message card stretches to take an equal share of the viewport
-              # height, and two replies in a tall window each become half a
-              # screen. That is the "weirdly huge" bubbles. A transcript sizes
-              # to its content and scrolls; it never divides the space up.
-              # A Box with one varying child rather than a conditional widget in
-              # the transcript's own child list: owlkettle matches states
-              # positionally, and the message loop below shifts by one for every
-              # turn. The Box keeps this slot constant whatever is inside it.
-              Box(orient = OrientY) {.expand: false.}:
-                if app.openNote.len == 0 and app.messages.len == 0:
-                  StatusPage:
-                    iconName = "user-available-symbolic"
-                    title = "Ask Jenova something"
-                    # Read from the classifier's own table rather than restated,
-                    # so a prefix cannot be added there and go unmentioned here.
-                    # Nothing on either surface has ever shown these.
-                    description = "Attach a file, or start a message with " &
-                                  intentHint() & " to steer it."
-              for i, m in (if app.openNote.len > 0: @[] else: app.messages):
-                insert(app.messageCard(i, m)) {.expand: false.}
+                  gui: Box()
 
 
 ## Function purpose: open the settings panel on a copy of the stored values, and

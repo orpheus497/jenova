@@ -105,6 +105,16 @@ and cleared them, which was correct and remains correct — but a `ListView` tra
 cache proportional to the *viewport*, not the conversation. The cure for the memory pressure is
 the right widget, not a bigger lid.
 
+> **Done, session 7 — and it measures.** The transcript is a `ListView`, and on a 400-turn
+> conversation the resident set after load falls from 297 MiB to 267 MiB, reproducibly across
+> runs. The widget subtrees are now viewport-scaled.
+>
+> **Phase 2.2 is still open, and scrolling shows why.** Scrolling that same conversation to turn
+> 130 takes the resident set to 320 MiB: the rows recycle, but `BlockMemo`, `ParseMemo` and
+> `thumbCache` are keyed by message id and still grow with the number of messages *ever
+> rendered*, bounded only by session 2's caps. Reducing them to viewport scale is the other half
+> of this finding and has not been done.
+
 `ColumnView` (`widgets.nim`) is the same mechanism with columns, for the file and trash lists.
 
 ---
