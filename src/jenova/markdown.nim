@@ -10,19 +10,22 @@ type
     kind*: BlockKind
     text*: string
     lang*: string
-    ## G-34. A table is rows of already-marked-up cells rather than one string,
-    ## because Pango has no table: it has to become a real `Grid` of `Label`s in
-    ## the widget layer. Row 0 is the header. `aligns` is one `xAlign` per
-    ## column, taken from the `:---:` markers, so the widget layer applies it
-    ## without re-parsing anything.
+    ## Rows of marked-up cells rather than one string, because Pango has no
+    ## table and it has to become a real `Grid` of `Label`s. Row 0 is the header
+    ## and `aligns` is one `xAlign` per column, so the widget layer applies the
+    ## alignment without re-parsing anything.
     rows*: seq[seq[string]]
     aligns*: seq[float]
 
+## Function purpose: runs before every other pass, because Pango markup and
+## the source text share these three characters.
 proc escape(s: string): string =
   s.multiReplace(("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"))
 
+## Function purpose: an unpaired delimiter is left as literal text, because a
+## reply is read while it streams and a half-typed run must not swallow the rest
+## of the line.
 proc inlineSpan(s: string, delim: string, tag: string): string =
-  ## Wrap paired `delim` runs in `<tag>`. An unpaired delimiter is left as text.
   result = ""
   var i = 0
   while i < s.len:
@@ -40,28 +43,25 @@ proc inlineSpan(s: string, delim: string, tag: string): string =
 
 const LinkSchemes = ["http://", "https://"]
 
-## Function purpose: may this destination be handed to the desktop, as an
-## allowlist rather than a denylist (A-48).
+## Function purpose: the security boundary of the whole link feature. GTK hands
+## an activated `<a href>` to the desktop URI handler, so a model writing a
+## `file:`, `javascript:` or `data:` destination would be handing the desktop an
+## instruction. Only `http` and `https` become anchors and everything else
+## renders as its own text with no destination, which is a visible loss rather
+## than a silent one.
 ##
-## **This is the security boundary of the whole link feature.** GTK gives an
-## activated `<a href>` to the desktop URI handler, so a model that writes
-## `[click](file:///etc/passwd)` — or `javascript:`, or a `data:` URL — would
-## otherwise have handed the desktop an instruction. Only `http`/`https` become
-## anchors; everything else renders as its own text with no destination, which
-## is visible rather than silent. An allowlist is used because the set of
-## schemes a desktop will act on is open-ended and a denylist cannot be
-## completed.
+## Action purpose: an allowlist, because the set of schemes a desktop will act
+## on is open-ended and a denylist cannot be completed.
 proc allowedHref(href: string): bool =
   let lower = href.toLowerAscii
   for s in LinkSchemes:
     if href.len > s.len and lower.startsWith(s): return true
   false
 
-## Code spans are lifted out before the emphasis passes run and put back after.
-## Marking them up first left their contents in the string, so `*` and `_` inside
-## a code span were still read as emphasis — `` `a*b*c` `` came out as
-## `<tt>a<i>b</i>c</tt>`, which is the one thing a code span is supposed to
-## prevent. The NUL-delimited placeholder cannot occur in the escaped text and
+## Function purpose: code spans are lifted out before the emphasis passes and
+## put back after. Marking them up in place leaves their contents in the string,
+## so `*` and `_` inside a span are still read as emphasis — the one thing a code
+## span exists to prevent. The NUL placeholder cannot occur in escaped text and
 ## carries no emphasis delimiter of its own.
 proc inlineMarkup*(line: string): string =
   let escaped = escape(line)
@@ -79,19 +79,16 @@ proc inlineMarkup*(line: string): string =
     protected.add escaped[i]
     i.inc
 
-  # A-48. Links are lifted here — after the code-span pass and before the
-  # emphasis passes — and the position is the whole design.
+  # Action purpose: links are lifted after the code-span pass and before the
+  # emphasis passes, and that position is the whole design. After, so a link
+  # inside a code span stays literal — it has already left the string. Before,
+  # because a URL is full of characters the emphasis passes eat, and one
+  # underscore pair in a path turns half a sentence bold. The href leaves the
+  # string entirely and only the link text stays inline, where emphasis still
+  # applies to it.
   #
-  # After, because `` `[a](b)` `` must stay literal: the code span has already
-  # left the string, so this scanner never sees it. Before, because a URL is
-  # full of characters the emphasis passes eat — `https://host/a_b_c` is one
-  # `__` pair away from turning half a sentence bold. So the href leaves the
-  # string entirely and only the link TEXT stays inline, where emphasis still
-  # applies to it, which is what `[**bold**](url)` should do.
-  #
-  # `\x01`/`\x02` rather than the code pass's `\x00` so the two placeholder
-  # schemes cannot collide, on that pass's own reasoning: a control character
-  # cannot occur in the escaped text.
+  # Distinct placeholder bytes from the code pass so the two schemes cannot
+  # collide, on that pass's own reasoning.
   var hrefs: seq[string]
   var linked = newStringOfCap(protected.len)
   var j = 0
@@ -106,16 +103,16 @@ proc inlineMarkup*(line: string): string =
         protected.find(')', close + 2)
       else: -1
     if shut < 0:
-      # Not a link. Emit up to and including the bracket and carry on, so a
-      # stray `[` cannot swallow the rest of the line.
+      # Emit up to and including the bracket and carry on, so a stray `[`
+      # cannot swallow the rest of the line.
       linked.add protected[j .. open]
       j = open + 1
       continue
 
-    # `![alt](url)`. **The image is rendered as its alt text linked to the
-    # source, not fetched.** Displaying it would mean a network request per
-    # image from inside a render path, which is B-01's leak and Step 7c's rule
-    # at once; that is a decision for the USER, not a side effect of this fix.
+    # Action purpose: an image renders as its alt text linked to the source
+    # rather than being fetched. Displaying it would put a network request per
+    # image inside a render path, which is a decision to be made deliberately
+    # rather than acquired as a side effect.
     let isImage = open > j and protected[open - 1] == '!'
     let cut = if isImage: open - 1 else: open
     if cut > j: linked.add protected[j ..< cut]
@@ -127,17 +124,16 @@ proc inlineMarkup*(line: string): string =
       hrefs.add href
       linked.add "\x01" & $(hrefs.len - 1) & "\x01" & text & "\x02"
     else:
-      # Refused by the allowlist, or not a URL at all. The text survives and the
-      # destination does not — a visible loss rather than a link that quietly
-      # does something else when clicked.
+      # Refused by the allowlist, or not a URL at all: the text survives and
+      # the destination does not.
       linked.add text
     j = shut + 1
 
   result = linked
   result = result.inlineSpan("**", "b")
   result = result.inlineSpan("__", "b")
-  # Before the single `*` pass, or the first two tildes would already be gone —
-  # and after the double-asterisk passes, for the same reason (G-34).
+  # Between the double- and single-asterisk passes: earlier and the double pass
+  # would claim the tildes, later and the single pass would.
   result = result.inlineSpan("~~", "s")
   result = result.inlineSpan("*", "i")
   for idx, code in codes:
@@ -149,19 +145,13 @@ proc inlineMarkup*(line: string): string =
                             "<a href=\"" & href.replace("\"", "&quot;") & "\">")
   result = result.replace("\x02", "</a>")
 
-## Function purpose: how deeply a line is indented, in columns, and how many
-## characters that took.
+## Function purpose: indentation has to be measured before the line is stripped,
+## or a nested item and a top-level one are indistinguishable by the time any
+## branch sees them and every list renders flat.
 ##
-## Action purpose: **`lineMarkup` measured nothing and stripped everything.** It
-## opened with `line.strip(trailing = false)`, so `  - nested` and `- top` were
-## indistinguishable by the time any branch saw them and every list in every
-## reply rendered flat — a three-level outline came out as three identical
-## bullets. The depth has to be taken before the strip, which is the whole of
-## why this exists.
-##
-## A tab counts as four columns because that is what the editors writing these
-## replies emit; nothing here can know the reader's tab stop, and four is the
-## only answer that agrees with how the text was written.
+## Action purpose: a tab counts as four columns, because that is what the editors
+## writing these replies emit. Nothing here can know the reader's tab stop, so
+## four is the only answer that agrees with how the text was written.
 proc leadingIndent(line: string): tuple[cols, chars: int] =
   var i = 0
   var cols = 0
@@ -172,24 +162,21 @@ proc leadingIndent(line: string): tuple[cols, chars: int] =
     i.inc
   (cols, i)
 
-## Two columns of source indentation is one level of nesting, which is what a
-## model writing markdown emits and what CommonMark's own examples use. Capped
-## because a reply is a narrow column and a runaway indent would push the text
-## off the edge rather than communicate structure.
+## Two source columns per nesting level, which is what a model writing markdown
+## emits. Capped because a reply is a narrow column and a runaway indent pushes
+## text off the edge instead of showing structure.
 const MaxListDepth = 6
 
+## Function purpose: converts a measured column count into the leading spaces a
+## Pango label needs, since Pango has no list indentation of its own.
 proc listIndent(cols: int): string =
   repeat("  ", min(cols div 2, MaxListDepth) + 1)
 
-## Function purpose: is this line a horizontal rule — three or more `-`, `*` or
-## `_`, and nothing else but spaces?
-##
-## A table separator is *not* caught by this: `isTableSeparator` requires a
-## pipe, and the table pass runs before this one. A `---` under a paragraph is
-## a setext heading in CommonMark rather than a rule; this renderer is
-## line-based and treats it as a rule, which is the reading that degrades
-## better — a visible divider rather than a heading that silently eats the line
-## above it.
+## Function purpose: a `---` under a paragraph is a setext heading in CommonMark,
+## but this renderer is line-based and treats it as a rule — which degrades
+## better, since a visible divider beats a heading that silently consumes the
+## line above it. A table separator is not caught here: it requires a pipe, and
+## the table pass has already run.
 proc isHorizontalRule(t: string): bool =
   if t.len < 3: return false
   let c = t[0]
@@ -200,15 +187,10 @@ proc isHorizontalRule(t: string): bool =
     elif ch != ' ': return false
   n >= 3
 
-## Function purpose: split an ordered-list marker off the front of a line —
-## `1. `, `2) `, `10. `. Returns the number as written and the rest, or a
-## negative number when the line is not one.
-##
-## **The author's own number is kept rather than renumbered.** CommonMark says a
-## list renumbers from its first item, but this renderer draws one line at a
-## time with no list context to renumber within, and a model that writes `1.`
-## three times meant three steps. Showing what was written is the honest
-## rendering and cannot invent an order the author did not.
+## Function purpose: the author's own number is kept rather than renumbered.
+## CommonMark renumbers a list from its first item, but this renderer draws one
+## line at a time with no list to renumber within, and a model that writes `1.`
+## three times meant three steps.
 proc orderedMarker(t: string): tuple[num: int, rest: string] =
   var i = 0
   while i < t.len and t[i] in {'0' .. '9'}: i.inc
@@ -219,14 +201,16 @@ proc orderedMarker(t: string): tuple[num: int, rest: string] =
   let n = try: parseInt(t[0 ..< i]) except ValueError: return (-1, "")
   (n, t[i + 2 .. ^1])
 
+## Function purpose: one line at a time, because the transcript is drawn while
+## it streams and a block-level parser cannot render a half-arrived list.
 proc lineMarkup(line: string): string =
   let (cols, _) = leadingIndent(line)
   let t = line.strip(trailing = false)
   let pad = listIndent(cols)
-  # G-34: task lists are checked before the plain bullet, because every task
-  # item is also a bullet and the bullet branch would swallow it and render the
-  # raw brackets. The box is a character rather than a widget: this is one line
-  # of a Pango label, and the Web UI's checkbox is not interactive either.
+  # Action purpose: task lists are checked before the plain bullet, because
+  # every task item is also a bullet and that branch would swallow it and render
+  # the raw brackets. The box is a character rather than a widget: this is one
+  # line of a Pango label, and the checkbox is not interactive anywhere.
   if t.startsWith("- [ ] ") or t.startsWith("* [ ] ") or t.startsWith("+ [ ] "):
     pad & "☐ " & inlineMarkup(t[6 .. ^1])
   elif t.startsWith("- [x] ") or t.startsWith("* [x] ") or
@@ -234,17 +218,15 @@ proc lineMarkup(line: string): string =
        t.startsWith("- [X] ") or t.startsWith("* [X] ") or
        t.startsWith("+ [X] "):
     pad & "☑ " & inlineMarkup(t[6 .. ^1])
-  # A rule is tested before the bullet branch: `***` and `---` are both a rule
-  # and a possible list marker, and the bullet branch would render `--` as the
-  # text of a bullet.
+  # A rule is tested before the bullet branch: `***` and `---` are both, and
+  # the bullet branch would render the remainder as a bullet's text.
   elif isHorizontalRule(t):
-    # Pango has no rule, so it is drawn. A fixed run rather than a measured one:
-    # this is one line of a label inside a scrolling column whose width is not
-    # known here, and a run that guesses too wide forces a horizontal scrollbar
-    # on every reply that contains one.
+    # Action purpose: Pango has no rule, so one is drawn. A fixed run rather
+    # than a measured one, because the column's width is not known here and a
+    # run that guesses too wide forces a horizontal scrollbar.
     "─".repeat(24)
-  # Headings, deepest first: `###` must be tested before `##`, or `##` matches
-  # its first two characters and the third renders as text.
+  # Deepest first: `###` must be tested before `##`, or the shorter prefix
+  # matches and the third character renders as text.
   elif t.startsWith("###### "): "<b>" & inlineMarkup(t[7 .. ^1]) & "</b>"
   elif t.startsWith("##### "): "<b>" & inlineMarkup(t[6 .. ^1]) & "</b>"
   elif t.startsWith("#### "): "<b>" & inlineMarkup(t[5 .. ^1]) & "</b>"
@@ -255,25 +237,23 @@ proc lineMarkup(line: string): string =
     pad & "• " & inlineMarkup(t[2 .. ^1])
   elif t.startsWith("> "): "<i>" & inlineMarkup(t[2 .. ^1]) & "</i>"
   else:
-    # An ordered item. Tested last among the structural branches because the
-    # scan is the only one that is not a prefix comparison, and every line that
-    # is not a list has to fail it.
+    # Tested last among the structural branches: it is the only one that is not
+    # a prefix comparison, and every non-list line has to fail it.
     let (num, rest) = orderedMarker(t)
     if num >= 0: pad & $num & ". " & inlineMarkup(rest)
     else: inlineMarkup(line)
 
-## Function purpose: split a `|`-delimited row into its cells, dropping the
-## optional leading and trailing pipes so `| a | b |` and `a | b` give the same
-## two cells.
+## Function purpose: the outer pipes are optional in the input, so they are
+## dropped here and `| a | b |` and `a | b` give the same two cells.
 proc tableCells(line: string): seq[string] =
   var t = line.strip
   if t.startsWith("|"): t = t[1 .. ^1]
   if t.endsWith("|"): t = t[0 ..< ^1]
   for cell in t.split('|'): result.add cell.strip
 
-## Function purpose: is this the `|---|:--:|` line that turns the row above it
-## into a table header? That line is the only thing distinguishing a table from
-## a paragraph that happens to contain a pipe, which is why it is required.
+## Function purpose: the separator line is the only thing distinguishing a table
+## from a paragraph that happens to contain a pipe, which is why it is required
+## rather than inferred.
 proc isTableSeparator(line: string): bool =
   let cells = tableCells(line)
   if cells.len == 0 or not line.contains('|'): return false
@@ -284,8 +264,8 @@ proc isTableSeparator(line: string): bool =
     if not cell.contains('-'): return false
   true
 
-## `:---` left, `---:` right, `:---:` centre — as an `xAlign` the widget layer
-## can apply directly.
+## Function purpose: converts the colon markers to an `xAlign` here, so the
+## widget layer applies alignment without re-reading the separator row.
 proc alignOf(cell: string): float =
   let c = cell.strip
   let left = c.startsWith(":")
@@ -294,9 +274,9 @@ proc alignOf(cell: string): float =
   elif right: 1.0
   else: 0.0
 
-## Split on fenced code blocks. An unterminated fence — which is every code block
-## mid-stream — is emitted as code rather than held back, so a block appears as
-## it is generated instead of arriving all at once when the closing fence lands.
+## Function purpose: an unterminated fence — which is every code block while it
+## is still streaming — is emitted as code rather than held back, so a block
+## appears as it is generated instead of arriving whole at the closing fence.
 proc parse*(content: string): seq[Block] =
   var
     blocks: seq[Block] = @[]
@@ -326,13 +306,12 @@ proc parse*(content: string): seq[Block] =
 
   flush(if inCode: bkCode else: bkText, lang)
 
-  # G-34: tables are lifted out of the text blocks here rather than inside the
-  # fence loop above, so the fence handling — which is what makes a block appear
-  # while it is still streaming — is untouched. A `|` inside a code block is
-  # never seen by this, because code blocks are already separate by now.
-  # `outp` rather than writing straight into `result`, because the closure below
-  # would be capturing `result` — which Nim refuses as a memory-safety
-  # violation, and rightly: it is the caller's buffer.
+  # Action purpose: tables are lifted out here rather than inside the fence loop
+  # above, so the streaming behaviour of a fence is untouched and a pipe inside
+  # a code block is never seen — those blocks are already separate by now.
+  #
+  # A local rather than writing into `result`, because the closure below would
+  # capture `result`, which Nim refuses as a memory-safety violation.
   var outp: seq[Block] = @[]
   for b in blocks:
     if b.kind != bkText:
@@ -350,8 +329,8 @@ proc parse*(content: string): seq[Block] =
 
     var i = 0
     while i < lines.len:
-      # A table is a header row, a separator row, then rows until something
-      # that is not a row. The separator is what makes it a table at all.
+      # A header row, a separator row, then rows until something that is not
+      # one. The separator is what makes it a table at all.
       if i + 1 < lines.len and lines[i].contains('|') and
          isTableSeparator(lines[i + 1]):
         flushText()
@@ -365,8 +344,8 @@ proc parse*(content: string): seq[Block] =
         while i < lines.len and lines[i].contains('|'):
           var row: seq[string] = @[]
           for cell in tableCells(lines[i]): row.add inlineMarkup(cell)
-          # A short row is padded rather than dropped: a model miscounting its
-          # own pipes should cost an empty cell, not the whole table.
+          # Padded rather than dropped: a model miscounting its own pipes
+          # should cost an empty cell, not the whole table.
           while row.len < tbl.rows[0].len: row.add ""
           tbl.rows.add row
           i.inc
@@ -379,47 +358,36 @@ proc parse*(content: string): seq[Block] =
 
 type
   BlockMemo* = object
-    ## G-40. **`parse` is called from `view`, so it runs on every frame** — once
-    ## per message on the branch, over that message's whole text. It was not the
-    ## cause of the attachment freeze but it is the same defect and the same
-    ## budget, and a long conversation paid it on every token of every reply.
+    ## `parse` is called from `view`, so without this it runs on every frame,
+    ## once per message on the branch, over that message's whole text — a cost a
+    ## long conversation pays on every token of every reply.
     ##
-    ## `parses` exists to be asserted, for the reason `pipeline.ParseMemo`'s
-    ## does: a per-frame cost that comes back is invisible to a compile, to a
-    ## self-test and to a screenshot, right up until the window stops responding.
+    ## `parses` exists to be asserted: a per-frame cost that comes back is
+    ## invisible to a compile, a self-test and a screenshot alike, right up until
+    ## the window stops responding.
     blocks: Table[string, seq[Block]]
     stamps: Table[string, int]
-    ## M-01. Insertion order of the ids currently held, so the oldest can be
-    ## dropped when the memo is over its cap. **Only a *new* id is appended** —
-    ## a re-parse under an existing id (Continue extending a reply) replaces the
-    ## entry without moving it, so one message cannot occupy two slots.
+    ## Insertion order, so the oldest can be dropped when the memo is over its
+    ## cap. Only a new id is appended — a re-parse under an existing id replaces
+    ## the entry without moving it, so one message cannot occupy two slots.
     order: seq[string]
     parses*: int
 
 const BlockMemoCap* = 512
-  ## M-01. How many messages' parsed blocks the memo may hold.
-  ##
-  ## **This memo was unbounded and was never cleared.** It is a module-level
-  ## `var` in `gui.nim` keyed by message id, and neither `loadConversation` nor
-  ## `selectConversation` nor `deleteMessage` touched it — so every message ever
-  ## rendered kept its parsed block list for the life of the process, including
-  ## the blocks of conversations closed hours ago and of messages since deleted.
-  ##
-  ## 512 is far more than one branch of one conversation, which is all the
-  ## transcript ever draws, so the cap never engages during normal reading and
-  ## the per-frame guarantee `blocksFor` exists to provide is untouched. It is a
-  ## ceiling on a leak, not a working-set size.
+  ## A ceiling on growth, not a working-set size. Far more than the one branch
+  ## of one conversation the transcript ever draws, so the cap never engages
+  ## during normal reading and the per-frame guarantee below is untouched — it
+  ## exists only so a process that renders for hours cannot hold every message
+  ## it ever showed.
 
-## Function purpose: drop the oldest entries once the memo is over its cap.
+## Function purpose: evicts in batches rather than one entry per insert.
+## Dropping a single oldest id shifts the whole sequence, an O(n) cost on every
+## insert once the cap is reached — paid on the one path whose entire reason for
+## existing is that `view` does no work proportional to anything. A quarter at a
+## time amortises that to O(1).
 ##
-## Action purpose: **a batch, not one entry per insert.** Removing a single
-## oldest id means `order.delete(0)`, which shifts the whole sequence — an O(n)
-## cost on every insert once the cap is reached, paid on a path whose entire
-## reason for existing is that `view` must do no work proportional to anything
-## (G-40). Dropping a quarter at a time amortises that shift to O(1) per insert.
-##
-## An id already removed by `invalidate` is simply absent from the tables;
-## `Table.del` on a missing key is a no-op, so the queue needs no tombstones.
+## An id already removed by `invalidate` is simply absent, and deleting a
+## missing key is a no-op, so the queue needs no tombstones.
 proc evict(memo: var BlockMemo) =
   if memo.order.len <= BlockMemoCap: return
   let drop = max(1, BlockMemoCap div 4)
@@ -428,13 +396,12 @@ proc evict(memo: var BlockMemo) =
     memo.stamps.del(memo.order[i])
   memo.order = memo.order[drop .. ^1]
 
-## Function purpose: the blocks of one message, parsed at most once.
+## Function purpose: a message with no id is never memoised. An assistant turn
+## is a live buffer while it streams and only becomes a row when it finishes, so
+## caching it would freeze the transcript on its first token.
 ##
-## **A message with no id is never memoised.** An assistant turn is a live buffer
-## while it streams and only becomes a row when it finishes, so caching it would
-## freeze the transcript on its first token. The stamp is the text length, which
-## catches the one way a saved message still changes — Continue extends it, and
-## an append always changes the length.
+## Action purpose: the stamp is the text length, which catches the one way a
+## saved message still changes — an append always changes it.
 proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
   if id.len == 0:
     inc memo.parses
@@ -449,33 +416,28 @@ proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
   memo.blocks[id] = result
   memo.stamps[id] = text.len
 
-## Function purpose: forget one id, for a surface whose text changes under a key
-## that does not (A-26).
+## Function purpose: for a surface whose text changes under a key that does not.
+## The length stamp is sound for a message — an edit becomes a new row with a
+## new id, and Continue only appends — but a note keeps its id across every
+## edit, so correcting a transposition leaves the stamp equal and the view
+## renders the pre-edit text indefinitely, which reads as a save that failed.
 ##
-## The length stamp above is sound for a message and unsound for a note. A
-## message edit is saved as a *new row with a new id* and Continue only ever
-## appends, so length catches every change a message can undergo. **A note keeps
-## its id across every edit**, so correcting a transposition or swapping a word
-## for one the same length leaves the stamp equal and the view renders the
-## pre-edit text — indefinitely, which reads as a save that did not happen.
-##
-## Hashing the text instead would fix it and is forbidden: `blocksFor` is called
-## from `view`, and nothing there may do work proportional to a payload (G-40,
-## Step 7c). So the invalidation is explicit and O(1), and the note editor calls
-## it at the two points it re-baselines.
+## Action purpose: hashing the text would fix it and is forbidden, because this
+## is reached from `view` and nothing there may do work proportional to a
+## payload. So invalidation is explicit and O(1), called where the text is
+## re-baselined.
 proc invalidate*(memo: var BlockMemo, id: string) =
   memo.blocks.del(id)
   memo.stamps.del(id)
 
-## Function purpose: drop everything (M-01). The transcript draws one branch of
-## one conversation, so switching conversation makes every entry here dead —
-## and nothing dropped them, which is the leak `BlockMemoCap` caps and this
-## empties outright.
+## Function purpose: the transcript draws one branch of one conversation, so
+## switching conversation makes every entry here dead at once — cheaper to empty
+## than to let the cap evict them one insert at a time.
 proc clear*(memo: var BlockMemo) =
   memo.blocks.clear()
   memo.stamps.clear()
   memo.order.setLen(0)
 
-## Function purpose: how many entries are held. For the assertion, so a cap that
-## stops working is a failing test rather than a slow leak.
+## Function purpose: exported for the assertion, so a cap that stops working is
+## a failing test rather than a slow leak.
 proc len*(memo: BlockMemo): int = memo.blocks.len

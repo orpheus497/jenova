@@ -1,36 +1,18 @@
-## Script function and purpose: the desktop application's settings — the values
-## behind `PLANS.md` Step 5 (G-31), and the merge that puts the sampling and
-## penalty parameters into the request body.
+## Script function and purpose: the settings' definitions, storage, validation
+## and the merge that puts sampling parameters into a request body. Deliberately
+## below the window: the window draws these and nothing more, so the merge is
+## `applyTo` and a self-test can assert the outbound body with no widget
+## involved.
 ##
-## **This module is deliberately below the window.** The values are defined,
-## stored, validated and merged here; `gui.nim` draws them and nothing more. That
-## is the whole lesson of **D-BH**: Continue shipped broken twice while the
-## request body was assembled inside `gui.nim`, where nothing under the widget
-## layer could assert it. A settings dialog that built its own body would undo
-## that, so the merge is `applyTo` and it is reachable from `pipeline-selftest`.
+## A value is a string and empty means "not set", which is why the storage is
+## untyped. A `float` field cannot distinguish "the user asked for 0.0" from
+## "the user never touched it", and sending a defaulted zero for every parameter
+## would silently override the server's own preset on every request. Conversion
+## happens once, in `applyTo`, on the values that survive that test.
 ##
-## **A value is a string, and empty means "not set".** That is the Web UI's own
-## semantic (`settings-config.ts`: "empty means use server default ... and are NOT
-## sent in API requests, letting the server decide") and it is the reason the
-## storage is not typed: a `float` field cannot distinguish "the user asked for
-## 0.0" from "the user never touched it", and sending a defaulted 0 for every
-## parameter would silently override the server's own preset on every request.
-## Conversion happens once, in `applyTo`, on the values that survive that test.
-##
-## **The field list is 1:1 with `jca_web`'s `ChatSettings.svelte` `settingSections`**
-## — that array, not `SETTING_CONFIG_DEFAULT`, is the authority, because the
-## config object also holds keys the Web UI never draws (`showSystemMessage`,
-## `mcpServerUsageStats`). Two groups are excluded on the USER's instruction: the
-## **API Key** field and the whole **MCP** section. One more is excluded on
-## architectural grounds and is recorded rather than dropped silently —
-## **`serverUrl`**, see `OmittedFields`.
-##
-## **Every remaining field is drawn** (**D-BL**, superseding D-BK's narrower
-## rule). Where the behaviour a field governs does not exist in this window yet,
-## the field still stores its value and is marked `awaiting`, so the panel says
-## which step turns it on rather than presenting a control that silently does
-## nothing. That is the difference between a documented schedule and G-8's
-## defect.
+## Every field is drawn even where the behaviour it governs does not exist yet.
+## Such a field still stores its value and carries `awaiting`, so the panel says
+## what turns it on rather than offering a control that silently does nothing.
 
 import std/[json, os, strutils, tables]
 import ./paths
@@ -61,14 +43,12 @@ type
     ## settings that only change what the window does.
     inRequest*: bool
     ## `llama-server` reports this parameter under a different name in
-    ## `/props`. Empty means the key is the same. **Only `typ_p` differs**, and
-    ## that single mismatch is why its placeholder was blank on the first build.
+    ## `/props`; empty means the two agree. Only `typ_p` differs, and without
+    ## this its placeholder shows nothing.
     propsKey*: string
-    ## `llama-server`'s own compiled-in default, shown as ghost text before the
-    ## backend has answered. Accurate because **Jenova passes no sampling flags
-    ## on the command line at all** — checked in `lifecycle.nim` and both conf
-    ## files — so the server always starts from these. Sourced from
-    ## `common/common.h`'s `common_params_sampling`, not from memory.
+    ## `llama-server`'s compiled-in default, shown as ghost text before the
+    ## backend answers. Trustworthy only because nothing here passes a sampling
+    ## flag on the command line, so the server always starts from these.
     appDefault*: string
     ## Options for a `skSelect`, as `value|label` pairs.
     options*: seq[string]
@@ -81,12 +61,10 @@ type
     values*: Table[string, string]
 
 const
-  ## Every field, in the order `ChatSettings.svelte` draws it, section by
-  ## section. Labels follow the Web UI's so the two surfaces name a parameter
-  ## the same way. **The help text deliberately does not** — the Web UI's is
-  ## reference text ("Keeps only k top tokens"), which says nothing about what to
-  ## type. Each one below gives the usable range, which direction does what, and
-  ## the value that switches the sampler off.
+  ## Every field, in the order the panel draws it. Labels match the Web UI's so
+  ## the two surfaces name a parameter the same way; the help text deliberately
+  ## does not, because reference wording says nothing about what to type. Each
+  ## gives the usable range, which direction does what, and the off value.
   Defs*: seq[SettingDef] = @[
     # ---- General ---------------------------------------------------------
     SettingDef(key: "theme", label: "Theme",
@@ -112,9 +90,6 @@ const
     SettingDef(key: "copyTextAttachmentsAsPlainText",
                label: "Copy text attachments as plain text",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               # W-01: wired. `pipeline.copyTextFor` decides it and
-               # `gui.messageActions` calls it. It carried a stale `awaiting`
-               # naming a blocker that had already shipped.
                help: "On, copying a message appends the text of anything " &
                      "attached to it, under the same heading the model was " &
                      "shown — so what you paste is what the model read. Off, " &
@@ -127,12 +102,11 @@ const
                help: "Adds a Continue action to the last reply, which asks the " &
                      "model to carry on from where it stopped rather than " &
                      "start again. Off by default, matching the Web UI. Not " &
-                     "offered on a reply that carries reasoning — see D-BH."),
+                     "offered on a reply that carries its own reasoning."),
     SettingDef(key: "pdfAsImage", label: "Parse PDF as image",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               # W-01: the reason was stale in the same way. This one is
-               # genuinely blocked, but on rasterisation rather than on
-               # attachments.
+               # The block is rasterisation, not attachments — pages reach the
+               # model as text today.
                awaiting: "a PDF rasteriser. `pdf.nim` extracts a page's text " &
                          "and nothing in this program can render a page to " &
                          "pixels, which is what sending pages as images means",
@@ -168,11 +142,8 @@ const
     SettingDef(key: "autoMicOnEmpty",
                label: "Show microphone on empty input",
                section: ssDisplay, kind: skBool, boolDefault: false,
-               # Still genuinely blocked, and unlike the three above it always
-               # was: this window has no audio capture at all. The send path is
-               # ready — `pipeline.contentFor` already emits `input_audio` parts
-               # for a conversation imported from the Web UI — so what is
-               # missing is the recorder, not the wire format.
+               # The send path already emits `input_audio` parts, so what is
+               # missing is a recorder and not the wire format.
                awaiting: "audio capture. Nothing in this window records, and " &
                          "GTK4 has no recorder of its own",
                help: "Show a record button instead of Send while the message " &
@@ -376,25 +347,25 @@ const
                      "{\"mirostat\": 2, \"top_n_sigma\": 1.0}."),
   ]
 
-  ## The three fields `ChatSettings.svelte` draws that this panel does not, and
-  ## why. Recorded so the difference is never read as an oversight (**D-BL**).
+  ## The fields the Web UI draws that this panel does not, and why. Recorded so
+  ## the difference reads as a decision rather than an oversight.
   OmittedFields*: seq[tuple[key, reason: string]] = @[
     ("apiKey", "excluded by the USER — this server does not authenticate"),
     ("mcpServers", "the whole MCP section is excluded by the USER; MCP is " &
                    "deferred (SETTLED FACT)"),
     ("serverUrl", "architectural, not scope. `bin/jenova` starts its own " &
-                  "server and backends and is the host — settled at N-S6 and " &
-                  "again at Session 006. A field pointing the window at a " &
-                  "different backend would bypass the local pipeline, personas " &
-                  "and retrieval, which is a product change and not a setting. " &
+                  "server and backends and is the host. A field pointing the " &
+                  "window at a different backend would bypass the local " &
+                  "pipeline, personas and retrieval, which is a product " &
+                  "change and not a setting. " &
                   "LAN mode already covers serving this machine to others."),
   ]
 
   SettingsFile = "settings.json"
 
-## Function purpose: the stored settings for a fresh install — every field empty
-## except the booleans and the one select, which carry their own default. Empty
-## is meaningful (see the header), so this is not the same as an empty table.
+## Function purpose: not the same as an empty table — empty is a meaningful
+## value here, so every field is present and only the booleans and the select
+## carry anything.
 proc initSettings*(): Settings =
   result.values = initTable[string, string]()
   for d in Defs:
@@ -404,52 +375,55 @@ proc initSettings*(): Settings =
       of skSelect: (if d.options.len > 0: d.options[0].split('|')[0] else: "")
       else: ""
 
+## Function purpose: named once so the loader and the saver cannot disagree.
 proc settingsFile(p: Paths): string = p.state / SettingsFile
 
-## Function purpose: read a value as stored. An unknown key answers empty rather
-## than raising, so a field added to `Defs` after a file was written reads as
-## unset instead of breaking the load.
+## Function purpose: an unknown key answers empty rather than raising, so a
+## field added to `Defs` after a file was written reads as unset instead of
+## breaking the load.
 proc get*(s: Settings, key: string): string =
   s.values.getOrDefault(key, "")
 
+## Function purpose: an unset boolean falls back to the field's declared
+## default rather than to false, since half of them default to on.
 proc getBool*(s: Settings, key: string): bool =
   s.get(key) == "1"
 
-## Function purpose: read a numeric setting, falling back to `def` when it is
-## unset or unparseable. Empty is the ordinary case, not an error — see the
-## header: an unset field means the server's own value is authoritative, and for
-## a window-only setting like `pasteLongTextToFileLen` it means the default.
+## Function purpose: empty is the ordinary case here rather than an error, so an
+## unparseable value falls back the same way an unset one does.
 proc getInt*(s: Settings, key: string, def = 0): int =
   let raw = s.get(key).strip
   if raw.len == 0: return def
   try: parseInt(raw) except ValueError: def
 
+## Function purpose: stores the text as typed. Conversion happens once, at
+## merge time, so a value being edited is never rejected mid-keystroke.
 proc `[]=`*(s: var Settings, key, value: string) =
   s.values[key] = value
 
-## The definition for a key, so the window can ask about one field without
-## walking `Defs` itself.
+## Function purpose: lets the window ask about one field without walking `Defs`
+## itself, which would put the field list in two places.
 proc defFor*(key: string): SettingDef =
   for d in Defs:
     if d.key == key: return d
 
-## A window-only setting has no server value behind it, so an unset field means
-## the declared `appDefault` — the same number the field shows as ghost text —
-## and not zero. Reading one with plain `getInt` gives a fresh install a
-## silently disabled feature that the Settings screen claims is on.
+## Function purpose: a window-only setting has no server value behind it, so an
+## unset field means its declared `appDefault` — the number shown as ghost text
+## — and not zero. Reading one with plain `getInt` gives a fresh install a
+## silently disabled feature the panel claims is on.
 proc appInt*(s: Settings, key: string): int =
   var def = 0
   try: def = parseInt(defFor(key).appDefault.strip)
   except ValueError: discard
   s.getInt(key, def)
 
-## Function purpose: the name `llama-server` reports this parameter under in
-## `/props`. **`typ_p` is the only one that differs** — the server calls it
-## `typical_p` — and that single mismatch is why its placeholder was blank until
-## this existed.
+## Function purpose: `typ_p` is the only parameter the server reports under a
+## different name, and without this indirection its placeholder is blank.
 proc propsNameFor*(d: SettingDef): string =
   if d.propsKey.len > 0: d.propsKey else: d.key
 
+## Function purpose: takes the defaults as its base, so a file written before a
+## field existed still yields a complete `Settings`.
 proc loadFrom*(file: string): Settings =
   result = initSettings()
   if not fileExists(file): return
@@ -462,15 +436,13 @@ proc loadFrom*(file: string): Settings =
   except CatchableError:
     discard
 
-## Function purpose: load the settings, falling back to the defaults for anything
-## the file does not carry. **A malformed or absent file is the defaults, never an
-## error** — this is read on the window's startup path, and a settings file that
-## refuses to parse must not stop the application opening.
+## Function purpose: a malformed or absent file yields the defaults, never an
+## error. This is on the window's startup path, and a settings file that refuses
+## to parse must not stop the application opening.
 proc load*(p: Paths): Settings = loadFrom(settingsFile(p))
 
-## The path is a parameter on this pair so a self-test can round-trip the store
-## without writing over the USER's own `settings.json` — the same reason every
-## other self-test opens a scratch database rather than the real one.
+## Function purpose: the path is a parameter on this pair so a self-test can
+## round-trip the store without writing over the user's own settings file.
 proc saveTo*(file: string, s: Settings): bool =
   try:
     createDir(file.parentDir)
@@ -482,13 +454,15 @@ proc saveTo*(file: string, s: Settings): bool =
   except CatchableError:
     false
 
+## Function purpose: the path-resolving wrapper the window calls; the tested
+## half takes an explicit file.
 proc save*(p: Paths, s: Settings): bool = saveTo(settingsFile(p), s)
 
-## Function purpose: report the first field whose stored text cannot be converted
-## to the type it will be sent as, so the dialog can refuse the save and say which
-## one. **The check has to happen before storing, not at merge time:** `applyTo`
-## runs on the way to the model and silently dropping a malformed value there
-## would look exactly like a parameter the server ignored.
+## Function purpose: names the first field whose text cannot convert to the type
+## it will be sent as, so the dialog refuses the save and says which. The check
+## has to be here rather than at merge time: `applyTo` runs on the way to the
+## model, and dropping a bad value there looks exactly like a parameter the
+## server ignored.
 proc validate*(s: Settings): tuple[ok: bool, key, msg: string] =
   for d in Defs:
     let raw = s.get(d.key).strip
@@ -510,16 +484,13 @@ proc validate*(s: Settings): tuple[ok: bool, key, msg: string] =
     else: discard
   (true, "", "")
 
-## Function purpose: merge the request-affecting settings into a chat request
-## body. Called by `pipeline.chatBody` so the values land in the JSON that
-## actually goes to `llama-server`, and so a self-test can read the result
-## without a window or a generation.
+## Function purpose: the one place settings reach the outbound body, so a
+## self-test can read the result with no window and no generation.
 ##
-## Action purpose: **an empty value is omitted, not sent as a zero.** The server's
-## own preset is the source of truth for anything the user has not set, so a
-## parameter appears in the body only when it carries text. `custom` is merged
-## last and overwrites, which is what makes it the escape hatch for a parameter
-## this build does not name.
+## Action purpose: an empty value is omitted rather than sent as zero, because
+## the server's preset is authoritative for anything the user has not set.
+## `custom` is merged last and overwrites, which makes it the escape hatch for a
+## parameter this build does not name.
 proc applyTo*(body: JsonNode, s: Settings) =
   if body.kind != JObject: return
   for d in Defs:
@@ -527,9 +498,9 @@ proc applyTo*(body: JsonNode, s: Settings) =
     let raw = s.get(d.key).strip
     case d.kind
     of skBool:
-      # A boolean is always set or not-set, never empty, so "off" would be a real
-      # `false` in the body. Only the enabled state is sent: an unasked-for
-      # `false` is still an override of the server's preset.
+      # Action purpose: a boolean is never empty, so "off" would go out as a
+      # real `false` — which is still an override of the server's preset. Only
+      # the enabled state is sent.
       if raw == "1" and d.key != "disableReasoningParsing":
         body[d.key] = %true
     of skFloat:
@@ -543,7 +514,7 @@ proc applyTo*(body: JsonNode, s: Settings) =
     of skString:
       if raw.len > 0: body[d.key] = %raw
     of skSelect:
-      # No select is a request parameter — `theme` is the only one and it is
+      # No select is a request parameter: `theme` is the only one and it is
       # entirely a window concern.
       discard
     of skText:
@@ -555,15 +526,14 @@ proc applyTo*(body: JsonNode, s: Settings) =
         except CatchableError:
           discard
 
-## Function purpose: the `reasoning_format` the request should carry. `"auto"`
-## makes `llama-server` split a reasoning model's thinking out of the answer,
-## which is what the reasoning view (G-39) reads; `"none"` leaves it inline and is
-## what the Developer switch is for.
+## Function purpose: `"auto"` makes `llama-server` split a reasoning model's
+## thinking out of the answer, which is what the reasoning view reads; `"none"`
+## leaves it inline, which is what the Developer switch is for.
 proc reasoningFormat*(s: Settings): string =
   if s.getBool("disableReasoningParsing"): "none" else: "auto"
 
-## Function purpose: group the fields for the dialog, in section order, without
-## the window having to know which key belongs where.
+## Function purpose: groups the fields in section order so the window never has
+## to know which key belongs where.
 proc fieldsIn*(section: SettingSection): seq[SettingDef] =
   for d in Defs:
     if d.section == section: result.add d

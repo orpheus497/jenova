@@ -1,36 +1,17 @@
-## Script function and purpose: The HTTP server for the Nim core, replacing
-## `lib/proxy.lua`. This module is where ruling D-R is honoured or lost.
+## Script function and purpose: the HTTP server, built on threads rather than an
+## event loop. Multiplexing every client onto one thread means a single blocking
+## call — a query, a filesystem walk, a subprocess — freezes routing and token
+## streaming for everyone, and an async dispatcher is the same shape of machine.
 ##
-## `proxy.lua` multiplexed every client onto one thread with a custom
-## `ffi.C.select` loop, so one blocking call — a SQLite query, a filesystem
-## walk, an `io.popen` — froze routing and token streaming for everyone. Nim's
-## `asyncdispatch` is the same shape of machine, so porting to async would have
-## relocated the defect rather than removed it (D-S).
+## Two stages. Acceptor threads block in `accept(2)`, peek at the request line
+## without consuming it, classify the route, and push the descriptor onto that
+## class's queue; they never run a handler, so a handler cannot block them. Each
+## route class then has its own queue and its own threads, which is what makes
+## one saturated class survivable by the rest.
 ##
-## ## Structure
-##
-## Two stages, and every service surface owns its own threads:
-##
-## 1. **Acceptor threads** block in `accept(2)` on the listening socket. They
-##    peek at the request line *without consuming it* (`MSG_PEEK`), classify the
-##    route, and push the descriptor onto that class's queue. They never run a
-##    handler, so they cannot be blocked by one.
-## 2. **A dedicated pool per route class** — static, health, api, completion,
-##    embed, debug — each with its own queue and its own threads
-##    (`routes.nim`).
-##
-## ## Why classes, and not one pool
-##
-## A single shared pool has a starvation bug that normal operation triggers:
-## completion streams are held open for the length of a generation, so N
-## concurrent generations occupy all N workers and the server stops answering
-## health checks and serving assets. Isolation makes saturation of one class
-## survivable by every other. Health has its own threads for exactly this reason
-## — a liveness endpoint that stops answering under load is worse than none.
-##
-## Only integers cross thread boundaries: the acceptor passes a `SocketHandle`,
-## and the owning worker performs the full parse on its own thread. Nothing
-## reference-counted is shared.
+## Only integers cross a thread boundary: the acceptor passes a socket handle
+## and the owning worker parses on its own thread, so nothing refcounted is
+## shared.
 
 import std/[net, nativesockets, posix, os, strutils, strformat, times, monotimes]
 import ./http
@@ -40,7 +21,7 @@ import ./upstream
 import ./api
 
 import ./pipeline
-# E-05: for `inNone`, the one intent value that is not worth a header.
+# For the one intent value that is not worth a header.
 import ./prompts
 import std/json
 
@@ -60,17 +41,21 @@ const
   ClientTimeoutSec = 30
 
 # Action purpose: values shared with threads are plain buffers and integers,
-# never `string` globals. A shared refcounted string read by every worker is
-# itself a data race — the trap that had to be removed from db.nim.
+# never `string` globals — a shared refcounted string read by every worker is
+# itself a data race.
 type SharedStr = object
   buf: array[1024, char]
   len: int
 
+## Function purpose: truncates rather than overflowing — these hold a host and a
+## path, and a value longer than the buffer is a configuration error.
 proc set(s: var SharedStr, v: string) =
   let n = min(v.len, s.buf.high)
   if n > 0: copyMem(addr s.buf[0], v.cstring, n)
   s.len = n
 
+## Function purpose: copies out, so each worker holds its own string rather than
+## a view onto memory the others read.
 proc get(s: SharedStr): string =
   result = newString(s.len)
   if s.len > 0: copyMem(addr result[0], addr s.buf[0], s.len)
@@ -82,8 +67,8 @@ var
   llamaPort: int
   embedPort: int
   debugEndpoints: bool
-  # When false the completion classes proxy to llama-server as before, so the
-  # server still works on a host where the model cannot be loaded in-process.
+  # When false the completion classes proxy to the backend, so the server still
+  # works on a host where the model cannot be loaded in-process.
   running: bool
 
   queues: array[RouteClass, Channel[SocketHandle]]
@@ -92,6 +77,8 @@ var
   acceptorCount: int
   listenFd: SocketHandle
 
+## Function purpose: these responses are built by concatenation rather than
+## through a JSON library, so the escaping has to be here.
 proc jsonEscape(s: string): string =
   result = ""
   for c in s:
@@ -102,25 +89,23 @@ proc jsonEscape(s: string): string =
     of '\r': result.add "\\r"
     of '\t': result.add "\\t"
     else:
-      # Every other byte below 0x20 is illegal raw in a JSON string, so a request
-      # path carrying one produced a body no client could parse. The named
-      # escapes above cover only three of them.
+      # Action purpose: every other byte below 0x20 is illegal raw in a JSON
+      # string, so a request path carrying one yields a body no client can
+      # parse. The named escapes above cover only three of them.
       if c < ' ': result.add "\\u" & toHex(ord(c), 4)
       else: result.add c
 
-## Action purpose: bound how long a connection may keep a worker waiting on a
-## client that has stopped sending. `lib/proxy.lua` had a header timeout that
-## could never fire (B-19) because the check sat after a successful read, so a
-## client that connected and sent nothing held a slot until the 600 s coroutine
-## timeout. A socket-level timeout cannot be bypassed that way.
+## Function purpose: bounds how long a connection may hold a worker waiting on a
+## client that has stopped sending. A timeout checked after a successful read
+## never fires for a client that connects and sends nothing; a socket-level one
+## cannot be bypassed that way.
 proc setTimeouts(fd: SocketHandle) =
   var tv = Timeval(tv_sec: posix.Time(ClientTimeoutSec), tv_usec: 0)
   discard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
   discard setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
 
-## Function purpose: read the request line without consuming it, so the worker
-## that ultimately owns the connection can parse the request from the beginning.
-## Returns an empty string if the line never arrives within the socket timeout.
+## Function purpose: peeks rather than reads, so the worker that ends up owning
+## the connection still parses the request from its first byte.
 proc peekPath(fd: SocketHandle): string =
   var buf = newString(PeekBytes)
   for attempt in 0 ..< 8:
@@ -130,10 +115,12 @@ proc peekPath(fd: SocketHandle): string =
     let path = routes.pathFromHead(buf[0 ..< n])
     if path.len > 0:
       return path
-    # Request line not complete yet; the client is still sending.
+    # Request line not complete yet: the client is still sending.
     sleep(5)
   ""
 
+## Function purpose: deliberate database load for the concurrency self-test, and
+## reachable only when the debug endpoints are enabled.
 proc slowQuery(rows: int): (int, float) =
   let t0 = getMonoTime()
   let sql = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < " &
@@ -143,10 +130,12 @@ proc slowQuery(rows: int): (int, float) =
   let n = if res.len > 0 and res[0].len > 0: parseInt(res[0][0]) else: 0
   (n, ms)
 
+## Function purpose: every failure answers a status rather than raising, because
+## a missing asset is an ordinary request and not a server fault.
 proc serveStatic(client: Socket, req: Request) =
-  # A HEAD gets the identical response headers a GET would produce, body
-  # withheld. It was previously served the body as well, which is a protocol
-  # violation and makes a HEAD as expensive on the wire as a GET.
+  # A HEAD gets the identical headers a GET would produce with the body
+  # withheld, which is both the protocol's requirement and the only way HEAD is
+  # cheaper on the wire than GET.
   let headOnly = req.meth == "HEAD"
   let root = staticRootS.get()
   if root.len == 0:
@@ -166,8 +155,8 @@ proc serveStatic(client: Socket, req: Request) =
   client.sendResponse(200, http.contentTypeFor(full), readFile(full),
                       headOnly = headOnly)
 
-## Function purpose: serve one request. The bool result is retained because
-## `upstream.forward` reports whether it took ownership of the socket.
+## Function purpose: the bool result exists because a relay may take ownership
+## of the socket, and the caller must not close one it no longer owns.
 proc handle(client: Socket, class: RouteClass, workerId: int): bool =
   result = false
   let req = http.parseRequest(client)
@@ -179,42 +168,37 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       &""""journal_mode":"{jsonEscape(db.journalMode())}"}}""")
 
   of rcCompletion:
-    # Action purpose: **this is where the core stops being a reverse proxy and
-    # becomes Jenova** (N-30). The request is rewritten before it reaches
-    # `llama-server`: intent detected and stripped, RAG retrieved and injected,
-    # web search run for the websearch intent, a persona chosen, tools stripped
-    # where they do not apply. `pipeline.prepare` owns all of it.
+    # Action purpose: the one point at which this stops being a reverse proxy.
+    # The request is rewritten before it reaches the backend — intent detected
+    # and stripped, retrieval injected, web search run, a persona chosen, tools
+    # stripped where they do not apply — and `prepare` owns all of it.
     #
-    # `/infill` and `/completion` carry a raw prompt with no messages to inject
-    # into, so `prepare` returns them untouched — the check is inside it rather
-    # than duplicated here.
+    # The raw-prompt endpoints have no messages to inject into, so `prepare`
+    # returns them untouched; that check is inside it rather than duplicated.
     var outbound = req
     var cacheKey = ""
-    # E-05: what `pipeline.prepare` did to this request, as response headers.
-    # Built below, once the pipeline has run; empty means the relay is untouched.
+    # What the pipeline did to this request, as response headers. Built below
+    # once it has run; empty means the relay is untouched.
     var diagHeaders = ""
     if req.body.len > 0:
       let prepared = pipeline.prepare(req.body)
       cacheKey = prepared.cacheKey
 
-      # The cache is consulted on the *rewritten* body's key, which is why this
-      # sits after prepare and not before it. proxy.lua:1385.
+      # Keyed on the rewritten body, which is why this sits after `prepare` and
+      # not before it — the same question with different retrieval is a
+      # different request.
       if cacheKey.len > 0:
         let hit = pipeline.cacheLookup(cacheKey)
         if hit.len > 0:
-          # Action purpose: 12d-2. **The stored value is the upstream response
-          # as it went down the wire, head included, so it is replayed verbatim
-          # rather than re-framed.** `sendResponse` would wrap it in a fresh
-          # `200 application/json` head, and that is precisely what made a hit
-          # unreadable: `gui.streamOnce` acts only on lines beginning `data:`,
-          # so a JSON-framed hit rendered an empty reply and saved a blank
-          # assistant turn (D-CD). Replaying the bytes makes a hit
-          # byte-identical to a live reply, so chunked and SSE framing survive
-          # and no reader has to know the difference.
+          # Action purpose: the stored value is the upstream response as it
+          # went down the wire, head included, so it is replayed verbatim rather
+          # than re-framed. Wrapping it in a fresh JSON head makes a hit
+          # unreadable to a streaming client, which renders an empty reply and
+          # saves a blank turn. Byte-identical replay keeps chunked and SSE
+          # framing intact, so no reader has to know the difference.
           #
-          # `X-Cache: HIT` is inserted immediately after the status line — one
-          # insertion at a known offset, **not a parse of the head**, which is
-          # the same discipline `upstream.forward` keeps.
+          # The cache header is inserted immediately after the status line: one
+          # insertion at a known offset, never a parse of the head.
           let cut = hit.find("\r\n")
           if cut >= 0:
             client.send(hit[0 ..< cut + 2] & "X-Cache: HIT\r\n" &
@@ -223,30 +207,22 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
             client.send(hit)
           return false
 
-      # Only the body changes. `upstream.buildRequest` recomputes Content-Length
-      # from it and drops the client's, so setting the header here would be a
-      # no-op — checked rather than assumed, because a stale length silently
-      # truncates the request llama-server reads.
+      # Only the body changes: the request builder recomputes `Content-Length`
+      # from it and drops the client's, so setting the header here is a no-op.
+      # Checked rather than assumed, because a stale length silently truncates
+      # the request the backend reads.
       outbound.body = prepared.body
 
-      # Action purpose: **E-05. `prepare` computes six diagnostics and this
-      # function read two of them.** `intent`, `ragHits`, `webHits`, `hadTools`,
-      # `editorDoc` and `trimmed` were produced on every request and discarded
-      # on every request; outside the self-tests nothing in the product read any
-      # of them.
+      # Action purpose: the pipeline computes six diagnostics per request, and
+      # `trimmed` is why they are worth reporting rather than discarding — it
+      # counts the oldest turns dropped to fit the context budget, which is
+      # silent conversation loss no client can otherwise discover. A header is
+      # the smallest thing that can carry it and reaches every client at once
+      # rather than one interface.
       #
-      # `trimmed` is why this is a defect and not a missing nicety. It is the
-      # count of oldest turns `pipeline.trimHistory` dropped to fit the context
-      # budget — **silent conversation loss, invisible on both surfaces**, with
-      # no way for a user to discover that the model was not shown the start of
-      # their own conversation. A header is the smallest thing that can carry
-      # it, it costs nothing when there is nothing to say, and it reaches every
-      # client at once rather than one UI.
-      #
-      # Emitted only when there is something to report, so an ordinary turn's
-      # response head is unchanged. Every value is an integer or a fixed enum,
-      # so no value here can carry the CRLF that would make this response
-      # splitting — see `upstream.spliceHeaders`.
+      # Emitted only when there is something to say, so an ordinary turn's head
+      # is unchanged. Every value is an integer or a fixed enum, so none can
+      # carry the CRLF that would make this response splitting.
       if prepared.trimmed > 0:
         diagHeaders.add "X-Jenova-Trimmed: " & $prepared.trimmed & "\r\n"
       if prepared.ragHits > 0:
@@ -258,19 +234,17 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       if prepared.editorDoc:
         diagHeaders.add "X-Jenova-Editor-Doc: 1\r\n"
 
-    # Action purpose: 12d-1. The relay tees into `captured` only when there is a
-    # key to file it under, so an uncacheable request pays nothing.
+    # Action purpose: the relay tees only when there is a key to file it under,
+    # so an uncacheable request pays nothing for the cache existing.
     var captured = ""
     var capturePtr: ptr string = nil
     if cacheKey.len > 0: capturePtr = addr captured
     let outcome = upstream.forward(client, outbound, llamaHostS.get(), llamaPort,
                                    capturePtr, diagHeaders)
-    # **Only a complete relay is stored, and only if it can be replayed.**
-    # `roTruncated` means the client went away mid-stream, and filing a fragment
-    # to serve later as a whole answer is D-BQ's truncated attachment again.
-    # `isReplayableStream` is the other half: a body with no `data:` lines would
-    # come back as a blank turn, which is the defect D-CD warns the writer must
-    # not introduce.
+    # Action purpose: only a complete relay is stored, and only if it can be
+    # replayed. A truncated one means the client went away mid-stream, and
+    # filing a fragment to serve later as a whole answer is confidently wrong;
+    # a body with no event lines would come back as a blank turn.
     if cacheKey.len > 0 and outcome == upstream.roComplete and
        pipeline.isReplayableStream(captured):
       pipeline.cacheStore(cacheKey, captured)
@@ -279,12 +253,11 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
     discard upstream.forward(client, req, embedHostS.get(), embedPort)
 
   of rcApi:
-    # Action purpose: the self-test's database load must run in a *different*
-    # class from the stream it is testing, or the two queue behind each other and
-    # the measurement becomes meaningless. It lives here rather than under
-    # /debug because the api class is where real database work belongs, which
-    # also makes the test representative: a completion streaming while API calls
-    # hit the database is exactly normal operation.
+    # Action purpose: the self-test's database load has to run in a different
+    # class from the stream it measures, or the two queue behind each other and
+    # the measurement means nothing. Under the api class rather than debug
+    # because that is where real database work belongs, which also makes the
+    # test representative of normal operation.
     if debugEndpoints and req.path == "/api/_selftest/slow-query":
       let rows = min(req.queryParam("rows", 400_000), 5_000_000)
       let (n, ms) = slowQuery(rows)
@@ -301,8 +274,8 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       return
     if req.path.startsWith("/api/storage"):
       let r = api.handleStorage(req)
-      # A storage download returns file bytes, not JSON, and says so itself.
-      # `proxy.lua:1150` serves these as application/octet-stream.
+      # A storage download returns file bytes rather than JSON and carries its
+      # own content type.
       client.sendResponse(r.status,
         (if r.contentType.len > 0: r.contentType else: "application/json"),
         r.body)
@@ -329,8 +302,8 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
         sleep(interval)
       client.sendEvent("""{"done":true}""")
     of "/debug/hold":
-      # Occupies a worker in this class for a fixed time, to demonstrate that
-      # saturating one class does not starve the others.
+      # Occupies a worker in this class for a fixed time, so a test can
+      # saturate one class and watch the others keep answering.
       sleep(min(req.queryParam("ms", 1000), 60_000))
       client.sendResponse(200, "application/json", """{"held":true}""")
     else:
@@ -339,11 +312,13 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
   of rcStatic:
     if req.meth != "GET" and req.meth != "HEAD":
       # Static is the fallback class, so a stray method lands here rather than
-      # in a handler that understands it.
+      # in a handler that would understand it.
       client.sendResponse(405, "text/plain", "method not allowed")
       return
     serveStatic(client, req)
 
+## Function purpose: one thread's loop over its class's queue. The socket is
+## closed here unless the handler took ownership of it.
 proc classWorker(arg: ClassWorkerArg) {.thread.} =
   while true:
     let fd = queues[arg.class].recv()
@@ -355,15 +330,13 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
     try:
       handedOff = handle(client, arg.class, arg.id)
     except BodyTooLargeError:
-      # Action purpose: A-4. This one exception is answered before the generic
-      # branch below, and it is the only one whose message is given to the
-      # caller — because the caller *is* the sender of the oversized body, so it
-      # carries nothing they did not already know, and without it they get the
-      # undiagnosable grey line G-35 exists to prevent.
+      # Action purpose: the one exception whose message is given to the caller,
+      # because the caller is the sender of the oversized body and it tells them
+      # nothing they did not already know. Without it they get an undiagnosable
+      # failure.
       #
-      # The shape is llama-server's own error envelope rather than a new one, so
-      # `pipeline.classifyError` reads it through the same path as every other
-      # backend error and no second parser is needed.
+      # Shaped as the backend's own error envelope rather than a new one, so the
+      # existing error classifier reads it and no second parser is needed.
       let detail = getCurrentExceptionMsg()
       try:
         client.sendResponse(413, "application/json",
@@ -371,9 +344,9 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
       except CatchableError:
         discard
     except CatchableError:
-      # The message goes to the log, not to the client: it carries filesystem
-      # paths, SQL and internal state, and the caller that triggered the fault is
-      # the last party that should be handed them.
+      # Action purpose: the message goes to the log and not the client. It
+      # carries filesystem paths, SQL and internal state, and the caller that
+      # triggered the fault is the last party that should be handed them.
       let msg = getCurrentExceptionMsg()
       try:
         stderr.writeLine "[server] " & $ClassTable[arg.class].name &
@@ -388,7 +361,7 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
       try: client.close() except CatchableError: discard
   db.closeConn()
 
-## Function purpose: accept and classify only. Handlers never run here, so no
+## Function purpose: accept and classify only. A handler never runs here, so no
 ## handler can stall the accept path — the failure that makes a single-pool
 ## server stop accepting once its workers are busy.
 proc acceptor(arg: AcceptorArg) {.thread.} =
@@ -402,11 +375,13 @@ proc acceptor(arg: AcceptorArg) {.thread.} =
     setTimeouts(cfd)
     let path = peekPath(cfd)
     if path.len == 0:
-      # Client never sent a usable request line within the timeout.
+      # The client never sent a usable request line within the timeout.
       nativesockets.close(cfd)
       continue
     queues[routes.classify(path)].send(cfd)
 
+## Function purpose: binds, spawns every pool and returns the listening
+## descriptor, so a caller holds one handle rather than a thread inventory.
 proc start*(host: string, port: int, root: string,
             llamaHost = "127.0.0.1", llamaPortArg = 8081,
             embedHost = "127.0.0.1", embedPortArg = 8082,
@@ -444,6 +419,8 @@ proc start*(host: string, port: int, root: string,
     createThread(acceptorThreads[i], acceptor, AcceptorArg(id: i, listenFd: listenFd))
   listenFd
 
+## Function purpose: the thread layout as one line, so a self-test and a start-up
+## log report the same thing.
 proc describe*(): string =
   var parts: seq[string]
   for c in RouteClass:
@@ -451,16 +428,21 @@ proc describe*(): string =
   &"{acceptorCount} acceptors, " & parts.join(" ") &
     &" ({routes.totalThreads()} handler threads)"
 
+## Function purpose: signals shutdown and closes the listener, which is what
+## breaks the acceptors out of `accept`. The threads are joined separately.
 proc stop*() =
   running = false
   if listenFd != osInvalidSocket:
     nativesockets.close(listenFd)
     listenFd = osInvalidSocket
-  # Sentinel per worker so each blocking recv() returns and the thread exits.
+  # One sentinel per worker, so each blocking receive returns and its thread
+  # exits rather than being killed mid-request.
   for c in RouteClass:
     for _ in 0 ..< ClassTable[c].threads:
       queues[c].send(osInvalidSocket)
 
+## Function purpose: separate from `stop` so a caller can signal shutdown and do
+## other work before blocking on the threads.
 proc joinAll*() =
   for i in 0 ..< routes.totalThreads():
     joinThread(classThreads[i])

@@ -1,34 +1,22 @@
-## Script function and purpose: process lifecycle — starting, supervising and
-## stopping `llama-server` and the embedding server, replacing the orchestration
-## half of `bin/jenova-ca`.
+## Script function and purpose: starting, supervising and stopping the two
+## inference backends. `llama-server` is the engine, so this harness owns its
+## lifecycle: building its command line from the active hardware profile,
+## starting it, noticing when it dies, and stopping it cleanly.
 ##
-## **Ruling D-AF makes this load-bearing rather than convenience.** `llama-server`
-## is the inference engine, so the harness has to own its lifecycle: something
-## must build its command line from the active hardware profile, start it, notice
-## when it dies, and stop it cleanly. `bin/jenova-ca` did that in shell; this is
-## the same job in the binary that already owns configuration and paths.
+## The HTTP server and this supervisor are the same process by design. Split
+## across two, "the daemon is up" and "the client port answers" can disagree,
+## and a wedged front end reads as healthy.
 ##
-## **B-13 is fixed by construction here.** In `jenova-ca` the client-facing port
-## was never started by `--daemon` — `PROXY_PID` was declared and never assigned,
-## the proxy was spawned by the tray instead, and `_probe_health` targeted
-## `$LLAMA_PORT`, so a wedged proxy read as healthy. In this core the HTTP server
-## and the backend supervisor are the same process, so "the daemon is up" and
-## ":8080 is answering" cannot disagree.
-##
-## The argument construction reproduces `bin/jenova-ca:119-200` exactly, because
-## those flags are the accumulated result of tuning against real hardware and a
-## paraphrase would change generation behaviour in ways no test here would catch.
+## The argument construction below is tuning accumulated against real hardware;
+## a paraphrase changes generation behaviour in ways nothing here would catch.
 
-## `osproc` and `strtabs` were dropped 2026-08-31: both became unused when
-## `start` moved from `startProcess` to fork/dup2/execv (see the note at `start`),
-## and an import that no longer carries anything is dead code by the Codebase
-## Integrity Standard's third class.
 import std/[os, strutils, strformat, posix, times, net]
 import ./config
 import ./paths
 
-# `std/posix` binds `fcntl` and `lockf` but none of the flag constants they
-# take, so these come from the headers rather than being written as numbers.
+# Action purpose: `std/posix` binds `fcntl` and `lockf` but none of the flag
+# constants they take, so these come from the headers rather than being written
+# as numbers a libc could disagree with.
 let
   FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
   FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
@@ -51,44 +39,44 @@ type
     embedPort*: int
     bindHost*: string
 
+## Function purpose: named here so the writer, `stop` and the watchdog cannot
+## disagree about where a backend records itself.
 proc pidFileFor(l: Lifecycle, be: Backend): string =
   case be
   of beLlama: l.paths.state / "llama-server.pid"
   of beEmbed: l.paths.state / "llama-embed.pid"
 
+## Function purpose: exported because the window reads the tail of this file to
+## report why a backend failed to start.
 proc logFileFor*(l: Lifecycle, be: Backend): string =
   case be
   of beLlama: l.paths.logDir / "llama-server.log"
   of beEmbed: l.paths.logDir / "llama-embed.log"
 
+## Function purpose: resolves the ports and bind host once, so nothing below
+## re-reads configuration and gets a different answer mid-run.
 proc init*(p: Paths, c: Config): Lifecycle =
   result.paths = p
   result.cfg = c
   result.llamaPort = c.getInt("LLAMA_PORT", 8081)
   result.embedPort = c.getInt("LLAMA_EMBED_PORT", 8082)
-  # Backends bind loopback regardless of --lan: ruling S-0 and D-E. Only the
-  # client-facing port follows the LAN flag, so `--lan` cannot publish two
+  # Action purpose: backends bind loopback whatever the LAN flag says. Only the
+  # client-facing port follows it, so enabling LAN mode cannot publish two
   # unauthenticated inference endpoints to the network.
   result.bindHost = c.get("BACKEND_BIND_HOST", "127.0.0.1")
 
-## Function purpose: count the devices in a comma-separated `DEVICES` value.
-## `-ts` is only meaningful with more than one, which is why `jenova-ca:157`
-## counts before deciding to pass it.
+## Function purpose: the tensor-split flag is only meaningful with more than one
+## device, so the count decides whether it is passed at all.
 proc deviceCount(devices: string): int =
   if devices.strip().len == 0: return 0
   for d in devices.split(','):
     if d.strip().len > 0: inc result
 
-## Function purpose: build `llama-server`'s argument vector from the active
-## profile, reproducing `bin/jenova-ca:119-236`.
-##
-## Two branches carry real tuning intent and are kept as they are:
-##
-## * **`NGL_AGENT=all`** uses `-fitt` auto-fit, and adds `-ts` only when more
-##   than one device is present. This is the dual-GPU path.
-## * **An explicit layer count** uses `-ngl N` and **skips `-fitt` and `-ts`
-##   entirely** — they conflict with an explicit count, and passing both is how
-##   a single-GPU UMA profile ends up mis-offloaded.
+## Function purpose: the agent backend's argument vector, built from the active
+## profile. Two branches carry real tuning intent: `all` layers uses auto-fit and
+## adds a tensor split only with more than one device, while an explicit layer
+## count skips both — they conflict with an explicit count, and passing them
+## together is how a single-GPU profile ends up mis-offloaded.
 proc llamaArgs*(l: Lifecycle): seq[string] =
   let c = l.cfg
   let modelPath = c.get("MODEL_PATH")
@@ -120,9 +108,9 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
   result.add ["-np", $c.getInt("NUM_SLOTS", 1)]
   result.add ["-t", $c.getInt("THREADS", 4)]
   result.add ["-tb", $c.getInt("THREADS_BATCH", 4)]
-  # A key in `config.Keys` is always present, empty when no conf sets it — so
-  # the default belongs here, not in `get`, which only substitutes for a missing
-  # key. `-fa ""` is what that mistake produces.
+  # Action purpose: a listed key is always present and merely empty when no conf
+  # sets it, so the default belongs here rather than in `get`, which substitutes
+  # only for a missing key. Getting that wrong emits a flag with an empty value.
   let flashAttn = c.get("JENOVA_FLASH_ATTN").strip
   result.add ["-fa", if flashAttn.len > 0: flashAttn else: "auto"]
   if c.getInt("JENOVA_MLOCK", 0) != 0: result.add "--mlock"
@@ -130,7 +118,7 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
   result.add ["-cb", "--spm-infill", "--cache-prompt", "--offline"]
   result.add ["--host", l.bindHost, "--port", $l.llamaPort]
 
-  # Speculative decoding, when a draft model exists and is not disabled.
+  # Speculative decoding, only when a draft model exists and is not disabled.
   let draftPath = c.get("MODEL_DRAFT")
   if draftPath.len > 0 and fileExists(draftPath) and c.getInt("JENOVA_DRAFT", 1) != 0:
     result.add ["-md", draftPath]
@@ -141,10 +129,10 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
     result.add ["--spec-draft-n-max", "16", "--spec-draft-n-min", "4",
                 "--spec-draft-p-min", "0.6"]
 
-## Function purpose: the embedding server's arguments, from `jenova-ca:710-721`.
-## **Vulkan is disabled and offload is zero deliberately** — the embedding model
-## runs on CPU so it does not compete for VRAM with the agent model, which on a
-## 4 GB card is the difference between both loading and neither.
+## Function purpose: Vulkan is disabled and offload is zero deliberately — the
+## embedding model runs on CPU so it does not compete for VRAM with the agent
+## model, which on a small card is the difference between both loading and
+## neither.
 proc embedArgs*(l: Lifecycle): seq[string] =
   @["-m", l.cfg.get("MODEL_EMBED"),
     "--embedding", "-dev", "none", "-ngl", "0",
@@ -153,81 +141,53 @@ proc embedArgs*(l: Lifecycle): seq[string] =
     "--offline",
     "--host", l.bindHost, "--port", $l.embedPort]
 
+## Function purpose: an absent or unparseable pid file answers zero, which every
+## caller already treats as "not running".
 proc readPid(path: string): int =
   if not fileExists(path): return 0
   try: parseInt(readFile(path).strip()) except CatchableError: 0
 
-## Function purpose: collect a child that has already exited, so it stops being
-## a zombie. **This is the whole of defect E-01 and it has four symptoms, not
-## one.**
+## Function purpose: `setsid` detaches the controlling terminal but does not
+## reparent, so a backend stays this process's child — and an unreaped one
+## becomes a zombie for which `kill(pid, 0)` still succeeds. Every liveness
+## answer below is wrong without this: a dead backend reads as running, `stop`
+## spins its grace period on a corpse, and the watchdog logs restarts it never
+## performed.
 ##
-## `start` forks (below) and nothing ever waited on the result, so an exited
-## `llama-server` stayed in the process table as a zombie — `setsid` detaches
-## the controlling terminal, it does not reparent, so the backend remains this
-## process's child. `kill(pid, 0)` **succeeds for a zombie**, which is what made
-## the four symptoms follow mechanically from `isAlive` below:
+## Action purpose: a targeted `waitpid` rather than ignoring `SIGCHLD`. Ignoring
+## it auto-reaps process-wide and is one line, but it also stops every
+## `waitForExit` elsewhere in this program from collecting its own child, and
+## four callers depend on that return value.
 ##
-## 1. `state` reported a dead backend as `running`.
-## 2. `stop` spun the full 2 s grace period on an `isAlive` that never went
-##    false, SIGKILLed a corpse, and returned `false` — so `stopAll` reported a
-##    failed shutdown on every clean exit.
-## 3. `start` saw `existing.running` and returned the zombie's pid **without
-##    starting anything**.
-## 4. `watchOnce` therefore logged `"restarted (pid N)"` and reset its failure
-##    counter, for ever, while the port stayed dead. The watchdog reported
-##    restarts it had never performed.
-##
-## Action purpose: **`waitpid` here rather than `SIGCHLD` set to `SIG_IGN`.**
-## Ignoring SIGCHLD would auto-reap process-wide and is one line, but it also
-## makes every `osproc.waitForExit` in this program unable to collect its own
-## child — `gui.runCapture`, `fssync.gitRun`, `hardware.detect` and
-## `websearch.search` all depend on that return value. A targeted, non-blocking
-## `waitpid` collects only the pid asked about and changes nothing else.
-##
-## `WNOHANG` means this never blocks: a child that is still running is left
-## alone and `waitpid` returns 0. A pid that is *not* this process's child —
-## which is what a pidfile written by a previous run holds — fails with
-## `ECHILD` and changes nothing, so the `kill` test below remains the authority
-## for that case.
+## `WNOHANG` means this never blocks. A pid that is not this process's child —
+## which is what a pid file from a previous run holds — fails with `ECHILD` and
+## changes nothing, so the `kill` test below stays the authority there.
 proc reapIfExited(pid: int) =
   if pid <= 0: return
   var status: cint = 0
   discard waitpid(Pid(pid), status, WNOHANG)
 
-## Function purpose: is this pid alive? `kill(pid, 0)` tests for existence and
-## permission without sending a signal — the same check `jenova-ca:404` makes
-## with `kill -0`.
-##
-## The reap runs first, and it must: `kill(pid, 0)` cannot distinguish a running
-## process from a zombie, so without it this answers `true` for a backend that
-## has already exited. See `reapIfExited`.
+## Function purpose: `kill(pid, 0)` tests existence and permission without
+## sending a signal, but cannot distinguish a running process from a zombie — so
+## the reap has to run first or this answers true for a backend that has exited.
 proc isAlive*(pid: int): bool =
   if pid <= 0: return false
   reapIfExited(pid)
   kill(pid.Pid, 0) == 0
 
+## Function purpose: pairs the pid with a liveness answer, so no caller can act
+## on one without the other.
 proc state*(l: Lifecycle, be: Backend): ProcState =
   let pid = readPid(pidFileFor(l, be))
   ProcState(pid: pid, running: isAlive(pid))
 
-## Function purpose: start one backend, detached, with its output to a log.
-## Returns 0 if it was already running or could not start.
+## Function purpose: the pid file is not sufficient evidence on its own — lose
+## it while the process lives and the slot reads as free, so a second backend is
+## started that then fails to bind and dies. The port is the authority on
+## whether the slot is occupied.
 ##
-## `LD_LIBRARY_PATH` is set from the resolved lib directory because
-## `llama-server` needs its shared libraries and the source tree keeps them in
-## `external/ext_bin/bin` — the same reason `jenova-ca:146` sets it. **This is
-## also N-23's fix on the supervisor side:** the path is resolved from
-## `paths.llamaLibDir`, which already distinguishes an installed layout from a
-## source tree, rather than being hard-coded to either.
-## Function purpose: is anything already bound to this backend's port? The pid
-## file is not sufficient evidence on its own — if it is deleted or lost while
-## the process lives, `state()` reports "not running" and a second
-## `llama-server` gets started, which then fails to bind and dies. The port is
-## the authority on whether the slot is occupied.
-##
-## `bin/jenova-ca:848` covered the same case with
-## `pkill -f "llama-server.*--port.*$PORT"`. That kills by matching a command
-## line, which can match something the harness does not own; checking the bind
+## Action purpose: checking the bind rather than matching a command line to kill.
+## A pattern match can hit a process this harness does not own; a bind check
 ## refuses to start a duplicate without killing anything.
 proc portInUse*(port: int): bool =
   var s: Socket
@@ -242,29 +202,23 @@ proc portInUse*(port: int): bool =
       if not s.isNil: s.close()
     except CatchableError: discard
 
-## The ceiling on one backend log before it is rotated. `llama-server` prints
-## device enumeration and per-layer offload progress on every load — the note at
-## `start` below puts that at comfortably more than 64 KB per start — and the
-## watchdog restarts a failing backend every 60 s, so an unrotated log grows
-## without bound inside the USER's own home directory. Nothing anywhere in this
-## program deleted from `var/log` before this (defect M-04).
+## The ceiling on one backend log before rotation. Each start prints device
+## enumeration and per-layer offload progress — comfortably more than 64 KB —
+## and the watchdog restarts a failing backend every minute, so an unrotated log
+## grows without bound inside the user's home directory.
 const MaxLogBytes* = 8 * 1024 * 1024
 
-## Function purpose: keep one backend log and one previous generation, so the
-## pair is bounded at roughly `2 * MaxLogBytes` plus whatever the current run
-## adds.
+## Function purpose: keeps one log and one previous generation, so the pair is
+## bounded at roughly twice the ceiling plus whatever the current run adds.
 ##
-## Action purpose: **rotation happens at start, not while running.** A mid-run
-## rotation would have to move a file two `dup2`'d descriptors are still writing
-## to, which on a log opened `O_APPEND` means the child keeps writing to the
-## renamed inode and the new file stays empty — a rotation that loses exactly
-## the output it was meant to preserve. Rotating before the fork is the only
-## point at which no descriptor is open on it. The bound is therefore "per
-## start" rather than absolute, which is honest and is the same discipline
-## `lastBackendError` already assumes when it reads only the tail.
+## Action purpose: rotation happens at start, never while running. A mid-run
+## rotation moves a file two duplicated descriptors are still writing to, and on
+## a log opened for append the child keeps writing to the renamed inode while
+## the new file stays empty — losing exactly the output it meant to preserve.
+## Before the fork is the only point at which no descriptor is open on it.
 ##
-## Failure is deliberately silent: a log that cannot be rotated is not a reason
-## to refuse to start a backend.
+## Failure is silent by design: a log that cannot be rotated is not a reason to
+## refuse to start a backend.
 proc rotateLog*(path: string) =
   try:
     if not fileExists(path): return
@@ -275,45 +229,43 @@ proc rotateLog*(path: string) =
   except CatchableError:
     discard
 
+## Function purpose: one lock file per backend, so starting the agent model does
+## not block starting the embedder.
 proc lockFileFor(l: Lifecycle, be: Backend): string =
   pidFileFor(l, be) & ".lock"
 
-## The window between "nothing is running" and "the pid file names my child" is
-## open across processes, not just threads: the desktop app's control worker and
-## a separate `jenova-core serve` watchdog can both reach `start` for the same
+## Function purpose: the window between "nothing is running" and "the pid file
+## names my child" is open across processes, not only threads — the window's
+## control worker and a separate `serve` watchdog can both reach `start` for one
 ## backend, both see the slot free, and both fork. The later pid-file write then
-## names whichever child lost the bind, and the watchdog supervises a process
-## that is about to die.
+## names whichever child lost the bind.
 ##
-## `lockf` is the right primitive because the kernel releases the lock when the
-## holder exits: a process killed mid-start leaves nothing to clean up, which a
-## lock file created with `O_EXCL` would.
+## Action purpose: `lockf` rather than an `O_EXCL` lock file, because the kernel
+## releases it when the holder exits and a process killed mid-start leaves
+## nothing to clean up.
 ##
-## Failing to take the lock is not a reason to refuse to start — a state
-## directory that cannot be written is already reported by everything else here
-## — so the descriptor is optional and the caller proceeds without it.
-##
-## That fallback is why the wait is `F_TLOCK` in a bounded retry rather than a
-## blocking `F_LOCK`. The section below covers `portInUse`, a fork and the exec
-## handshake, all short — but a holder stopped or wedged partway through would
-## make a blocking wait indefinite, and the caller here is the serial control
-## worker or the watchdog. Losing the race is worth a second of waiting and then
-## proceeding unlocked; it is not worth hanging backend control.
-##
-## The bound is a retry count rather than a clock so it cannot be moved by one.
+## Failing to take the lock is not a reason to refuse to start, so the descriptor
+## is optional. That is also why the wait is a bounded retry rather than a
+## blocking one: a holder wedged partway through would make a blocking wait
+## indefinite, and the caller is the serial control worker or the watchdog.
+## Losing the race is worth a second of waiting; it is not worth hanging backend
+## control. The bound is a retry count rather than a clock so it cannot be moved
+## by one.
 const
   LockTries = 100
   LockRetryMs = 10
 
+## Function purpose: a negative answer means the caller proceeds unlocked, which
+## is deliberate — see the note above `LockRetries`.
 proc lockStart(l: Lifecycle, be: Backend): cint =
   result = -1
   try:
     let fd = posix.open(lockFileFor(l, be).cstring,
                         O_WRONLY or O_CREAT, 0o644.Mode)
     if fd < 0: return -1
-    # POSIX record locks are not inherited across `fork`, but the descriptor is,
-    # and nothing closes it before `execve` — so it is marked close-on-exec
-    # rather than left open in `llama-server` for its lifetime.
+    # Action purpose: POSIX record locks are not inherited across `fork`, but
+    # the descriptor is and nothing closes it before `execve` — so it is marked
+    # close-on-exec rather than left open in the backend for its lifetime.
     discard fcntl(fd, FdSetFd, FdCloexec)
     for _ in 0 ..< LockTries:
       if lockf(fd, LockTry, 0) == 0:
@@ -324,11 +276,16 @@ proc lockStart(l: Lifecycle, be: Backend): cint =
   except CatchableError:
     result = -1
 
+## Function purpose: released explicitly rather than left to process exit,
+## because the caller is a long-lived worker and not a short command.
 proc unlockStart(fd: cint) =
   if fd < 0: return
   discard lockf(fd, LockRelease, 0)
   discard posix.close(fd)
 
+## Function purpose: answers the new pid, zero if it was already running, or a
+## negative number if something else holds the port — three outcomes the caller
+## has to tell apart before reporting a restart.
 proc start*(l: Lifecycle, be: Backend): int =
   if l.state(be).running:
     return l.state(be).pid
@@ -338,15 +295,14 @@ proc start*(l: Lifecycle, be: Backend): int =
   defer: unlockStart(lock)
 
   # Asked again with the lock held: another process may have started this
-  # backend while this one was waiting, and the answer from before the wait is
-  # the stale one.
+  # backend while this one waited, making the earlier answer stale.
   let existing = l.state(be)
   if existing.running:
     return existing.pid
 
-  # An orphan holding the port: the pid file says nothing is running, but
-  # something is. Starting a second copy would produce a bind failure and a
-  # confusing log rather than an honest refusal.
+  # An orphan holding the port: the pid file says nothing is running but
+  # something is. A second copy would produce a bind failure and a confusing
+  # log rather than an honest refusal.
   let port = if be == beLlama: l.llamaPort else: l.embedPort
   if portInUse(port):
     return -1
@@ -355,10 +311,9 @@ proc start*(l: Lifecycle, be: Backend): int =
   if not fileExists(binary):
     return 0
 
-  # Action purpose: refuse to exec with no model rather than handing
-  # `llama-server` an empty `-m` and letting it fail with its own message. An
-  # unresolved model path is a configuration problem, and the process that owns
-  # the configuration should be the one to say so.
+  # Action purpose: refuse rather than hand the backend an empty `-m` and let it
+  # fail with its own message. An unresolved model path is a configuration
+  # problem, and the process that owns the configuration should say so.
   let modelKey = if be == beLlama: "MODEL_PATH" else: "MODEL_EMBED"
   let model = l.cfg.get(modelKey)
   if model.len == 0 or not fileExists(model):
@@ -374,38 +329,30 @@ proc start*(l: Lifecycle, be: Backend): int =
   let logPath = logFileFor(l, be)
   rotateLog(logPath)
 
-  # Action purpose: fork/dup2/exec rather than `startProcess`, and the reason is
-  # a defect this replaced rather than a preference.
-  #
-  # `startProcess` with `poStdErrToStdOut` hands the child a **pipe**, and a pipe
-  # nobody reads fills at roughly 64 KB and then **blocks the writer**.
-  # `llama-server` prints device enumeration and per-layer offload progress while
-  # loading a model — comfortably more than 64 KB — so it stalled mid-load and
-  # never finished. The failure looked like "the model did not load" and was
-  # invisible, because the same defect meant nothing was captured to diagnose it.
-  #
-  # Redirecting straight to a file, as `bin/jenova-ca` does with `> "$log" 2>&1`,
-  # removes the pipe entirely: there is no buffer to fill and no reader to need.
+  # Action purpose: fork/dup2/exec rather than `startProcess`, because
+  # `startProcess` hands the child a pipe and a pipe nobody reads fills at
+  # roughly 64 KB and then blocks the writer. Loading a model prints device
+  # enumeration and per-layer offload progress well past that, so the backend
+  # stalls mid-load and never finishes — and nothing is captured to say why.
+  # Redirecting straight to a file removes the pipe: no buffer to fill, no
+  # reader needed.
   var argv: seq[string] = @[binary]
   argv.add args
 
-  # Action purpose: **E-02. Every allocation happens here, in the parent, before
-  # the fork — and the child calls nothing that allocates.**
+  # Action purpose: every allocation happens here in the parent, before the
+  # fork, and the child calls nothing that allocates.
   #
   # POSIX permits only async-signal-safe calls between `fork` and `exec` in a
-  # multithreaded process, and this process is multithreaded: `start` is reached
-  # from the GUI's control worker (`gui.ctlWorker`) while the GTK thread and the
-  # stream thread are running, and from `serve`'s watchdog thread while fourteen
-  # handler threads are. The previous child called `getEnv`, `putEnv` twice,
-  # `dirExists` and `allocCStringArray` — `getenv`/`setenv` allocate through the
-  # **process-wide libc malloc**, so a fork taken while any other thread held
-  # that lock left the child deadlocked before `execv`, presenting as "the
-  # backend never starts" with nothing in the log to say why.
+  # multithreaded process, and this one always is — `start` is reached from the
+  # window's control worker while the GTK and stream threads run, and from the
+  # watchdog while fourteen handler threads do. `getenv` and `setenv` allocate
+  # through the process-wide libc malloc, so a fork taken while another thread
+  # holds that lock leaves the child deadlocked before `execve`, presenting as a
+  # backend that never starts with nothing in the log to say why.
   #
-  # The environment is therefore materialised as an explicit `envp` here and
-  # handed to `execve`, rather than being mutated in the child with `putEnv`.
-  # The child is left with `setsid`, `open`, `dup2`, `close` and `execve` — all
-  # async-signal-safe.
+  # The environment is therefore materialised as an explicit `envp` here. The
+  # child is left with `setsid`, `open`, `dup2`, `close` and `execve`, all of
+  # which are async-signal-safe.
   var envSeq: seq[string] = @[]
   block:
     let libDir = l.paths.llamaLibDir
@@ -414,9 +361,8 @@ proc start*(l: Lifecycle, be: Backend): int =
       let existingPath = getEnv("LD_LIBRARY_PATH")
       ldPath = if existingPath.len > 0: libDir & ":" & existingPath else: libDir
     for key, val in envPairs():
-      # The two this loop is about to set are dropped here so the child cannot
-      # inherit a stale copy alongside the new one; `execve` takes the array
-      # verbatim and would keep both.
+      # Dropped here so the child cannot inherit a stale copy alongside the new
+      # one: `execve` takes the array verbatim and would keep both.
       if ldPath.len > 0 and key == "LD_LIBRARY_PATH": continue
       if be == beEmbed and key == "GGML_VULKAN_DISABLE": continue
       envSeq.add key & "=" & val
@@ -430,18 +376,15 @@ proc start*(l: Lifecycle, be: Backend): int =
   var cargs = allocCStringArray(argv)
   var cenv = allocCStringArray(envSeq)
 
-  # `fork` succeeding says only that a process exists, not that it became
-  # `llama-server`. A binary that is present but not executable, or built for
-  # another architecture, fails in `execve` — after the pid is known — so the
-  # parent published a pid file for a process already exiting 127, and
-  # `watchOnce` cleared its failure counter and logged a restart that had not
-  # happened.
+  # Action purpose: `fork` succeeding says a process exists, not that it became
+  # the backend. A binary present but not executable, or built for another
+  # architecture, fails in `execve` — after the pid is known — so without this
+  # the parent publishes a pid file for a process already exiting.
   #
-  # The pipe closes the gap. Its write end is close-on-exec, so a successful
-  # `execve` closes it and the parent's read returns 0; a failed one writes
-  # `errno` first, which is the only thing distinguishing the two from here.
-  # `write` and `_exit` are both async-signal-safe, so the child stays within
-  # what POSIX permits between `fork` and `exec`.
+  # The write end is close-on-exec, so a successful `execve` closes it and the
+  # parent's read returns 0; a failed one writes `errno` first, which is the
+  # only thing distinguishing the two from here. `write` and `_exit` are both
+  # async-signal-safe, so the child stays inside what POSIX permits.
   var efd: array[0..1, cint] = [cint(-1), cint(-1)]
   let haveHandshake = pipe(efd) == 0
   if haveHandshake:
@@ -456,9 +399,9 @@ proc start*(l: Lifecycle, be: Backend): int =
     deallocCStringArray(cenv)
     return 0
   if pid == 0:
-    # Child. Nothing below allocates. Detach from the controlling terminal so
-    # the backend survives this process exiting, then point stdout and stderr at
-    # the log before exec.
+    # Child. Nothing below allocates. Detached from the controlling terminal so
+    # the backend survives this process exiting, then stdout and stderr are
+    # pointed at the log before exec.
     if haveHandshake: discard posix.close(efd[0])
     discard setsid()
     let fd = posix.open(logPath.cstring,
@@ -470,25 +413,22 @@ proc start*(l: Lifecycle, be: Backend): int =
     discard posix.close(0)
 
     discard execve(binary.cstring, cargs, cenv)
-    # Only reached if execve failed; the parent already has the pid, so exiting
-    # non-zero is what makes the failure visible to the next status check.
+    # Only reached if `execve` failed; the parent already has the pid, so
+    # exiting non-zero is what makes the failure visible to the next check.
     #
-    # Action purpose: **`exitnow`, not `quit`, and this is the same defect as
-    # the one the block above exists to fix.** `quit` runs the procedures
-    # registered with `addExitProc` in LIFO order and flushes the C streams;
-    # in a forked child of a multithreaded process those handlers run against
-    # state inherited mid-mutation from threads that do not exist here, which
-    # is a deadlock in exactly the situation this path already represents — a
-    # failure. `exitnow` is Nim's binding for `_exit(2)`: immediate
-    # termination, no handlers, no flush. E-02 hoisted every allocation out of
-    # the child and then left the one call that undoes the point of it.
+    # Action purpose: `exitnow` rather than `quit`, for the same reason the
+    # block above exists. `quit` runs the registered exit procedures and flushes
+    # the C streams, and in a forked child of a multithreaded process those run
+    # against state inherited mid-mutation from threads that do not exist here —
+    # a deadlock on the one path that is already a failure. `exitnow` is
+    # `_exit(2)`: immediate, no handlers, no flush.
     if haveHandshake:
       var why = errno
       discard posix.write(efd[1], addr why, sizeof(cint))
     posix.exitnow(127)
 
-  # Parent only. The child either replaced its image or exited, so neither array
-  # is reachable from it any more.
+  # Parent only: the child either replaced its image or exited, so neither array
+  # is reachable from it.
   deallocCStringArray(cargs)
   deallocCStringArray(cenv)
 
@@ -496,7 +436,7 @@ proc start*(l: Lifecycle, be: Backend): int =
   if haveHandshake:
     discard posix.close(efd[1])
     # Blocks only until `execve` resolves either way: on success the
-    # close-on-exec descriptor is closed for us and this reads 0.
+    # close-on-exec descriptor is closed for us and this reads zero.
     if posix.read(efd[0], addr execErr, sizeof(cint)) <= 0: execErr = 0
     discard posix.close(efd[0])
 
@@ -523,16 +463,14 @@ proc start*(l: Lifecycle, be: Backend): int =
     discard
   pid
 
-## Function purpose: stop a backend. SIGTERM, a grace period, then SIGKILL —
-## the escalation `jenova-ca:373-386` performs, because `llama-server` needs a
-## moment to release GPU memory and killing it outright can leave the device in
-## a state the next start has to recover from.
+## Function purpose: SIGTERM, a grace period, then SIGKILL. The grace matters
+## because a backend needs a moment to release GPU memory, and killing it
+## outright leaves the device in a state the next start has to recover from.
 proc stop*(l: Lifecycle, be: Backend, graceMs = 2000): bool =
   let st = l.state(be)
-  # `removeFile` raises on a pid file that is unlinkable — a read-only state
-  # directory, a permission change. That exception escaped `stop` and therefore
-  # `stopAll`, turning a cleanup failure into a failed shutdown. `tryRemoveFile`
-  # reports rather than raises, and the process has already been signalled.
+  # Action purpose: `removeFile` raises on an unlinkable pid file, and that
+  # exception would escape here and turn a cleanup failure into a failed
+  # shutdown. The process has already been signalled by this point.
   if not st.running:
     discard tryRemoveFile(pidFileFor(l, be))
     return true
@@ -550,15 +488,15 @@ proc stop*(l: Lifecycle, be: Backend, graceMs = 2000): bool =
   discard tryRemoveFile(pidFileFor(l, be))
   not isAlive(st.pid)
 
+## Function purpose: both backends together, reporting each separately, because
+## the agent model starting while the embedder fails is a normal state.
 proc startAll*(l: Lifecycle): tuple[llama, embed: int] =
   (l.start(beLlama), l.start(beEmbed))
 
-## Function purpose: is a backend answering HTTP, not merely holding a pid?
-## **The distinction is the whole point of the watchdog.** `jenova-ca:258` probes
-## the port for exactly this reason: a `llama-server` that has wedged — out of
-## VRAM mid-load, or stuck on a request — keeps its pid and stops serving.
-## A pid check alone reports that as healthy, which is the failure mode B-13
-## produced from the other direction.
+## Function purpose: answering HTTP, not merely holding a pid — which is the
+## whole point of the watchdog. A backend that has wedged, out of VRAM mid-load
+## or stuck on a request, keeps its pid and stops serving, and a pid check alone
+## reports that as healthy.
 proc healthy*(l: Lifecycle, be: Backend, timeoutMs = 2000): bool =
   let port = if be == beLlama: l.llamaPort else: l.embedPort
   var s: Socket
@@ -576,41 +514,37 @@ proc healthy*(l: Lifecycle, be: Backend, timeoutMs = 2000): bool =
       if not s.isNil: s.close()
     except CatchableError: discard
 
+## Function purpose: stops both before answering, so one failing to stop does
+## not leave the other running.
 proc stopAll*(l: Lifecycle): bool =
   let a = l.stop(beLlama)
   let b = l.stop(beEmbed)
   a and b
 
-## Function purpose: the supervision loop, replacing `bin/jenova-ca:453`'s
-## `_watchdog`. Runs on its own thread inside `serve`, so the harness supervises
-## its own engine rather than depending on a separate shell process — which is
-## what made B-13 possible in the first place.
+## Function purpose: the supervision loop, on its own thread inside `serve`, so
+## the harness supervises its own engine rather than depending on a separate
+## process that can disagree with it. It checks health rather than liveness: a
+## wedged backend keeps its pid and only the port tells the truth.
 ##
-## The three constants are `jenova-ca`'s and are kept:
-##
-## * **30 s interval** — long enough that a model still loading is not mistaken
-##   for a dead one.
-## * **3 consecutive failures** before acting — a single missed probe during a
-##   long prompt ingestion is not a fault, and restarting on one would be worse
-##   than the fault.
-## * **60 s restart cooldown** — without it a backend that cannot start (bad
-##   device, missing model) is restarted every interval forever, which turns a
-##   configuration error into a fork bomb.
-##
-## **It checks health, not liveness.** A wedged `llama-server` keeps its pid; only
-## the port tells the truth.
+## Action purpose: each of the three constants prevents a distinct failure. The
+## interval is long enough that a model still loading is not mistaken for a dead
+## one; the failure count means a single missed probe during a long prompt
+## ingestion is not a fault; and the cooldown stops a backend that cannot start
+## at all from being restarted every interval for ever.
 type WatchConfig* = object
   intervalMs*: int
   cooldownMs*: int
   maxFailures*: int
 
+## Function purpose: the constants in one value, so a test can shorten the
+## interval without editing the module.
 proc defaultWatch*(): WatchConfig =
   WatchConfig(intervalMs: 30_000, cooldownMs: 60_000, maxFailures: 3)
 
+## Function purpose: one tick, separated from the loop so it can be asserted
+## without waiting out an interval. An empty line means nothing happened.
 proc watchOnce*(l: Lifecycle, be: Backend, failures: var int,
                 lastRestart: var float, wc: WatchConfig): string =
-  ## One tick. Returns a log line, or empty when nothing happened. Separated
-  ## from the loop so it can be tested without waiting 30 seconds.
   let st = l.state(be)
   if st.running and l.healthy(be):
     if failures > 0:
@@ -629,11 +563,10 @@ proc watchOnce*(l: Lifecycle, be: Backend, failures: var int,
   lastRestart = now
   discard l.stop(be)
   let pid = l.start(be)
-  # `start` returns -1 when the port is held by something this harness did not
-  # start, which is a failure and not a pid. Testing only for 0 logged
-  # "restarted (pid -1)" and cleared the failure counter, so the watchdog then
-  # reported a healthy backend that had never come up. Failures are reset only
-  # on a restart that actually produced a process.
+  # Action purpose: a negative answer means the port is held by something this
+  # harness did not start, which is a failure and not a pid. Testing only for
+  # zero would clear the failure counter and report a restart that never
+  # happened, so failures reset only on a restart that produced a process.
   let port = if be == beLlama: l.llamaPort else: l.embedPort
   if pid < 0:
     return &"{be}: restart FAILED — port {port} is held by another process"
@@ -642,10 +575,9 @@ proc watchOnce*(l: Lifecycle, be: Backend, failures: var int,
   failures = 0
   &"{be}: restarted (pid {pid})"
 
-## Function purpose: render status for the `status` verb. Reports each backend
-## separately rather than collapsing to one word, because "the agent model is up
-## but embeddings are not" is a real and common state — it is exactly what
-## `search.lua` degrades to, and hiding it is how B-14 stayed invisible.
+## Function purpose: reports each backend separately rather than collapsing to
+## one word, because the agent model being up while embeddings are not is a real
+## and common state, and retrieval degrades quietly when it happens.
 proc describe*(l: Lifecycle): string =
   var lines: seq[string]
   for be in [beLlama, beEmbed]:
