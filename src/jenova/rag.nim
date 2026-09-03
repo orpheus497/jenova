@@ -416,7 +416,22 @@ proc indexNote*(id, title, content: string): bool =
 ## name and which matches every query weakly.
 proc indexFileAsset*(id, name, content: string): bool =
   if id.len == 0: return false
-  if content.strip().len == 0:
+  let text = content.strip()
+  # Action purpose: a `data:` payload is bytes wearing a string's clothes, and
+  # it is unfiled exactly as an emptied one is — not merely skipped — because a
+  # row whose content became a data URI may have held real text before.
+  #
+  # Both writers in this product leave an image's `content` empty on purpose
+  # (`gui.fileAttachmentsAsArtefacts`, and the Web UI's uploader sets it only
+  # for text-like types), which is what made the comment above true by
+  # convention rather than by construction. `/api/db/fileAssets` is a public
+  # route and `importData` takes whatever a dump carries, so the shape can
+  # arrive from a third client or another tool's export — and indexing one puts
+  # megabytes of base64 into the FTS body and spends an embedding round trip per
+  # 300 "words" of it, producing a document that matches every query weakly and
+  # nothing well. Checked before the name is prepended, or the prefix would hide
+  # the marker from the test.
+  if text.len == 0 or text.startsWith("data:"):
     forgetFile(fileAssetPath(id))
     return false
   let body = (if name.len > 0: name & "\n\n" else: "") & content

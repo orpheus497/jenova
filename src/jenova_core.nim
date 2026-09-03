@@ -2086,6 +2086,37 @@ proc main() =
         # The other half: when the source resolves to a file that really is in
         # the slot, there is no chain to collapse and activating it would have
         # the clearing loop delete the file the new link points at.
+        # Action purpose: `isRelativeTo` is lexical, so a link sitting at a
+        # perfectly legal name and pointing anywhere on disk satisfied it — and
+        # the slot is built from the RESOLVED target, so the switch wrote a link
+        # out of the tree and reported success. The escape target is placed
+        # outside `models/` entirely, which is the boundary the check names.
+        block aSourceEscapingTheTreeBySymlinkIsRefused:
+          let
+            outside = getTempDir() / "jenova-models-escape.gguf"
+            bait = home / "models" / "instruct" / "bait.gguf"
+          writeFile(outside, "escaped")
+          removeFile(bait)
+          createSymlink(outside, bait)
+          # The lexical test the old code ran, stated so the fixture is known to
+          # exercise the resolved one rather than passing for the old reason.
+          check("the bait passes the lexical containment test",
+                bait.isRelativeTo(home / "models"))
+          var refusedEscape = false
+          try:
+            discard models.switchToPath(home, bait)
+          except ModelError:
+            refusedEscape = true
+          check("a source resolving outside the model tree is refused",
+                refusedEscape)
+          let slotNow =
+            try: expandFilename(home / "models" / "agent" / models.ActiveLink)
+            except OSError: ""
+          check("and nothing in the slot points at it", slotNow != outside,
+                slotNow)
+          removeFile(bait)
+          removeFile(outside)
+
         block aSourceResolvingIntoTheSlotIsRefused:
           let
             planted = home / "models" / "agent" / "planted.gguf"
@@ -2131,6 +2162,23 @@ proc main() =
           writeFile(spare / "alpha.gguf", "a")
           check("without an active link the first in collation order wins",
                 models.agentModel(spare) == spare / "alpha.gguf",
+                models.agentModel(spare))
+          # A backup must not win that fallback either. `X.old.gguf` is a backup
+          # by `isBackup` and a model by the `.gguf` suffix, and it sorts ahead
+          # of `zulu` — so before this it was what `agentModel` answered and
+          # what `lifecycle` would have launched, while `available` and
+          # `targetModel` both refused to show it.
+          writeFile(spare / "aaa.old.gguf", "b")
+          check("the fixture really is a backup by the shared test",
+                models.isBackup(spare / "aaa.old.gguf"))
+          check("and it sorts ahead of the model that should win",
+                "aaa.old.gguf" < "alpha.gguf")
+          check("a backup is not offered as the active model",
+                models.agentModel(spare) == spare / "alpha.gguf",
+                models.agentModel(spare))
+          removeFile(spare / "alpha.gguf")
+          check("nor when it is the only .gguf-suffixed entry left",
+                models.agentModel(spare) == spare / "zulu.gguf",
                 models.agentModel(spare))
           removeDir(spare)
 
@@ -4476,6 +4524,41 @@ proc main() =
             if h.path == rag.notePath("wsidx-keep"): titleHit = true
           check("and the note is still findable by its title", titleHit)
           rag.forgetNote("wsidx-keep")
+
+        # Action purpose: a `data:` payload is bytes wearing a string's clothes.
+        # Both writers here leave an image's `content` empty on purpose, so this
+        # shape arrives only from `/api/db/fileAssets` — a public route — or from
+        # an imported dump; indexing one puts megabytes of base64 into the FTS
+        # body and spends an embedding round trip per 300 "words" of it, for a
+        # document that matches every query weakly and nothing well.
+        block aDataUriIsNotADocument:
+          rag.forgetFileAsset("wsidx-datauri")
+          let uri = "data:image/png;base64," & repeat("iVBORw0KGgo", 200)
+          check("a data URI is refused as a document",
+                not rag.indexFileAsset("wsidx-datauri", "shot.png", uri))
+          check("and nothing was filed under its path",
+                rag.fileAssetPath("wsidx-datauri") notin
+                  indexedPaths(rag.FileRoot))
+          # Unfiled, not merely skipped: the row may have carried real text
+          # before it became a data URI, and leaving that behind keeps
+          # retrieval answering with content the file no longer has.
+          check("real text on the same id files normally",
+                rag.indexFileAsset("wsidx-datauri", "notes.txt",
+                                   "the pooling configuration we agreed"))
+          check("and it is in the index",
+                rag.fileAssetPath("wsidx-datauri") in
+                  indexedPaths(rag.FileRoot))
+          check("a data URI then unfiles what was there",
+                not rag.indexFileAsset("wsidx-datauri", "shot.png", uri))
+          check("leaving nothing behind",
+                rag.fileAssetPath("wsidx-datauri") notin
+                  indexedPaths(rag.FileRoot))
+          # The marker is tested before the name is prepended, or the prefix
+          # would hide it — and a body that merely mentions one is still text.
+          check("a document that only talks about data URIs still indexes",
+                rag.indexFileAsset("wsidx-datauri", "howto.md",
+                                   "paste a data:image/png;base64 URL here"))
+          rag.forgetFileAsset("wsidx-datauri")
 
         # Deleting must stop recall, for the reason deleting a message does.
         rag.forgetNote("wsidx-note")

@@ -24,9 +24,13 @@ type
     failures*: seq[string]   ## entries the cleanup could not clear, by name
     message*: string
 
-## Function purpose: `.old` and `.old.N` backups sit in the same directory and
-## still end in `.gguf`, so every scan that wants active models must skip them.
-## One test rather than three, because three would drift.
+## Function purpose: `.old` and `.old.N` backups sit in the same directory as
+## the models they displaced, so every scan that wants active models must skip
+## them. One test rather than four, because four would drift.
+##
+## The suffix this module writes — `X.gguf.old` — happens to fail an
+## `endsWith(".gguf")` test as well, but that is incidental and not the rule:
+## a hand-made `X.old.gguf` is a backup by this test and a model by that one.
 proc isBackup*(path: string): bool =
   let name = path.extractFilename
   name.endsWith(".old") or name.contains(".old.")
@@ -43,6 +47,15 @@ proc findModel*(dir: string): string =
     if kind notin {pcFile, pcLinkToFile}:
       continue
     if not path.endsWith(".gguf"):
+      continue
+    # Action purpose: the last of the four scans to get this test. `targetModel`
+    # and `available` already skipped backups and this did not, so a name like
+    # `X.old.gguf` — a backup by `isBackup`, a model by the suffix test above —
+    # was refused as a switch source and refused a place in the model list, yet
+    # could still be *run*: this is what `agentModel` falls back to when no
+    # switch has written the slot, and what `discover` reads for the flat root
+    # and for the draft and embed directories.
+    if path.isBackup:
       continue
     found.add path
   if found.len == 0:
@@ -152,6 +165,25 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     agentDir = modelsDir / "agent"
     targetName = modelPath.extractFilename
     targetReal = try: modelPath.expandFilename except OSError: modelPath
+
+  # Action purpose: containment is checked on the RESOLVED path as well as on
+  # the given one, and the given one alone was never enough. `isRelativeTo` is
+  # lexical: `models/instruct/x.gguf` satisfies it while being a symlink to
+  # anywhere on disk, and `linkTarget` below is built from `targetReal` — so the
+  # active slot ended up naming whatever that link pointed at. That is precisely
+  # the escape the check above says it exists to prevent, reached by putting one
+  # symlink in a directory the user already owns.
+  #
+  # **`modelsDir` is resolved too, and that half is load-bearing rather than
+  # symmetry.** `models/` is itself commonly a link on this platform — the
+  # profiles back the model store with `mdmfs` — so testing a resolved target
+  # against an unresolved root would refuse every model on such an install.
+  # Both sides resolved, the comparison is between two real paths.
+  let modelsReal = try: modelsDir.expandFilename except OSError: modelsDir
+  if not targetReal.isRelativeTo(modelsReal):
+    raise newException(ModelError,
+      "model resolves outside " & modelsDir & ": " & modelPath &
+      " -> " & targetReal)
 
   # Action purpose: the active slot cannot be its own source. `isRelativeTo`
   # above admits anything under `models/`, and `models/agent` is under `models/`
