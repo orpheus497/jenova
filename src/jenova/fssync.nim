@@ -526,9 +526,22 @@ proc collectTrash(dir: string, kind: TrashKind, workspace: string,
 proc getTrash*(): seq[TrashEntry] =
   let (workspaces, trash) = roots()
   collectTrash(trash, tkGlobal, "", result)
+  # A-17. `storageTrash` files a deleted storage path under `<workspaces>/.trash`
+  # so its relative structure survives the move, and this walk never looked
+  # there: it enumerated `<workspaces>` as a list of workspaces, met `.trash`
+  # among them, and went looking for `<workspaces>/.trash/.trash`, which cannot
+  # exist. So every `/api/storage` deletion was invisible here and to
+  # `emptyTrash`, and accumulated for ever with no way to list or clear it.
+  #
+  # They are `tkGlobal` because they belong to no one workspace — which also
+  # leaves the JSON `toJson` emits byte-identical, since `workspace` is only
+  # added for `tkWorkspace` and `jca_web` is frozen against that shape (D-Z).
+  collectTrash(workspaces / ".trash", tkGlobal, "", result)
   if dirExists(workspaces):
     for kind, wsPath in walkDir(workspaces):
       if kind != pcDir: continue
+      # Collected above, and it is not a workspace.
+      if wsPath.extractFilename == ".trash": continue
       let wsTrash = wsPath / ".trash"
       if dirExists(wsTrash):
         collectTrash(wsTrash, tkWorkspace, wsPath.extractFilename, result)
@@ -605,6 +618,61 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
   except OSError: discard
   true
 
+## Function purpose: put back the file or directory a delete filed in the trash,
+## found by its sidecar rather than by recomputing where it used to live.
+##
+## **A-16: restoring from the window restored the row and never the file.**
+## `api.restoreItem` contained no call into this module at all, while deletion
+## mirrors with care — the item is moved into a trash tree and
+## `writeTrashMetadata` writes `{type, id, original_path}` beside it *for the
+## express purpose of putting it back*. Nothing ever read that sidecar from the
+## desktop path. A restored note's `.md` stayed in the trash until the note
+## happened to be saved again; **a restored file asset's file never came back at
+## all**, having no re-save path; and a restored workspace, project or folder
+## left its whole directory behind for ever. The delete confirmation the user
+## is shown says "It can be restored from the trash."
+##
+## **The id is the key, not the path.** A path would have to be recomputed from
+## the row, and the row's name may have changed since the delete — the sidecar
+## records where the item actually came from, which is why it exists.
+##
+## **All three trash roots are walked**, and that is not one root too many: the
+## global `<jcaHome>/.trash`, the storage root `<workspaces>/.trash`, and each
+## workspace's own. Walking only the first two is precisely A-17, and the
+## workspace loop must skip an entry named `.trash` or it enumerates the storage
+## root as though it were a workspace — the mechanism behind that defect.
+##
+## `collectTrash` is deliberately not reused: it filters `*.metadata.json` out,
+## which is the only thing being looked for here.
+##
+## The move itself is `restoreTrash`, so containment is enforced once, in one
+## place. A second check here would be a third standard in a module that already
+## has two, which is A-19's warning.
+proc restoreMirror*(table, id: string): bool =
+  if table notin RestorableTables or id.len == 0: return false
+  let (workspaces, trash) = roots()
+
+  var trashRoots = @[trash, workspaces / ".trash"]
+  if dirExists(workspaces):
+    for kind, wsPath in walkDir(workspaces):
+      if kind != pcDir: continue
+      if wsPath.extractFilename == ".trash": continue
+      trashRoots.add wsPath / ".trash"
+
+  const Suffix = ".metadata.json"
+  for root in trashRoots:
+    if not dirExists(root): continue
+    for path in walkDirRec(root, yieldFilter = {pcFile}):
+      if not path.endsWith(Suffix): continue
+      var meta: JsonNode
+      try: meta = parseJson(readFile(path))
+      except CatchableError: continue
+      if meta.kind != JObject: continue
+      if meta{"type"}.getStr != table or meta{"id"}.getStr != id: continue
+      return restoreTrash(path[0 ..< path.len - Suffix.len],
+                          meta{"original_path"}.getStr)
+  false
+
 ## Function purpose: empty the global trash and every workspace trash.
 ## `fs_sync.lua:378` shells out to `rm -rf "$dir"/*`; this removes entries
 ## directly, so there is no shell to quote against and no fork per workspace.
@@ -623,9 +691,13 @@ proc emptyTrash*(): bool =
         result = false
 
   allOk = clear(trash)
+  # A-17's other half — the storage trash root was never emptied either, for the
+  # same reason `getTrash` never listed it.
+  if not clear(workspaces / ".trash"): allOk = false
   if dirExists(workspaces):
     for kind, wsPath in walkDir(workspaces):
       if kind == pcDir:
+        if wsPath.extractFilename == ".trash": continue
         if not clear(wsPath / ".trash"): allOk = false
   allOk
 

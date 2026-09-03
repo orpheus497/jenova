@@ -18,9 +18,28 @@ type
 
   HttpError* = object of CatchableError
 
+  ## A body that was refused before it was read, kept distinct from every other
+  ## parse failure so the worker can answer 413 rather than the bare 500 that
+  ## `classifyError` cannot say anything useful about (A-4).
+  BodyTooLargeError* = object of HttpError
+
 const
   MaxHeadBytes = 64 * 1024
-  MaxBodyBytes = 32 * 1024 * 1024
+
+  ## **Exported because `pipeline.MaxAttachmentBytes` is derived from it.** The
+  ## two were independent numbers, and they disagreed: an attachment was
+  ## measured before base64 and the body after it, so a file could pass the
+  ## attachment cap and then be refused here as a request — the crossover being
+  ## 24 MiB and the symptom an untyped 500 (A-4). One of the two has to be
+  ## authoritative and it is this one, because this is the buffer that actually
+  ## has to hold the bytes.
+  MaxBodyBytes* = 32 * 1024 * 1024
+
+  ## How much of an over-sized body is read and thrown away before the refusal
+  ## is raised — see the drain in `parseRequest`. Generous, because the point is
+  ## to let an ordinary sender finish, and bounded, because a `Content-Length`
+  ## that lies must not be able to hold a worker thread for ever.
+  MaxDrainBytes = 96 * 1024 * 1024
 
 ## Function purpose: read up to and including the header terminator, returning
 ## the head and whatever body bytes arrived in the same read. Nim's recvLine
@@ -71,7 +90,30 @@ proc parseRequest*(sock: Socket): Request =
   let clen = try: parseInt(result.headers.getOrDefault("content-length", "0"))
              except ValueError: 0
   if clen > MaxBodyBytes:
-    raise newException(HttpError, "request body too large")
+    # Action purpose: **the body is drained before the refusal is raised, and
+    # the 413 is worthless without it.** `Content-Length` arrives with the head,
+    # so this is decided while the sender is still writing — and closing on a
+    # peer mid-write hands it a reset rather than the response. The window would
+    # then report "the connection to the backend failed" and A-4's typed error
+    # would never be seen by the one person it is for.
+    #
+    # Discarded as it arrives, never accumulated: the cap exists to keep this
+    # body out of memory and draining it into a buffer would defeat it.
+    var drained = leftover.len
+    var sink = newString(4096)
+    while drained < clen and drained < MaxDrainBytes:
+      let want = min(sink.len, min(clen, MaxDrainBytes) - drained)
+      let n = sock.recv(addr sink[0], want)
+      if n <= 0: break
+      drained += n
+
+    # The numbers are in the message because this is the one failure a USER can
+    # act on — the request is too big, and by how much decides whether they
+    # remove an attachment or start a new chat.
+    const Mib = 1024 * 1024
+    raise newException(BodyTooLargeError,
+      "request body is " & $((clen + Mib - 1) div Mib) &
+      " MB and the limit is " & $(MaxBodyBytes div Mib) & " MB")
   result.body = leftover
   while result.body.len < clen:
     var chunk = newString(min(4096, clen - result.body.len))
@@ -122,7 +164,8 @@ proc queryParam*(r: Request, key: string, default: int): int =
 
 const StatusText = {
   200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
-  405: "Method Not Allowed", 500: "Internal Server Error",
+  405: "Method Not Allowed", 413: "Content Too Large",
+  500: "Internal Server Error",
 }.toTable
 
 ## `extraHeaders` must already be CRLF-terminated per line. It exists for the

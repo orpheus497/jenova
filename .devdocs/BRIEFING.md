@@ -1,14 +1,125 @@
 # BRIEFING
 
-**Last updated:** 2026-09-03 11:24 (Session 025)
-**Branch:** `bsd`, at **`9fc9ecc7`** ("Docupdates") **with Session 025's work uncommitted.**
+**Last updated:** 2026-09-03 11:45 (Session 026c)
+**Branch:** `bsd`, at **`256a6528`**. **The working tree is NOT clean and code is being changed
+right now — read §0a before you touch `src/`.** *(This header said `9fc9ecc7` "with Session 025's
+work uncommitted". The USER committed it as `256a6528`; the commit is titled "Chat bubble resizing"
+and its content is the whole of Session 025 — 13a, 13b, the three composer repairs and the SIGBUS
+fix. **The branch header was a commit stale in three consecutive sessions**, which is why this line
+is checked with `git log` and never carried forward.)*
 **Step 13a and 13b are built.** **13a's composer was rebuilt at 11:14 as `DraftView`** after two
 failed repairs from the USER's screen, and **a SIGBUS on Enter was fixed at 11:24** — an event
 handler bound in `afterBuild` held a pointer freed on the first redraw. All of it is in
 `PROGRESS.md`, with the five toolkit traps collected in `PLANS.md` Step 13a. Two new modules
 (`composer.nim`, `convmd.nim`), and `gui.nim`, `api.nim`, `fssync.nim`, `theme.nim`,
-`jenova_core.nim` and `jenova_core.nimble` changed. **All sixteen self-tests pass, both binaries
-build, `bin/jenova --check` exits 0.** `jvim/` is tracked on purpose and `.gitignore` says so.
+`jenova_core.nim` and `jenova_core.nimble` changed. That build was green — every self-test passed,
+both binaries built, `bin/jenova --check` exited 0. **Do not carry that record forward as current:
+`src/` has moved a long way since.** **Whether the tree builds is a fact with a five-minute shelf
+life while §0a is live** — this sentence has already carried two binary timestamps that were false
+within minutes of being written. **Run `nimble core` and `nimble gui` and find out.** `jvim/` is
+tracked on purpose and `.gitignore` says so.
+
+**Session 026 re-derived 22 A-series claims against `src/` and refuted none.** The findings hold;
+**every `gui.nim` address in them was wrong**, which is the seventh sweep's ruling being ignored
+when the A-series was written. The corrections are in `TODOS.md` at the head of the A-series.
+
+**Then, on the USER's approval: A-69 fixed at 11:38 and nothing else** (`PROGRESS.md`;
+`gui.nim` rebuilt, `--check` 0). **Two things this session found that are not in the A-series
+corrections above:** the 866 parity verdicts behind 13c **exist in no record at all** — `TODOS.md`
+A-59's pointer to "the session record" was checked and is false, so 13c's first step is
+re-deriving one area from `jca_web/src`, not looking a list up; and `PROGRESS.md`'s 2026-09-02
+07:51 entry, which recorded 10b as built, now carries the correction saying it never worked.
+
+---
+
+## 0a. FOUR SESSIONS ARE LIVE IN THIS REPOSITORY. READ THIS BEFORE OPENING A FILE IN `src/`.
+
+**This is not a hypothetical and it is not history — it is the state of the tree as this line is
+written.** On 2026-09-03 the USER had **four Claude sessions open on this checkout at once**, and
+at least three were given the same opening instruction. Each asked the USER for the phase in its
+own terminal. **Each got a different answer, and each began writing it into these shared files.**
+The tree went from clean to six modified trackers and two modified source files in about fifteen
+minutes, and no single document knew it.
+
+**What that produced, recorded because it is the failure mode, not the anecdote:**
+
+- A `SESSION_HANDOFF.md` entry stating *"No product code was touched"* and *"Files touched: … No
+  source file"* — accurate for its own session, **false about the tree**, which already carried
+  another session's `gui.nim` change. Two sessions each correctly denied the edit; a third owned it.
+- Two orderings of the remaining work, both recorded as the USER's ruling, in two files:
+  **`DECISIONS_LOG.md` D-CI** (the defects 12e-1 → 12f-1 → 12e-2 → 12f-2 → 12d, ahead of 13c) and a
+  separate instruction to build **Step 12c (A-3, A-4)**, which D-CI does not mention at all.
+- A binary-freshness claim in this very file that was true when written and false eleven minutes
+  later.
+
+**The standing rule that comes out of it:**
+
+> **Before editing anything in `src/`, run `git status` and `ListAgents`.** A clean tree in a
+> tracker is a claim about the past. If another session holds the file, message it — do not diff
+> around it and do not assume the change you are looking at is yours.
+>
+> **One session owns `.devdocs/` at a time.** As of 11:45 that is this session, by the USER's
+> instruction; the others write code and report completed units to it. **Trackers written by four
+> hands concurrently are worth less than no trackers**, because they read as one coherent voice
+> while contradicting each other two screens apart.
+
+### In-flight register — 2026-09-03 11:45. **Uncommitted work by other sessions.**
+
+**Attribution took three corrections to settle, and how it settled is the useful part.** Two
+sessions denied the 12c work; mtimes and the `gui.nim` diff together pointed at one of them; **the
+actual author was a fifth session nobody had counted**, which identified itself unprompted. **A-5
+in particular was declared an orphan by two sessions** before its author claimed it. **Nothing here
+was recorded until its author claimed it or this session read it out of the tree** — a peer
+explicitly asked not to be recorded on inference, and it was right to.
+
+### Roster — who is who, 2026-09-03 11:57
+
+**Recorded because it took an hour and three wrong attributions to establish, and because
+`ListAgents` shows a session its peers but never itself** — each session's own name is the one
+missing from the four it can see.
+
+| Name / role | Writes | Work |
+|---|---|---|
+| **DEVDOCS MAINTAINER** — `jenova-26 [25ad4a]` | `.devdocs/` **only**, and nothing else, ever | Sole writer of these trackers. **Holds and brokers the `src/jenova_core.nim` token.** Verifies every reported unit by running the binaries before recording it |
+| **PLANNER** — `jenova-d3 [1f330e]` | Nothing | Writes forward plans and hands them to the maintainer. No product code, no `.devdocs/` |
+| **CODING PEER 1** | `markdown.nim`, `gui.nim` | **A-26** and **A-17** built; **A-48** in flight |
+| **CODING PEER 2** | `fssync.nim`, `api.nim` | **A-69** built; **A-16** written, **A-18** next |
+| **12c AUTHOR** | `pipeline.nim`, `http.nim`, `server.nim` | **Step 12c** (A-3, A-4, A-5) built. **Never compiled it** — instructed not to build |
+| **EXAMINER** | Nothing | Web UI ↔ GUI parity. Produced 13c's first real work list (`PLANS.md` Step 13c) |
+
+**Address a session by role, not by socket and not by "the other session".** Three of the five
+could not name themselves, two disclaimed the same change, and one was not counted at all until it
+spoke up.
+
+**Agreed division, by FILE rather than by work unit — because files collide and tasks do not:**
+
+| Files | Holder | Work |
+|---|---|---|
+| `pipeline.nim`, `http.nim`, `server.nim` | 12c author | **Step 12c — A-3, A-4, A-5. BUILT** (`PROGRESS.md`). Then **12d** (A-7), since it already holds both files that needs |
+| `markdown.nim`, `gui.nim` | A-26 author | **12e-1 (A-26) — BUILT.** Then **12e-2 (A-48)**, the same file. **`gui.nim` goes whole to one holder** — it carries A-26, A-5 and A-69 together, and splitting one file across two writers is the collision being avoided |
+| `fssync.nim`, `api.nim` | third peer | **12f — A-17** written and compiling, **assertions outstanding, so not a completed unit.** Then **A-16/A-18**. Needs a small `gui.nim` surface for A-18 and negotiates it with that file's holder first |
+| `.devdocs/` | this session | The trackers, and this register |
+
+**That parallelises D-CI instead of serialising it, and no two sessions hold a file.**
+
+### `src/jenova_core.nim` is a TOKEN, not an etiquette
+
+**All the assertion work lands in that one file** — `pipeline-`, `error-` and `attach-selftest` for
+12c, `markdown-selftest` for A-26, `fs-selftest` for A-17. **A clobber there is invisible until a
+build breaks or an assertion silently disappears**, which is the exact class of failure these
+trackers exist to catch and the reason Session 023 found a green suite over dead code.
+
+> **The `.devdocs/` session holds the token and passes it on.** Ask, write, build, report green,
+> and it moves to the next in queue. **Hold it while you type, not while you think.** A holder that
+> goes quiet has it reclaimed, and the reclaim is recorded here.
+
+**Nothing enters `PROGRESS.md` as built until a green `nimble core`, `nimble gui` and `bin/jenova
+--check` has been established against the tree as it then stands.** A build proof taken before
+`jenova_core.nim` changed underneath it is not a proof of the tree after — a peer volunteered
+exactly that about its own green run, and it is now the rule. **In practice every unit here was
+verified by a session other than the one that wrote it, and 12c's author never compiled its own
+work at all**, having been told not to build. **That separation turned out to be worth more than
+the process that produced it by accident.**
 
 ---
 
@@ -55,7 +166,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks. When a feature is finished, assert the *join*, not only the parts. |
 | **16** | **NEVER edit the product code to break it, for any reason (D-BX).** Not to prove an assertion bites, not with a copy to restore from. If a test passes on data that should fail it, the hole is in the assertion set; write the missing assertion and re-run it **against data**, never against a damaged file. |
 | **17** | **A compile is not evidence the application starts.** **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window and binding no port. **And know its limit: it builds each branch once**, so it proves the window reaches its first frame and never that it survives a *state transition*. It exited 0 on the build that aborted the moment a note was opened (G-51). |
-| **18** | **REPLACED 2026-09-03 09:02 — the suites now mean something, and test work is now LAST.** This rule said a green build proved nothing because `nimble suites` ran no self-tests and four of six passed when they could not run. **A-1 and A-2 are built** — all fourteen self-tests run and a suite that cannot run fails. **The rule that replaces it is the USER's instruction of 09:05 (`TODOS.md` A-68): test and check work is left until last.** A red suite met while doing feature work is not a work item — record nothing, say nothing, carry on, exactly as Rule 0 already directs. Do not open a session with test bookkeeping. |
+| **18** | **REPLACED 2026-09-03 09:02 — the suites now mean something, and test work is now LAST.** This rule said a green build proved nothing because `nimble suites` ran no self-tests and four of six passed when they could not run. **A-1 and A-2 are built** — every self-test runs and a suite that cannot run fails. **The rule that replaces it is the USER's instruction of 09:05 (`TODOS.md` A-68): test and check work is left until last.** A red suite met while doing feature work is not a work item — record nothing, say nothing, carry on, exactly as Rule 0 already directs. Do not open a session with test bookkeeping. |
 
 ---
 
@@ -128,23 +239,43 @@ re-deriving it here.**
 **The list is `TODOS.md`.** The ordered plan is `PLANS.md`. The parity inventory is `TODOS.md`
 A-59, and it supersedes every scope list this project has written.
 
-> ### THE CURRENT WORK IS THE PARITY BACKLOG — `TODOS.md` **A-59**, scoped as `PLANS.md` **Step 13**.
+> ### THE CURRENT WORK IS THE VERIFIED DEFECTS — `PLANS.md` **Step 12c…12f**. The parity backlog is next, not now.
 >
-> Chosen by the USER 2026-09-03 09:10. **1,095 Web UI features enumerated.** It is the largest body
-> of work in the project and it is what "the GUI is missing Web UI features" actually means.
+> **Changed 2026-09-03 11:40 and this line has moved twice today, so read the dates.** The parity
+> backlog (`TODOS.md` **A-59**, `PLANS.md` **Step 13**) was chosen by the USER at 09:10 and was the
+> current work until **D-CI**, at which point the USER chose the defects instead. **A-59 is not
+> cancelled and is explicitly next** — D-CI says so in its own text.
 >
-> **13a and 13b are BUILT (2026-09-03 10:21, `PROGRESS.md`).** The composer is a `TextView`, so the
-> six chat-form gaps behind the one-line `Entry` are closed together; and `data-services` — the
-> area that had no verdicts at all until it was read first-hand — is closed: markdown conversation
-> export/import, forking a conversation, and the mirror's `pull` half, so an edit made in the
-> embedded Neovim now comes back into the database.
+> **Two orderings are live, both given by the USER, in two different terminals** (§0a):
 >
-> **What is left is 13c: the other eight areas' 866 verdicts, and they are leads, not facts**
-> (**D-CG**) — one agent each, no adversarial re-check. Verify a row against the source before
-> scoping it. **And remember "Missing" is not a feature count:** both items built today turned out
-> to be a single root cause behind a column of rows, which is the shape to expect from the rest.
+> - **D-CI** — `12e-1` (A-26, the note memo) → `12f-1` (A-17, the storage trash root) → `12e-2`
+>   (A-48, markdown links) → `12f-2` (A-16/A-18, trash restore and a window surface) → `12d` (A-7,
+>   the response cache), **12d last because it is the only one that touches `upstream.forward`'s
+>   verbatim relay** and D-CD warns that wiring the writer without fixing the hit response makes
+>   cached turns render blank.
+> - **Step 12c** — A-3 and A-4, the two data-losing defects in the chat path. **In flight now**
+>   (§0a) and **absent from D-CI's list**, which is a gap in the ordering rather than a decision
+>   against it.
 >
-> **Step 12c…12f are not cancelled** — they are the verified defects and they sit behind this.
+> **13a and 13b are BUILT (2026-09-03 10:21, `PROGRESS.md`).** The composer is a `DraftView`, so
+> the six chat-form gaps behind the one-line `Entry` are closed together; and `data-services` is
+> closed: markdown conversation export/import, forking a conversation, and the mirror's `pull` half,
+> so an edit made in the embedded Neovim now comes back into the database.
+>
+> ### **13c cannot be picked up as written. Its work list does not exist.**
+>
+> **Verified 2026-09-03 by search, and this is the single most useful thing on this page for
+> whoever takes 13c.** `TODOS.md` A-59 says the 866 per-feature verdicts are "in the session
+> record". **They are in no record.** The strings `views-dialogs`, `models-server` and
+> `sidebar-workspace` occur **nine times in the whole of `.devdocs/`**, every one inside A-59's own
+> nine-row summary table or the sentence telling you to start with them. Session 023's verdicts
+> were produced by agents, counted, and never written down.
+>
+> **So 13c's first unit is re-deriving one area's inventory from `jca_web/src` directly** — not
+> looking a list up, not verifying rows that exist. Budget for that before scoping anything, and do
+> the largest three by count (`views-dialogs` 65, `models-server` 61, `sidebar-workspace` 47)
+> **for root causes**: both 13a and 13b collapsed to one cause behind a column of rows, and that is
+> the shape to expect.
 
 **The shape of it, which does not rot:** the backend is largely finished and the outstanding work
 is mostly in the window.
@@ -152,7 +283,7 @@ is mostly in the window.
 ## 5. Known broken
 
 **A-1 and A-2 were the two that outranked every feature gap. Both were built 2026-09-03 09:02**
-(`PROGRESS.md`); `nimble suites` runs all fourteen self-tests and a suite that cannot run fails,
+(`PROGRESS.md`); `nimble suites` runs every self-test and a suite that cannot run fails,
 **except `test_nvimctl.sh`, which the USER ruled must keep skipping on a missing `nvim`.**
 **T-12 went with them.** That pass also found `test_models.sh` asserting **pre-D-CB** behaviour —
 red since 2026-09-02 10:43, invisible because Rule 0 stopped anyone running the suites. The
@@ -161,34 +292,37 @@ product was correct; the assertion was stale, and it is corrected.
 **All remaining test and check work is deferred to last** — the USER's instruction, `TODOS.md`
 **A-68**. The live work is `PLANS.md` Step 12c onward, below.
 
-**One more, found 2026-09-03 while building Step 13b and verified by reading both halves —
-`TODOS.md` A-69:** **attaching a file has never filed it as a workspace artefact.**
-`gui.fileAttachmentsAsArtefacts` mints the `fileAssets` id with `$genOid()`, `fssync.physicalPath`
-refuses any id that is not a UUID, and `api.upsert`'s mirror-failure branch then deletes the row it
-just wrote — so the user sees "could not file … in the workspace" on every attachment and G-44 /
-Step 10b has never worked. **The fix is one call** (`fssync.newUuid()`), and the same trap is
-already documented in a comment eleven lines above it.
+**A-69 is FIXED — 2026-09-03 11:38 (`PROGRESS.md`), and it is gone from `TODOS.md`.** Attaching a
+file had never once been filed as a workspace artefact: `gui.fileAttachmentsAsArtefacts` minted the
+`fileAssets` id with `$genOid()`, `fssync.physicalPath` refuses any id that is not a UUID, and
+`api.upsert`'s mirror-failure branch deleted the row it had just written — so the user saw "could
+not file … in the workspace" on every attachment and **G-44 / Step 10b had never worked, while
+`PROGRESS.md` recorded it as built.** One call, `fssync.newUuid()`. **Unobserved: that the row now
+survives is a USER screen run** — `gui.nim` links into no test binary and `--check` routes no
+events, which is exactly how this shipped in the first place.
 
-**Four high-severity code defects, all verified by reading the source — and all re-verified
-2026-09-03 09:00 against the current tree:**
+**Four of the high-severity defects were built on 2026-09-03 at 11:51 and are gone from
+`TODOS.md`** (`PROGRESS.md`, Step 12c and Step 12e-1):
 
-- **A-3 — attaching an image silently deletes the earlier conversation** from what the model is
-  sent. `pipeline.trimHistory` measures the full JSON serialisation including the base64 payload,
-  against a budget of a few kilobytes.
-- **A-4 — a 24–25 MiB attachment produces an untyped 500.** The 25 MiB attachment cap is checked
-  before base64; the 32 MiB body cap after. They cross at 24 MiB, and the result is the
-  undiagnosable grey line G-35 exists to prevent.
-- **A-5 — the context-used figure omits the cached prefix**, so it under-reports without bound
-  exactly as a conversation gets long. The Web UI computes it correctly, so this is also a parity
-  divergence.
+- **A-3** — attaching an image no longer drops the earlier conversation. `trimHistory` measures
+  through `pipeline.messageWeight`, which charges an image part a flat `ImageContextBytes` rather
+  than its base64 length.
+- **A-4** — `MaxAttachmentBytes` is now *derived* from `http.MaxBodyBytes`, so the two caps cannot
+  cross, and an oversized body is a **typed 413** drained before it is raised, classified
+  `cekBadRequest` and not retryable.
+- **A-5** — the context-used figure is `cacheN + promptN + predictedN`.
+- **A-26** — the note memo has explicit O(1) invalidation at the two points the editor re-baselines.
+
+**Still open and high severity:**
+
 - **A-6 — the G-40 memos may still copy per frame.** `[A]`, and it needs a second read before it
-  is believed.
+  is believed. **It is the last of the original high-severity four.**
 
-**Also verified and user-visible:** a note edit that preserves character count renders as the old
-text (**A-26**); markdown links and images are not rendered at all (**A-48**); Copy is Wayland-only
-and swallows its failure (**A-27**); the trash is write-only from the window (**A-16**–**A-18**);
-the documented `CANVAS=0` off-switch for the only continuous GPU load cannot be triggered by any
-means (**A-25**).
+**Also verified and user-visible, still open:** markdown links and images are not rendered at all
+(**A-48**, in flight as 12e-2); Copy is Wayland-only and swallows its failure (**A-27**); the trash
+is write-only from the window (**A-16**–**A-18**, in flight as 12f — A-17's code is written and its
+assertions are not); the documented `CANVAS=0` off-switch for the only continuous GPU load cannot
+be triggered by any means (**A-25**).
 
 **Still outstanding from before:** **G-47**, the editor page's Neovim truncated at the bottom on a
 resize — **not diagnosed**, two candidates recorded, and not settleable without the running widget.
@@ -197,7 +331,8 @@ Two cosmetic Backlog items (G-37, G-38) and the G-51 widget constraint.
 ## 6. The coverage gap — now one gap, not two
 
 **Half of this section is closed.** Every suite and every self-test exercises `jenova-core`, and
-**`nimble suites` now executes all fourteen self-tests**, with a suite that cannot run reporting
+**`nimble suites` now executes every self-test** — read the list out of the `SelfTests` const in
+`jenova_core.nimble`, never from a number written here — with a suite that cannot run reporting
 failure. So "it is asserted in `X-selftest`" is a coverage claim again.
 
 **What remains, and it is the durable half:**

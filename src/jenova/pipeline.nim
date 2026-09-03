@@ -28,6 +28,7 @@
 ## produce a different key and orphan every existing cache entry.
 
 import std/[base64, json, os, strutils, tables, times]
+import ./http
 import ./prompts
 import ./rag
 import ./websearch
@@ -249,6 +250,66 @@ proc configureHistoryBudget*(ctxSize, slots: int) =
   let perSlot = ctxSize div max(1, slots)
   historyBudget = perSlot * 4 div 2
 
+const
+  ## A-3. What an image part is **assumed** to cost the context, in the same
+  ## four-bytes-per-token currency `configureHistoryBudget` works in.
+  ##
+  ## A picture becomes a fixed number of embedding tokens once the projector has
+  ## run — a few hundred for the projectors `llama-server` ships — and **nothing
+  ## about that number is proportional to the base64 that carried it.** 1,024
+  ## tokens is a deliberate overestimate: too high spends a little history that
+  ## did not need spending, too low is the defect this constant exists to
+  ## prevent.
+  ImageContextBytes* = 1024 * 4
+
+  ## The `role`, the braces and the key names — what a message costs before any
+  ## of its content does. Small, fixed, and counted so that a conversation of
+  ## many tiny turns is not measured as though it were free.
+  MessageEnvelopeBytes* = 16
+
+## Function purpose: what one message costs the context, in the byte currency
+## `configureHistoryBudget` sets the budget in.
+##
+## **This is not `($m).len`, and that is the whole point (A-3).** Measuring the
+## serialised message counted an image's base64 payload — megabytes of
+## transport standing in for a few hundred tokens of context. One screenshot
+## therefore exceeded any budget by itself, and `trimHistory` responded the only
+## way it could: it dropped every earlier turn trying to get under a figure the
+## final turn alone could never meet. **The user saw the model forget the
+## conversation the moment they attached a picture**, with nothing on screen to
+## explain it.
+##
+## The four-bytes-per-token conversion above this is declared as an
+## approximation and it is a fair one for text. Base64 breaks it completely, so
+## the payload is not measured at all — the part is charged a flat
+## `ImageContextBytes` instead.
+proc messageWeight*(m: JsonNode): int =
+  if m.kind != JObject: return ($m).len
+  result = MessageEnvelopeBytes
+  let content = m{"content"}
+  if content.isNil: return
+  case content.kind
+  of JString:
+    result += content.getStr.len
+  of JArray:
+    # The part shapes are `contentFor`'s own, which are the frozen Web UI's
+    # (D-Z): `text`, `image_url`, `input_audio`. An unrecognised part is charged
+    # its serialisation, because an unknown shape is exactly the case where
+    # guessing low is how this defect happened in the first place.
+    for part in content:
+      if part.kind != JObject:
+        result += ($part).len
+        continue
+      case part{"type"}.getStr("")
+      of "text":
+        result += MessageEnvelopeBytes + part{"text"}.getStr.len
+      of "image_url", "input_audio":
+        result += ImageContextBytes
+      else:
+        result += ($part).len
+  else:
+    result += ($content).len
+
 ## Function purpose: drop the oldest turns until a conversation fits a byte
 ## budget, and answer how many went (T-3). **The whole history was resent on
 ## every turn with no trim anywhere**, so a long chat eventually exceeded the
@@ -271,7 +332,7 @@ proc trimHistory*(messages: JsonNode, budgetBytes: int): int =
     return 0
   var total = 0
   for m in messages:
-    total += ($m).len
+    total += messageWeight(m)
   if total <= budgetBytes: return 0
 
   var i = 0
@@ -282,7 +343,7 @@ proc trimHistory*(messages: JsonNode, budgetBytes: int): int =
     if m.kind == JObject and m{"role"}.getStr == "system":
       inc i
       continue
-    total -= ($m).len
+    total -= messageWeight(m)
     messages.elems.delete(i)
     inc result
 
@@ -546,6 +607,17 @@ proc classifyError*(status: int, body = "", exceptionMsg = ""): ChatError =
   of 404:
     ChatError(kind: cekBadRequest, retryable: false, detail: serverMsg,
       message: "the completion endpoint was not found on the backend")
+  of 413:
+    # A-4. **Not retryable, for the same reason an overflow is not:** the
+    # identical body would be sent again and refused identically, so a Retry
+    # button here would be a lie. The remedy is the USER's — send fewer or
+    # smaller attachments — so it is named rather than implied.
+    ChatError(kind: cekBadRequest, retryable: false, detail: serverMsg,
+      message: (if serverMsg.len > 0:
+                  "the request is too large to send: " & serverMsg &
+                  ". Remove an attachment, or send a smaller one."
+                else: "the request is too large to send. Remove an " &
+                      "attachment, or send a smaller one."))
   else:
     ChatError(kind: cekServerError, retryable: true, detail: serverMsg,
       message: (if serverMsg.len > 0:
@@ -652,12 +724,31 @@ const
   ## with a reason, rather than sent as bytes the model cannot look at.
   ImageExts* = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]
 
+  ## The bytes of a request body that are not the attachment: the JSON envelope,
+  ## the persona, the retrieval and workspace blocks, and whatever history
+  ## survived the trim. Kilobytes in practice; a megabyte is a deliberate
+  ## overestimate, because being wrong in this direction costs a little capacity
+  ## and being wrong in the other direction is A-4 again.
+  RequestEnvelopeReserve* = 1024 * 1024
+
   ## D-BQ. **An attachment over this is refused, never truncated.** A shortened
   ## document changes what the model was asked about while still looking like it
   ## worked, which is the same defect as sending an unset parameter as a zero
   ## (D-BK) — the reply comes back confident and is about a fragment. Measured on
   ## the file as read, before base64 expansion, and applied to every kind.
-  MaxAttachmentBytes* = 25 * 1024 * 1024
+  ##
+  ## **Derived from `http.MaxBodyBytes` rather than chosen beside it (A-4).** It
+  ## was a flat 25 MiB against a 32 MiB body cap, and the two were measured on
+  ## different sides of base64 — the file on disk here, the encoded
+  ## `Content-Length` there. Base64 expands by 4/3, so the two crossed at 24 MiB
+  ## and a 24.5 MiB image passed this check and was then refused as a request,
+  ## with nothing on screen to say why. Dividing the body cap by that same 4/3
+  ## is what makes "accepted here" mean "sendable there".
+  ##
+  ## **The guarantee is per attachment, not per request.** Several attachments
+  ## that each pass can still exceed the body cap together; that path is now the
+  ## typed 413 `server.classWorker` answers, not an untyped 500.
+  MaxAttachmentBytes* = (http.MaxBodyBytes - RequestEnvelopeReserve) * 3 div 4
 
 ## Function purpose: is this file text? Decided by **reading it**, not by its
 ## extension — a `.log`, a `.conf` and a file with no extension at all are all

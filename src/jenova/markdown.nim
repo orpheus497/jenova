@@ -38,6 +38,25 @@ proc inlineSpan(s: string, delim: string, tag: string): string =
     result.add "<" & tag & ">" & s[start + delim.len ..< stop] & "</" & tag & ">"
     i = stop + delim.len
 
+const LinkSchemes = ["http://", "https://"]
+
+## Function purpose: may this destination be handed to the desktop, as an
+## allowlist rather than a denylist (A-48).
+##
+## **This is the security boundary of the whole link feature.** GTK gives an
+## activated `<a href>` to the desktop URI handler, so a model that writes
+## `[click](file:///etc/passwd)` — or `javascript:`, or a `data:` URL — would
+## otherwise have handed the desktop an instruction. Only `http`/`https` become
+## anchors; everything else renders as its own text with no destination, which
+## is visible rather than silent. An allowlist is used because the set of
+## schemes a desktop will act on is open-ended and a denylist cannot be
+## completed.
+proc allowedHref(href: string): bool =
+  let lower = href.toLowerAscii
+  for s in LinkSchemes:
+    if href.len > s.len and lower.startsWith(s): return true
+  false
+
 ## Code spans are lifted out before the emphasis passes run and put back after.
 ## Marking them up first left their contents in the string, so `*` and `_` inside
 ## a code span were still read as emphasis — `` `a*b*c` `` came out as
@@ -60,7 +79,61 @@ proc inlineMarkup*(line: string): string =
     protected.add escaped[i]
     i.inc
 
-  result = protected
+  # A-48. Links are lifted here — after the code-span pass and before the
+  # emphasis passes — and the position is the whole design.
+  #
+  # After, because `` `[a](b)` `` must stay literal: the code span has already
+  # left the string, so this scanner never sees it. Before, because a URL is
+  # full of characters the emphasis passes eat — `https://host/a_b_c` is one
+  # `__` pair away from turning half a sentence bold. So the href leaves the
+  # string entirely and only the link TEXT stays inline, where emphasis still
+  # applies to it, which is what `[**bold**](url)` should do.
+  #
+  # `\x01`/`\x02` rather than the code pass's `\x00` so the two placeholder
+  # schemes cannot collide, on that pass's own reasoning: a control character
+  # cannot occur in the escaped text.
+  var hrefs: seq[string]
+  var linked = newStringOfCap(protected.len)
+  var j = 0
+  while j < protected.len:
+    let open = protected.find('[', j)
+    if open < 0:
+      linked.add protected[j .. ^1]
+      break
+    let close = protected.find(']', open + 1)
+    let shut =
+      if close > 0 and close + 1 < protected.len and protected[close + 1] == '(':
+        protected.find(')', close + 2)
+      else: -1
+    if shut < 0:
+      # Not a link. Emit up to and including the bracket and carry on, so a
+      # stray `[` cannot swallow the rest of the line.
+      linked.add protected[j .. open]
+      j = open + 1
+      continue
+
+    # `![alt](url)`. **The image is rendered as its alt text linked to the
+    # source, not fetched.** Displaying it would mean a network request per
+    # image from inside a render path, which is B-01's leak and Step 7c's rule
+    # at once; that is a decision for the USER, not a side effect of this fix.
+    let isImage = open > j and protected[open - 1] == '!'
+    let cut = if isImage: open - 1 else: open
+    if cut > j: linked.add protected[j ..< cut]
+
+    let href = protected[close + 2 ..< shut]
+    var text = protected[open + 1 ..< close]
+    if text.len == 0: text = href
+    if allowedHref(href):
+      hrefs.add href
+      linked.add "\x01" & $(hrefs.len - 1) & "\x01" & text & "\x02"
+    else:
+      # Refused by the allowlist, or not a URL at all. The text survives and the
+      # destination does not — a visible loss rather than a link that quietly
+      # does something else when clicked.
+      linked.add text
+    j = shut + 1
+
+  result = linked
   result = result.inlineSpan("**", "b")
   result = result.inlineSpan("__", "b")
   # Before the single `*` pass, or the first two tildes would already be gone —
@@ -69,6 +142,12 @@ proc inlineMarkup*(line: string): string =
   result = result.inlineSpan("*", "i")
   for idx, code in codes:
     result = result.replace("\0" & $idx & "\0", "<tt>" & code & "</tt>")
+  # `escape` has already dealt with `&`, `<` and `>`; a quote is the one
+  # character left that would end the attribute early.
+  for idx, href in hrefs:
+    result = result.replace("\x01" & $idx & "\x01",
+                            "<a href=\"" & href.replace("\"", "&quot;") & "\">")
+  result = result.replace("\x02", "</a>")
 
 proc lineMarkup(line: string): string =
   let t = line.strip(trailing = false)
@@ -234,3 +313,21 @@ proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
   result = parse(text)
   memo.blocks[id] = result
   memo.stamps[id] = text.len
+
+## Function purpose: forget one id, for a surface whose text changes under a key
+## that does not (A-26).
+##
+## The length stamp above is sound for a message and unsound for a note. A
+## message edit is saved as a *new row with a new id* and Continue only ever
+## appends, so length catches every change a message can undergo. **A note keeps
+## its id across every edit**, so correcting a transposition or swapping a word
+## for one the same length leaves the stamp equal and the view renders the
+## pre-edit text — indefinitely, which reads as a save that did not happen.
+##
+## Hashing the text instead would fix it and is forbidden: `blocksFor` is called
+## from `view`, and nothing there may do work proportional to a payload (G-40,
+## Step 7c). So the invalidation is explicit and O(1), and the note editor calls
+## it at the two points it re-baselines.
+proc invalidate*(memo: var BlockMemo, id: string) =
+  memo.blocks.del(id)
+  memo.stamps.del(id)

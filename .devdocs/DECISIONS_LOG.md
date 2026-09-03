@@ -5,6 +5,30 @@ resolution. Most recent entries at the top.
 
 ---
 
+## D-CI — 2026-09-03 11:40 — **Step 12d, 12e and 12f are built ahead of 13c. USER ruling.**
+
+**`PLANS.md` said the verified defects "sit behind" the parity backlog, and Session 026 put the
+choice to the USER with the parity work as one option. The USER chose the defects.** So the order
+is now: **12e-1 (A-26) → 12f-1 (A-17) → 12e-2 (A-48) → 12f-2 (A-16/A-18) → 12d (A-7)**, then 13c.
+
+**Why that order inside the group, and it is a session call the USER approved rather than a
+ruling:** smallest and most assertable first, and **12d last because it is the only one of the five
+that touches the verbatim relay in `upstream.forward`** — the path every chat turn takes. The other
+four are contained and inert-or-wrong in place; 12d is currently *inert*, and D-CD's own warning is
+that wiring the writer without also fixing the hit response makes cached turns render blank. It is
+the one change here that can make the product worse than it is today, so it goes in last, against a
+tree the other four have already been proven green on.
+
+**`13c` is not cancelled and A-59 stays Active** — it is the largest body of work in the project
+and it is next. **A-68 is unaffected: test and check work is still last.**
+
+*(**D-CH is deliberately skipped.** Session 024 wrote a decision under that id, was told it had
+invented governance nobody asked for, and reverted it with `git checkout -- .devdocs/`. It never
+landed in this file. Reusing the id would make the handoff entry that records the revert read as a
+reference to this decision.)*
+
+---
+
 ## D-CD … D-CG — 2026-09-03, the three-part audit
 
 ### D-CD — the response cache is a defect, not a dormant feature. **USER ruling.**

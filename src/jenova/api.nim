@@ -344,11 +344,30 @@ proc deleteConversation(id: string, withForks: bool): ApiResult =
   for c in affected: rag.forgetConversation(c)
   ok("""{"status":"ok"}""")
 
+## Action purpose: A-20. The flag and its cascade are **one transaction**, so a
+## container cannot end up deleted with its children still live.
+##
+## It was a bare sequence of up to five statements: a workspace flagged, then
+## projects, folders, notes, file assets and conversations flagged in turn. A
+## throw part-way left the earlier ones standing and the later ones unrun — a
+## workspace gone from the sidebar whose conversations were still being served.
+## `deleteConversation`, `importData` and the messages bulk-delete all wrap for
+## exactly this reason; the three container entities were the ones left out.
+##
+## **The exception is re-raised, not swallowed.** `softDelete`'s project and
+## folder branches catch it to move the directory back out of the trash — a
+## compensating undo that only works if it still hears about the failure.
 proc dbSoftDelete(e: Entity, id: string) =
-  db.exec("UPDATE " & e.name & " SET is_deleted=1 WHERE id=?", id)
-  if Cascades.hasKey(e.name):
-    for sql in Cascades[e.name]:
-      db.exec(sql, id)
+  db.begin()
+  try:
+    db.exec("UPDATE " & e.name & " SET is_deleted=1 WHERE id=?", id)
+    if Cascades.hasKey(e.name):
+      for sql in Cascades[e.name]:
+        db.exec(sql, id)
+    db.commit()
+  except CatchableError:
+    db.rollback()
+    raise
 
 ## Action purpose: deletion mirrors to the trash tree, and **the order differs by
 ## entity because `proxy.lua`'s does** — this is reproduced, not tidied.
@@ -452,6 +471,22 @@ proc restoreItem(entityName, id: string, depth = 0): ApiResult =
     else: discard
 
   db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
+  # Action purpose: A-16. The row comes back and **so does the file now.**
+  # Deletion mirrors into a trash tree beside a sidecar written so a restore can
+  # undo it, and this proc contained no `fssync` call at all — so a restored
+  # note's `.md`, a restored asset's bytes and a restored container's whole
+  # directory all stayed in the trash, under a confirmation dialog that told the
+  # user it could be restored from there.
+  #
+  # The ancestors above are restored first by the recursion, so a directory is
+  # back before anything is moved into it.
+  #
+  # **A false answer is the ordinary case, not a failure**, and that is why it
+  # is discarded rather than reported: the four entity kinds with no physical
+  # form never had a sidecar, and neither did anything deleted before the
+  # mirror existed. There is nothing the caller could do differently, and the
+  # row restore is correct either way.
+  discard fssync.restoreMirror(e.name, id)
   # Action purpose: deletion forgets (D-BI) and nothing undid it, so a restored
   # turn came back everywhere except in what the model recalls. It looked
   # repaired because `rag.backfillChats` picks it up at the *next* start — which
@@ -760,9 +795,6 @@ proc deleteEntity*(entity, id: string): bool =
 proc restoreEntity*(entity, id: string): bool =
   entity in Entities and restoreItem(entity, id).status == 200
 
-## Function purpose: the soft-deleted rows of one table, newest first where the
-## table has anything to order by. The trash view's source, and deliberately not
-## a new query shape — it is `Entities`' own column list with the flag inverted.
 ## Function purpose: reconcile every live note against its file on disk — the
 ## `pull` half of the Web UI's `SyncService` (`PLANS.md` Step 13b).
 ##
@@ -798,10 +830,39 @@ proc pullNotes*(): tuple[updated: int, failed: int] =
     else:
       inc result.failed
 
+## Function purpose: the soft-deleted rows of one table, newest first where the
+## table has anything to order by. The trash view's source, and deliberately not
+## a new query shape — it is `Entities`' own column list with the flag inverted.
+##
+## **A-24: the ordering was documented and never applied.** The docstring above
+## promised newest-first and the SQL carried no `ORDER BY`, so the trash rendered
+## in whatever order SQLite returned — receipt order in practice, which puts the
+## oldest deletion at the top of a long trash, the opposite of the contract.
+## *(The docstring had also drifted away from this proc entirely: Step 13b
+## inserted `pullNotes` between the two, leaving it attached to the wrong
+## function. It is restored here with the fix.)*
+##
+## The column is named per entity because there is no common one, and it is
+## checked against `Entities`' own list before use — a renamed column then
+## degrades to unordered rather than throwing a SQL error at the trash view.
+## Workspaces, projects and folders carry only an id and a name, which is the
+## "nothing to order by" the contract allows for.
+const TrashOrder = {
+  "conversations": "lastModified", "messages": "timestamp",
+  "notes": "updatedAt", "fileAssets": "uploadDate",
+}.toTable
+
 proc deletedRows*(entity: string): seq[seq[string]] =
   if entity notin Entities: return
   let e = Entities[entity]
-  db.query("SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=1")
+  var sql = "SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=1"
+  if TrashOrder.hasKey(entity):
+    let col = TrashOrder[entity]
+    for c in e.cols:
+      if c.name == col:
+        sql.add " ORDER BY " & col & " DESC"
+        break
+  db.query(sql)
 
 ## Function purpose: every live row, in the shape `importData` reads (G-32).
 ## Exported for the desktop application's Export button, which must not build a

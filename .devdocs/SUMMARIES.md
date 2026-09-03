@@ -6,6 +6,66 @@ deleted by the USER, see **D-CE***.
 
 ---
 
+## Session 026c — 2026-09-03 11:55
+
+**Four sessions were live on one checkout, three had been given the same instruction, and each had
+asked the USER for the phase in its own terminal and got a different answer** — so this session was
+put on `.devdocs/` for all of them and wrote no product code. **Cross-referenced first, as
+instructed:** 23 claims re-derived, eighteen held to the symbol (A-69's whole mechanism, A-3, A-4,
+A-5, A-7, A-8, A-16, A-17, A-20, A-25, A-26, A-29, A-31, A-48, A-52, and 13a/13b as built), five
+did not — a branch header a commit stale for the third session running, `BRIEFING.md` contradicting
+itself on the self-test count, `PROGRESS.md` recording a feature that had never worked, two
+trackers stamped Session 023 while carrying Session 025 content, and a rotted address. **The count
+was deleted rather than corrected**, having been written nine different ways; the lines now name
+the `SelfTests` const. **Then the collision was made legible rather than tidied away:** a new
+`BRIEFING.md` **§0a** records the four-session hazard, the file-by-file split the peers negotiated,
+and `src/jenova_core.nim` as a **token** this session holds and passes on, because every session's
+assertions land in that one file. **Five units were recorded as built, each verified by running the
+binaries rather than on its author's report** — Step 12c (A-3, A-4, A-5), 12e-1 (A-26), 12f-1
+(A-17), with A-69 already in. **12c's author never compiled its own work**, having been told not to
+build; that it was verified by someone else before being recorded turned out to be worth more than
+the process that produced it by accident. **And the finding that changes the plan:** the 866 parity
+verdicts behind 13c **exist in no record at all**, so 13c's first unit is re-deriving an area from
+`jca_web/src` rather than working a list. Detail: `SESSION_HANDOFF.md`.
+
+---
+
+## Session 026b — 2026-09-03 11:38
+
+**A concurrent session against the same tree; 32 claims re-derived independently, 28 held, and on
+the USER's approval one defect was fixed and nothing else.** **A-69:** the attachment artefact id
+was a `genOid`, `fssync.physicalPath` refuses anything but a UUID, and `api.upsert` deleted the row
+it had just written — so **G-44 / Step 10b had never worked once** while `PROGRESS.md` recorded it
+as built. One call, `fssync.newUuid()`; builds, `--check` 0, and unobserved until a screen run
+because `gui.nim` links into no test binary. **The finding that matters more: 13c has no work
+list.** `TODOS.md` A-59 pointed at "the session record" for the 866 parity verdicts and they are in
+no record at all — only the nine-row summary survives, so 13c's first step is re-deriving an area
+from `jca_web/src`, not looking a list up. Corrected at A-59, and `PROGRESS.md`'s 2026-09-02 07:51
+entry now carries the correction A-69 forces on it. **Four peer sessions were live on this repo at
+the time — `.devdocs/` is shared mutable state, which is why this entry sits beside Session 026's
+rather than replacing it.** Detail: `SESSION_HANDOFF.md`.
+
+---
+
+## Session 026 — 2026-09-03 11:35
+
+**22 A-series claims re-derived against `src/` before anything was proposed; not one finding was
+refuted, and every `gui.nim` address in them was wrong.** The defects hold as written — the
+history trim measured against base64, the crossed attachment/body caps, the omitted `cache_n`, the
+cache nothing writes, the trash restore that never touches a file, the dead `CANVAS=0`, the note
+memo keyed on length, the Wayland-only Copy, links rendered as source, the settings that never
+reach a LAN request, and the attachment artefact that has never once been filed. What did not hold
+was the addressing: thirteen `gui.nim` line numbers had moved and A-24's `api.nim` pair went with
+Step 13b's `forkConversation` insertion, **so the A-series was written in exactly the style the
+seventh sweep banned** — and the addresses are now replaced with symbols rather than renumbered an
+eighth time. Also corrected: a branch header a commit stale for the third consecutive session
+(Session 025's work is committed at `256a6528`, tree clean), and G-51's "`Paned` returns zero
+hits", which now returns three, all comments. Confirmed holding: sixteen self-tests in both the
+dispatch and the `SelfTests` const, and both binaries newer than every source file. **No product
+code was touched and nothing was run.** Detail: `SESSION_HANDOFF.md`.
+
+---
+
 ## Session 025 — 2026-09-03 11:24
 
 **24 tracker claims re-checked against the source, then the parity backlog opened and Step 13a and
@@ -46,7 +106,7 @@ Detail: `SESSION_HANDOFF.md`.
 trackers made congruent and both long logs archived.** All 29 claims held as findings and the
 citations were unusually accurate; five things did not hold and were corrected — the branch head,
 A-2's "four of six" `nc` guards (it is three), A-3's invented budget arithmetic, A-60's entry count,
-and Step 12's missing proof detail. `nimble suites` now runs all fourteen self-tests and a suite
+and Step 12's missing proof detail. `nimble suites` now runs every self-test and a suite
 that cannot run fails; **proven by running it at the USER's explicit request — exit 1 on a failing
 assertion, exit 0 once corrected, with each guard fired under a scratch `PATH` and nothing on the
 machine moved.** That run exposed `test_models.sh` asserting pre-D-CB behaviour, red since

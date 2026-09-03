@@ -24,6 +24,209 @@ moved 2026-09-03 09:10 under the `AGENTS.md` archival policy — this file was 2
 
 ---
 
+## Session 026c — 2026-09-03 11:47 — **Four sessions on one checkout: the trackers made congruent from a single pen, and the collision recorded as a standing rule**
+
+**Instruction:** read `AGENTS.md`, stay strict to it, read the devdocs, cross-reference the plan
+and every claim against the codebase, present the phase. Then, once the collision surfaced: **this
+session maintains `.devdocs/` for the other peers.** It writes no product code.
+
+### What was cross-referenced, before any of the rest of it
+
+**23 claims re-derived against the source.** Eighteen held, symbol-cited: the `SelfTests` const
+(sixteen entries), **A-69** (`fileAttachmentsAsArtefacts` minting `$genOid()` against
+`physicalPath`'s UUID guard), **A-3**, **A-4**, **A-5**, **A-7** (`cacheStore`'s only caller is a
+selftest), **A-8**, **A-16** (`restoreItem` contains no `fssync` call), **A-17**, **A-20**,
+**A-25** (`CANVAS` absent from `config.Keys`), **A-26**, **A-29**, **A-31**, **A-48** (zero `href`
+in `src/`), **A-52**'s `make llama` pair, and both **13a** and **13b** as built. **Five did not:**
+the branch header a commit stale for the third session running; **`BRIEFING.md` contradicting
+itself on the self-test count** — sixteen at the top, fourteen in three places lower down, plus
+`SUMMARIES.md`; `PROGRESS.md`'s 10b entry claiming a feature that had never worked; `TODOS.md` and
+`PLANS.md` stamped Session 023 while carrying Session 025 content; and A-52's second address rotted
+from `:2656` to `:2947`.
+
+**The count was removed rather than corrected.** It has been written as four, five, six, nine, ten,
+twelve, thirteen, fourteen and sixteen. Rule 9's actual remedy is to point at the code, so the
+lines now say "every self-test" and name the `SelfTests` const as where to read it. Writing
+"sixteen" would have been the tenth wrong number, eventually.
+
+### What was actually going on, which mattered more than any of that
+
+**Four Claude sessions were live on this checkout, three given the same instruction, each asking
+the USER for the phase in its own terminal and each getting a different answer.** The tree went
+from clean to seven modified trackers and six modified source files inside twenty minutes.
+
+**The damage was to the record, not the code.** A `SESSION_HANDOFF.md` entry said *"No product code
+was touched"* while the tree carried another session's `gui.nim` change; two orderings of the
+remaining work were both filed as the USER's ruling (**D-CI**, and a separate instruction to build
+**Step 12c**, which D-CI does not mention); and this file's own binary-freshness claim was true
+when written and false eleven minutes later.
+
+**Attribution failed and is recorded as having failed.** Two sessions denied authorship of the 12c
+work and a third was found writing it. **So `BRIEFING.md` §0a lists the files, read out of
+`git status`, and does not name owners** — the files are facts, the owners could not be
+established, and inventing them would be the exact sin these trackers exist to catch.
+
+### What is in `src/` right now, read first-hand rather than reported
+
+**Step 12c is further along than any session said, and A-5 came with it unannounced.**
+`pipeline.ImageContextBytes` and `pipeline.messageWeight` charge an image a flat 4 KB instead of
+its base64 length and `trimHistory` measures through it (**A-3**); `MaxAttachmentBytes` is derived
+as `(http.MaxBodyBytes - RequestEnvelopeReserve) * 3 div 4` so the caps cannot cross (**A-4**);
+`http.BodyTooLargeError` and a typed **413** through `server.classWorker` into `classifyError`;
+`gui.statsLine` reads `t.cacheN + t.promptN + t.predictedN` (**A-5**, in no plan and no message);
+and `markdown.nim` plus the `gui.nim` note path are modified for **A-26**.
+
+**None of it is recorded as built.** A peer volunteered that its own green `nimble core` predated
+`jenova_core.nim` changing and therefore proved nothing about the current tree — a good call, and
+it is now the standing rule in §0a and at the head of the A-series.
+
+### Files touched
+
+**`.devdocs/` only — this session wrote no product code.** It built and ran the assertion binaries
+twice, to verify other sessions' work rather than to take it on report: `nimble core`, `nimble gui`
+and `bin/jenova --check` all exit 0, and `markdown-`, `pipeline-`, `attach-`, `error-` and
+`fs-selftest` all PASS — **including all eight of A-26's new assertions by name.** *(No binary
+timestamp is recorded here on purpose: two were written into these files today and both were false
+within minutes.)* Files: `BRIEFING.md` (new **§0a**, the header, §4's ordering, the count),
+`PLANS.md` (stamped, the D-CI ordering note, 13c's missing work list), `TODOS.md` (the in-flight
+banner, the deleted address ledger, A-25's address restored), `PROGRESS.md`, `SUMMARIES.md`, this
+file.
+
+### Next steps
+
+1. **Whoever holds `pipeline.nim` and `markdown.nim` reports a green build to this session**, and
+   only then does `PROGRESS.md` get an entry for 12c and 12e-1.
+2. **Close three of the four sessions.** This is the whole cause and nothing in a tracker fixes it.
+3. **13c's first unit is re-deriving one area's inventory from `jca_web/src`** — the 866 leads do
+   not exist (`PLANS.md` Step 13c, `TODOS.md` A-59).
+4. **A USER screen run** of the composer and, now, of an attachment actually filing as an artefact.
+5. **Test and check work stays last** (A-68).
+
+---
+
+## Session 026b — 2026-09-03 11:38 — **A-69 fixed: an attachment is filed as a workspace artefact for the first time. The 866 parity verdicts are in no record and 13c has no work list.**
+
+**A second session ran concurrently against this same working tree**, with the same instruction —
+read `AGENTS.md`, cross-reference the devdocs against the code, present the phase. It produced the
+Session 026 entry below. **That entry's "Files touched: no source file" was true when written and
+is superseded by this one**, which is the file's own convention for a point-in-time record. Four
+peer sessions were live on the repo at 11:38 (`jenova-d0`, `jenova-26`, `jenova-d3`, `jenova-b6`),
+which the USER should know when reading two entries with one session number: **`.devdocs/` is
+shared mutable state and concurrent sessions overwrite each other's corrections.** This entry
+edited only what 026 had not touched, and `git diff` was read before every write.
+
+### What was cross-referenced
+
+**32 claims re-derived from `src/`, independently of 026's 22.** Twenty-eight held, to the symbol:
+A-3, A-4, A-5, A-7, A-8, A-16 … A-21, A-25, A-26, A-27, A-31, A-34, A-40, A-48, A-57 (**exactly 32
+`except …: discard` across 11 modules**, as written), A-62, A-63, G-51, and every Step 13a/13b
+symbol. **Four did not**: the branch header (026 corrected it), the rotted `gui.nim`/`api.nim`
+addresses (026 corrected them), and two that 026 did not reach — below.
+
+### Built — A-69, one call
+
+`gui.fileAttachmentsAsArtefacts` minted the `fileAssets` id with `$genOid()`; `fssync.physicalPath`
+refuses any id that is not a 36-character UUID, so `syncFileAsset` failed, `api.upsert` took its
+mirror-failure branch and **deleted the row it had just written.** Every attachment since
+2026-09-02 reported "could not file … in the workspace" and **G-44 / Step 10b had never worked
+once**, while `PROGRESS.md` recorded it as built. Fixed with `fssync.newUuid()` — the idiom
+`createNote` uses, and the trap its own comment eleven lines above already warned about. Builds
+ELF 64-bit FreeBSD; `bin/jenova --check` exits 0.
+
+**Stated plainly: this is unobserved.** `gui.nim` links into no test binary and `--check` allocates
+no sizes and routes no events, which is precisely how a never-working feature was recorded as
+built. Whether the row survives is a USER screen run.
+
+### Found — 13c has no work list, and this is the bigger of the two
+
+**`TODOS.md` A-59 said "Full per-feature verdicts are in the session record."** A search of all
+twelve trackers returns the nine-row summary table and nothing else; Session 023's entry records
+the *counts*. **So the 866 leads that constitute 13c — the declared current work — exist nowhere.**
+The source is intact, so the recovery is to re-derive one area at a time from `jca_web/src`, as
+`data-services` was on 2026-09-03 09:48. Corrected in place at A-59. **Budget for it: 13c's first
+step is a re-derivation, not a lookup.**
+
+**And `PROGRESS.md`'s 2026-09-02 07:51 entry** — the one A-69 falsifies — carried no correction
+while six lesser drifts had correction blocks at the top of the same file. It now carries one.
+
+### Files touched
+
+`src/jenova/gui.nim` (one line plus its comment). Trackers: `PROGRESS.md`, `TODOS.md`,
+`BRIEFING.md`, `SESSION_HANDOFF.md`, `SUMMARIES.md`.
+
+### Next steps
+
+1. **A USER screen run** — the composer, and now an attachment reaching the workspace tree.
+2. **13c**, once someone re-derives an area's verdicts. `views-dialogs` (163 features),
+   `models-server` (119) and `sidebar-workspace` (135) are the largest — read for root causes.
+3. **Step 12c** — A-3 and A-4, the two data-losing defects, both assertable below the widget layer.
+4. **Test and check work stays last** (A-68).
+
+---
+
+## Session 026 — 2026-09-03 11:35 — **22 A-series claims re-derived against `src/`; none refuted; every `gui.nim` address in them wrong**
+
+**Instruction:** read `AGENTS.md` and stay strict to it, read the devdocs, cross-reference the plan
+and every claim against the codebase, document the remaining work clearly, and present the phase
+to work on today.
+
+**No product code was touched and nothing was run** (Rule 0). Binaries were inspected with
+`file(1)` and their mtimes read; that is not a run.
+
+### What was cross-referenced
+
+**Twenty-two claims read out of `src/`. Every finding held.** A-3 (`trimHistory` measures
+`($m).len` against `perSlot * 4 div 2`), A-4 (25 MiB pre-base64 against 32 MiB on
+`Content-Length`), A-5 (`let used = t.promptN + t.predictedN`; `cacheN` is a parenthetical only),
+A-7 (`cacheStore`'s only caller is `pipeline-selftest`, `cacheLookup` runs on every turn from
+`server.handle`), A-16 (`restoreItem` contains no `fssync` call), A-17, A-18 (one caller each,
+all `api.handleFs`), A-20 (no `begin`/`commit`), A-21, A-24, A-25, A-26, A-27, A-31, A-34, A-40,
+A-48 (zero `href` across `src/`), A-52's `make llama` pair, A-53 (`prepare` still takes no
+`Settings`), A-62, A-69, G-37 and G-38.
+
+**Step 13a and 13b are built as recorded**, checked by symbol rather than by the claim: `DraftView`
+is a renderable in `gui.nim`, `composer.canSend` is called from the send path, and `DraftZone`,
+`composerOwner` and `.draft-zone` return zero hits — the deletion the rebuild claimed was actually
+made. `convmd.toMarkdown`/`fromMarkdown`, `api.forkConversation`, `fssync.readNoteMirror` and
+`api.pullNotes` all exist and all have window callers.
+
+### What did not hold, and it is one thing three ways
+
+1. **The branch header.** `BRIEFING.md` said `9fc9ecc7` "with Session 025's work uncommitted".
+   The USER committed it as **`256a6528`** and the tree is clean. **Three consecutive sessions have
+   now found this line a commit stale.** Corrected.
+
+2. **Every `gui.nim` address in the A-series is wrong.** The sweep note at the top of `TODOS.md`
+   records the seventh sweep's ruling — *bare line numbers into `gui.nim` and `api.nim` are deleted
+   rather than re-derived, because they rot every time* — and the A-series was written with them
+   anyway. Thirteen were checked and thirteen had moved: A-5, A-25, A-26, A-27, A-28, A-32, A-33,
+   A-39, A-40, A-42, A-43 and A-52's `lanAddress`, plus A-24 in `api.nim`, which Step 13b displaced
+   by inserting `forkConversation` above it. **`api.nim:347` and `:435` held**, being above that
+   insertion. **The addresses are replaced with symbols, not renumbered** — an eighth renumbering
+   is the thing the policy exists to stop.
+
+3. **G-51's "`Paned` returns zero hits in `gui.nim`" is now three hits** — all three comments
+   explaining why the widget is a `Box`. The finding is unchanged; the wording invited a reader to
+   verify it with a search that now contradicts it. Corrected in place.
+
+**Two things that did hold and are worth saying, because both have been wrong before:** the
+dispatch in `src/jenova_core.nim` carries **sixteen** `of "…-selftest"` cases and
+`jenova_core.nimble`'s `SelfTests` const lists the same sixteen, so nothing added is unrun; and
+**both binaries are newer than every source file**, so Session 025's green record still describes
+the tree as it stands.
+
+### Files touched
+
+`BRIEFING.md`, `TODOS.md`, `SESSION_HANDOFF.md`, `SUMMARIES.md`. **No source file.**
+
+### Next steps
+
+Put to the USER, awaiting the choice per Directive 1 — the candidates are **13c** (the remaining
+866 parity leads, read for root causes first), **A-69** (one call), and **Step 12c** (A-3 and A-4,
+the two data-losing defects). **Test and check work stays last** (A-68).
+
+---
+
 ## Session 025 — 2026-09-03 11:24 — **The parity backlog opened: Step 13a and 13b built; `data-services` checked at last; the composer shipped broken three times and was rebuilt; a defect found that has always been broken**
 
 **Instruction:** read AGENTS.md and the devdocs, cross-reference every claim against the codebase,

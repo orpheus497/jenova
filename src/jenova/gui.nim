@@ -77,7 +77,8 @@ type
   ## cannot tell those apart. Field names match the server's `result_timings`
   ## exactly so there is nothing to translate when reading either side.
   Timings* = object
-    promptN*: int          ## tokens in the prompt
+    promptN*: int          ## prompt tokens *evaluated* — not the whole prompt,
+                           ## which is this plus `cacheN` (A-5)
     promptMs*: float
     predictedN*: int       ## tokens generated
     predictedMs*: float
@@ -1366,6 +1367,12 @@ proc reloadTree(app: AppState) =
   app.notes = listNotes()
   app.files = listFiles()
 
+## `view` re-parsed every message's full text on every frame, which a long
+## conversation paid on every streamed token (G-40). Declared here rather than
+## beside `attachMemo` because the note editor below is its first user: it
+## renders through this memo and, unlike the transcript, has to invalidate it.
+var mdMemo: markdown.BlockMemo
+
 proc openNoteEditor(app: AppState, id: string) =
   if app.streaming: return
   let n = loadNote(id)
@@ -1382,6 +1389,10 @@ proc openNoteEditor(app: AppState, id: string) =
   app.noteOrigTitle = n.title
   app.noteOrigContent = n.content
   app.noteOrigFocus = n.focus
+  # A-26. The memo keys on the note id, which does not change across an edit, so
+  # it must be told. This is also the external-change path: `pullNotesFromDisk`
+  # re-opens the note through here after `api.pullNotes` rewrites the row.
+  mdMemo.invalidate(id)
   app.notice = ""
 
 ## Function purpose: whether the open note carries an edit that is not in the
@@ -1423,6 +1434,12 @@ proc saveNote(app: AppState) =
     app.noteOrigTitle = app.noteTitle
     app.noteOrigContent = app.noteBuffer.text()
     app.noteOrigFocus = app.noteFocus
+    # A-26. The other half: an edit that leaves the character count unchanged —
+    # a transposition, a word swapped for one the same length — matches the
+    # memo's length stamp, so without this the view keeps rendering the text
+    # that was just replaced. `cancelNoteEdit` needs no such call: it restores
+    # the buffer *from* the baseline, which is what the memo already holds.
+    mdMemo.invalidate(app.openNote)
     app.noteEditing = false
     app.notice = "note saved"
   else:
@@ -1699,10 +1716,6 @@ proc visibleConvs(app: AppState): seq[ConvItem] =
 ## below. `pipeline.ParseMemo` is where the parsing and the assertions live.
 var attachMemo: pipeline.ParseMemo
 
-## The same holding for markdown: `view` re-parsed every message's full text on
-## every frame, which a long conversation paid on every streamed token.
-var mdMemo: markdown.BlockMemo
-
 proc postConversation(app: AppState, continuing = false) =
   app.notice = ""
   app.streaming = true
@@ -1902,8 +1915,12 @@ proc fileAttachmentsAsArtefacts(app: AppState) =
     # Web UI's own wording for exactly this case. The bytes are already in
     # `messages.extra` and go to the model as an image part.
     let isText = a.kind != "IMAGE"
+    # A-69. The id must be a real UUID for the same reason `createNote` above
+    # says so: `fssync.physicalPath` refuses a 24-character `genOid`, so
+    # `syncFileAsset` fails and `upsert` deletes the row it has already
+    # written. Every attachment reported "could not file …" until this line.
     let node = %*{
-      "id": $genOid(), "folderId": folderId, "projectId": projectId,
+      "id": fssync.newUuid(), "folderId": folderId, "projectId": projectId,
       "workspaceId": workspaceId, "name": a.name,
       "size": (if isText: a.payload.len else: 0),
       "type": (if isText: "text/plain" else: "image/*"),
@@ -2905,7 +2922,15 @@ proc statsLine(app: AppState, m: Message): string =
   # `CTX_SIZE` would overstate what is left by the slot count, and again by
   # whatever the model's training context capped it to.
   if app.ctxSize > 0:
-    let used = t.promptN + t.predictedN
+    # A-5. **`cacheN` is part of the prompt and was omitted.** `prompt_n` is
+    # only what this request had to *evaluate*; the prefix the server reused is
+    # reported separately as `cache_n` and occupies the context just the same.
+    # Jenova passes `--cache-prompt` on every start, so reuse is the normal
+    # case and the error was exactly `cache_n` — which grows with the
+    # conversation, making the figure least wrong when nobody cares and most
+    # wrong when a USER consults it to decide whether to start a new chat.
+    # `chat.svelte.ts` sums the same three, so this is parity as well as a fix.
+    let used = t.cacheN + t.promptN + t.predictedN
     parts.add $used & "/" & $app.ctxSize & " ctx  " &
               $max(0, app.ctxSize - used) & " left"
 

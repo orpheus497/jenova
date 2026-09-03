@@ -286,6 +286,22 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
     var handedOff = false
     try:
       handedOff = handle(client, arg.class, arg.id)
+    except BodyTooLargeError:
+      # Action purpose: A-4. This one exception is answered before the generic
+      # branch below, and it is the only one whose message is given to the
+      # caller — because the caller *is* the sender of the oversized body, so it
+      # carries nothing they did not already know, and without it they get the
+      # undiagnosable grey line G-35 exists to prevent.
+      #
+      # The shape is llama-server's own error envelope rather than a new one, so
+      # `pipeline.classifyError` reads it through the same path as every other
+      # backend error and no second parser is needed.
+      let detail = getCurrentExceptionMsg()
+      try:
+        client.sendResponse(413, "application/json",
+          $(%*{"error": {"type": "request_too_large", "message": detail}}))
+      except CatchableError:
+        discard
     except CatchableError:
       # The message goes to the log, not to the client: it carries filesystem
       # paths, SQL and internal state, and the caller that triggered the fault is

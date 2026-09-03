@@ -22,7 +22,8 @@ when not defined(freebsd):
 import std/[os, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings, hardware, workspace, pdf, zlib, fssync, composer, convmd]
+               settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
+               http]
 
 const
   Version = "0.1.0"
@@ -707,15 +708,37 @@ proc main() =
         # D-BQ: refused, never truncated. Asserted against a real oversized file
         # rather than against the constant — checking that the number is 25
         # would pass even if nothing ever compared anything to it.
+        const Mib = 1024 * 1024
         let big = dir / "big.bin"
         writeFile(big, repeat('x', pipeline.MaxAttachmentBytes + 1024))
         let over = pipeline.readAttachment(big, true, true)
         check("a file over the cap is refused", not over.ok)
+        # A-4: the two numbers are *derived* from the cap rather than written
+        # here. They were "25 MB" and "26" against a constant that is now a
+        # division of the body cap, so the literals asserted a number the
+        # product no longer holds — a stale assertion of exactly the kind the
+        # 2026-09-03 run found in `test_models.sh`.
         check("and the refusal names the limit and the actual size",
-              over.err.contains("25 MB") and over.err.contains("26"), over.err)
+              over.err.contains($(pipeline.MaxAttachmentBytes div Mib) & " MB") and
+              over.err.contains($((pipeline.MaxAttachmentBytes + 1024 + Mib - 1) div Mib)),
+              over.err)
         check("and nothing truncated is returned",
               over.att.payload.len == 0 and over.att.kind.len == 0)
         removeFile(big)
+
+        # Action purpose: A-4. **The two caps are one invariant and this is it.**
+        # An attachment is measured on the file as read; the body cap is
+        # measured on the base64 that carries it, which is 4/3 the size. They
+        # were independent constants — 25 MiB against 32 MiB — so they crossed
+        # at 24 MiB and a 24.5 MiB image passed here and was refused as a
+        # request, producing the untyped 500 that G-35 exists to prevent. The
+        # assertion is on the relation, not on either number, so re-tuning
+        # either one can never re-open the gap silently.
+        check("anything that passes the attachment cap fits a request body",
+              (pipeline.MaxAttachmentBytes * 4 div 3) + 1024 < http.MaxBodyBytes,
+              "cap " & $pipeline.MaxAttachmentBytes & " encodes to " &
+              $(pipeline.MaxAttachmentBytes * 4 div 3) & " against a body cap of " &
+              $http.MaxBodyBytes)
 
         writeFile(dir / "small.txt", "under the cap")
         let under = pipeline.readAttachment(dir / "small.txt", true, true)
@@ -884,6 +907,31 @@ proc main() =
         check("and falls back to naming the status", e.message.contains("500"),
               e.message)
 
+      block bodyTooLarge:
+        # Action purpose: A-4. An oversized request used to reach the caller as
+        # a bare 500 with no body, which lands in the one grey line G-35 was
+        # built to eliminate. `server.classWorker` now answers 413 in
+        # llama-server's own error envelope, and this is the reading of it.
+        let body = """{"error":{"type":"request_too_large",
+          "message":"request body is 34 MB and the limit is 32 MB"}}"""
+        let e = pipeline.classifyError(413, body)
+        check("an oversized body is a refusal, not a server fault",
+              e.kind == pipeline.cekBadRequest, $e.kind)
+        # **Not retryable, and this is the half that matters.** The identical
+        # body would be sent again and refused identically, so a Retry button
+        # here is a lie — the same rule the overflow case above is held to.
+        check("and it is NOT retryable", not e.retryable)
+        check("the server's own numbers reach the USER",
+              e.message.contains("34 MB") and e.message.contains("32 MB"),
+              e.message)
+        check("and it says what to do about it",
+              e.message.contains("attachment"), e.message)
+        # The transition that proves the case is wired at all: before A-4 a 413
+        # fell through to the `else` branch and came back retryable, with "the
+        # server answered 413" as the whole diagnosis.
+        check("a 413 no longer reads as a generic server failure",
+              not e.message.contains("answered 413"), e.message)
+
       if bad == 0:
         echo ""
         echo "error-selftest: PASS"
@@ -962,6 +1010,56 @@ proc main() =
               markdown.inlineMarkup("`a*b*c`") == "<tt>a*b*c</tt>")
         check("markup characters in a cell are escaped, not injected",
               markdown.inlineMarkup("<b>") == "&lt;b&gt;")
+
+      block memoInvalidation:
+        # A-26. `blocksFor` stamps on `text.len`. That is sound for a message —
+        # an edit is saved as a *new row with a new id*, and Continue only ever
+        # appends — and unsound for a note, whose id survives every edit, so an
+        # equal-length correction rendered as the pre-edit text indefinitely.
+        #
+        # Written as a transition over ONE memo, varying only the DATA (D-BX):
+        # no single wrong behaviour passes the set. A memo that never caches
+        # fails "does not re-parse"; one that always re-parses fails it too; one
+        # where `invalidate` does nothing fails the equal-length pickup; one
+        # where it clears everything fails the last check.
+        var memo: markdown.BlockMemo
+        let a = "the quick brown fox"
+        let b = "the quick brown box"
+        check("the two fixtures are the same length — the whole point",
+              a.len == b.len)
+
+        let first = memo.blocksFor("note-1", a)
+        check("the first parse of an id produces its blocks",
+              first.len == 1 and first[0].text.contains("fox"))
+        check("it counted as exactly one parse", memo.parses == 1)
+
+        discard memo.blocksFor("note-1", a)
+        check("the same text under the same id does not re-parse",
+              memo.parses == 1)
+
+        # The stamp's limit, asserted rather than assumed. If this ever goes red
+        # the memo has changed and `invalidate` may have become unnecessary.
+        let stale = memo.blocksFor("note-1", b)
+        check("an equal-length edit is invisible to the length stamp",
+              stale[0].text.contains("fox") and memo.parses == 1)
+
+        # A length change still re-parses: the message path, unchanged by A-26.
+        let longer = memo.blocksFor("note-1", b & " indeed")
+        check("a length change does re-parse",
+              longer[0].text.contains("box") and memo.parses == 2)
+
+        # The fix. This is the assertion that bites.
+        memo.invalidate("note-1")
+        let fresh = memo.blocksFor("note-1", b)
+        check("after invalidate the equal-length edit renders",
+              fresh[0].text.contains("box") and memo.parses == 3)
+
+        discard memo.blocksFor("note-2", a)
+        let parsesBefore = memo.parses
+        memo.invalidate("note-1")
+        discard memo.blocksFor("note-2", a)
+        check("invalidating one id leaves every other id cached",
+              memo.parses == parsesBefore)
 
       if bad == 0:
         echo ""
@@ -1258,6 +1356,39 @@ proc main() =
               api.pullNotes().updated == 0)
 
         db.exec("DELETE FROM notes WHERE id=?", [nid])
+
+      # Action purpose: A-24. `deletedRows` is the trash view's source and its
+      # docstring promised "newest first"; the SQL carried no `ORDER BY`, so a
+      # long trash showed the OLDEST deletion at the top — the opposite of the
+      # contract, and exactly the wrong end for a user hunting what they just
+      # deleted.
+      #
+      # Asserted by varying the DATA: three notes are written with `updatedAt`
+      # deliberately out of insertion order, so insertion order and newest-first
+      # are different answers and only one of them passes.
+      block deletedRowsAreNewestFirst:
+        for i, spec in [("wst-tA", 100), ("wst-tB", 300), ("wst-tC", 200)]:
+          db.exec("INSERT OR REPLACE INTO notes (id, workspaceId, title, " &
+                  "content, updatedAt, is_deleted) VALUES (?, 'wst-ws', ?, " &
+                  "'x', ?, 1)", [spec[0], spec[0], $spec[1]])
+        let rows = api.deletedRows("notes").filterIt(
+          it.len > 0 and it[0].startsWith("wst-t"))
+        check("every deleted note is listed", rows.len == 3, $rows.len)
+        # The ids in the order returned. Insertion order is A, B, C; newest
+        # first is B, C, A — so a missing ORDER BY cannot pass this.
+        check("the trash lists the newest deletion first",
+              rows.mapIt(it[0]) == @["wst-tB", "wst-tC", "wst-tA"],
+              $rows.mapIt(it[0]))
+        # The other side: a table with nothing to order by must still list, and
+        # not raise on a column it does not have. That is the "where the table
+        # has anything to order by" half of the contract.
+        db.exec("INSERT OR REPLACE INTO projects (id, workspaceId, name, " &
+                "is_deleted) VALUES ('wst-pDel', 'wst-ws', 'gone', 1)", [])
+        check("a table with no orderable column still lists its trash",
+              api.deletedRows("projects").anyIt(
+                it.len > 0 and it[0] == "wst-pDel"))
+        check("an unknown entity is empty rather than an error",
+              api.deletedRows("nosuchtable").len == 0)
 
       for t in ["notes", "fileAssets", "folders", "projects", "workspaces"]:
         db.exec("DELETE FROM " & t & " WHERE id LIKE 'wst-%'", [])
@@ -1596,6 +1727,13 @@ proc main() =
       createSymlink(outside, real / "ws" / "escape")
 
       putEnv("JENOVA_WORKSPACES", link)
+      # A-17's assertions reach `getTrash`/`emptyTrash`, and the GLOBAL trash
+      # root is `jcaHome / ".trash"` — which without this is the USER's real
+      # `$HOME/Jenova/.trash`. `emptyTrash` would then delete their actual trash.
+      # Set beside the line above, i.e. before anything calls `fssync.roots`,
+      # which caches the first roots it resolves and never re-reads them.
+      createDir(base / "home")
+      putEnv("JCA_HOME", base / "home")
 
       block theRootMayBeASymlink:
         # Existing file under a symlinked root.
@@ -1627,8 +1765,124 @@ proc main() =
         check("a NUL is refused", fssync.resolveStoragePath("ws/a\0b").len == 0)
         check("a newline is refused", fssync.resolveStoragePath("ws/a\nb").len == 0)
 
+      block theStorageTrashIsListedAndEmptied:
+        # A-17. `storageTrash` files a deleted `/api/storage` path under
+        # `<workspaces>/.trash/<epoch>/<relative>`. `getTrash` walked the global
+        # trash and each `<ws>/.trash`, enumerating `<workspaces>` as a list of
+        # workspaces — so it met `.trash` among them and went looking for
+        # `<workspaces>/.trash/.trash`, which cannot exist. Storage deletions
+        # were invisible to the listing and to `emptyTrash` and accumulated for
+        # ever, with the delete dialog still saying they could be restored.
+        #
+        # All three roots are planted, so the fix cannot pass by listing
+        # everything and the `.trash` skip cannot pass by dropping real
+        # workspaces.
+        createDir(real / ".trash" / "1700000000" / "docs")
+        writeFile(real / ".trash" / "1700000000" / "docs" / "storage.md", "s")
+        createDir(real / "ws" / ".trash")
+        writeFile(real / "ws" / ".trash" / "inws.md", "w")
+        createDir(base / "home" / ".trash")
+        writeFile(base / "home" / ".trash" / "global.md", "g")
+
+        let listed = fssync.getTrash()
+        check("the storage trash is listed at all — the A-17 fix",
+              listed.anyIt(it.name == "storage.md"),
+              "names=" & $listed.mapIt(it.name))
+        check("the global trash is still listed",
+              listed.anyIt(it.name == "global.md"))
+        check("a real workspace's own trash is still listed, and still names " &
+              "its workspace",
+              listed.anyIt(it.name == "inws.md" and
+                           it.kind == fssync.tkWorkspace and
+                           it.workspace == "ws"))
+        # The mechanism, asserted directly: `.trash` is not a workspace. Without
+        # the skip it is enumerated as one and reported under that name.
+        check("`.trash` is not reported as a workspace",
+              not listed.anyIt(it.workspace == ".trash"))
+        # It belongs to no one workspace, so it is global — which is also what
+        # keeps `toJson`'s shape identical for the frozen Web UI (D-Z).
+        check("a storage-trash entry is global, not workspace-scoped",
+              listed.filterIt(it.name == "storage.md").allIt(
+                it.kind == fssync.tkGlobal))
+
+        # Safe only because JCA_HOME is the scratch tree — see the note above.
+        check("emptyTrash reports success", fssync.emptyTrash())
+        let after = fssync.getTrash()
+        check("emptying clears the storage trash too, not just the other two",
+              not after.anyIt(it.name == "storage.md"), "left=" & $after.len)
+        check("...and clears the global and workspace trash with it",
+              not after.anyIt(it.name == "global.md" or it.name == "inws.md"))
+
+      # Action purpose: A-16. **Restoring from the window restored the database
+      # row and never the file.** Deletion mirrors into a trash tree and writes
+      # a `{type, id, original_path}` sidecar for the express purpose of undoing
+      # it; nothing on the desktop path ever read that sidecar back, so a
+      # restored note's `.md` stayed in the trash, a restored asset's bytes
+      # never returned at all, and a restored container left its whole directory
+      # behind — under a confirmation that says it can be restored from there.
+      #
+      # Asserted by varying the DATA (D-BX): the same trash entry is asked for
+      # under a matching id, a non-matching id and a non-restorable table, and
+      # the three must not agree. No product code is damaged to make any of it
+      # bite.
+      block restoringTheMirroredFile:
+        let (wsRoot, _) = (getEnv("JENOVA_WORKSPACES"), "")
+        let jcaTrash = base / "home" / ".trash"
+
+        # A sidecar is written the way `writeTrashMetadata` writes one, and the
+        # entry is planted in each of the THREE trash roots in turn — the third
+        # being the one A-17 was about. A walk that covers only two would pass
+        # the first case here and fail the storage one.
+        proc plant(root, name, table, id, original: string) =
+          createDir(root)
+          writeFile(root / name, "restored-content")
+          writeFile(root / name & ".metadata.json",
+                    $(%*{"type": table, "id": id, "original_path": original}))
+
+        # 1. The global trash.
+        let backA = wsRoot / "ws" / "restored-a.md"
+        plant(jcaTrash, "a.md", "notes", "restore-a", backA)
+        check("a trashed note comes back out of the GLOBAL trash",
+              fssync.restoreMirror("notes", "restore-a"))
+        check("...and the file is actually at its original path again",
+              fileExists(backA) and readFile(backA) == "restored-content")
+        check("...and the sidecar is consumed, so a second restore is a no-op",
+              not fileExists(jcaTrash / "a.md.metadata.json") and
+              not fssync.restoreMirror("notes", "restore-a"))
+
+        # 2. The storage trash — `<workspaces>/.trash`, which nothing looked in
+        # until A-17. This is the case that fails if `restoreMirror` inherits
+        # the old two-root walk.
+        let backB = wsRoot / "ws" / "restored-b.md"
+        plant(wsRoot / ".trash", "b.md", "fileAssets", "restore-b", backB)
+        check("a trashed asset comes back out of the STORAGE trash (A-17's root)",
+              fssync.restoreMirror("fileAssets", "restore-b") and
+              fileExists(backB))
+
+        # 3. A workspace's own trash.
+        let backC = wsRoot / "ws" / "restored-c.md"
+        plant(wsRoot / "ws" / ".trash", "c.md", "notes", "restore-c", backC)
+        check("a trashed note comes back out of a WORKSPACE trash",
+              fssync.restoreMirror("notes", "restore-c") and fileExists(backC))
+
+        # The other side, and it is the half that stops an always-true
+        # implementation passing: the same planted entry, asked for wrongly.
+        let backD = wsRoot / "ws" / "restored-d.md"
+        plant(jcaTrash, "d.md", "notes", "restore-d", backD)
+        check("an id that matches nothing restores nothing",
+              not fssync.restoreMirror("notes", "no-such-id"))
+        check("...and the entry it did not match is still in the trash",
+              fileExists(jcaTrash / "d.md") and not fileExists(backD))
+        # Same id, same sidecar, different table — the transition that proves
+        # the table is read rather than ignored.
+        check("the same id under a table that has no files restores nothing",
+              not fssync.restoreMirror("conversations", "restore-d"))
+        check("...and only the matching table moves it",
+              fssync.restoreMirror("notes", "restore-d") and fileExists(backD))
+
       removeDir(base)
       delEnv("JENOVA_WORKSPACES")
+      delEnv("JCA_HOME")
 
       if bad == 0:
         echo ""
@@ -2481,6 +2735,57 @@ proc main() =
         let untouched = convo(6)
         check("a zero budget trims nothing",
               pipeline.trimHistory(untouched, 0) == 0 and untouched.len == 8)
+
+        # Action purpose: A-3. **Attaching an image silently deleted the whole
+        # earlier conversation from what the model was sent.** The weight was
+        # `($m).len`, so a screenshot's base64 — megabytes — was measured
+        # against a budget of a few kilobytes, and the trim loop dropped every
+        # droppable turn trying to meet a figure the final turn alone could
+        # never meet.
+        #
+        # **Asserted by varying the DATA (D-BX), never by damaging the code:**
+        # the same conversation is trimmed twice at the same budget, once with a
+        # short text question and once with the identical question carrying a
+        # 4 MB image, and the two must agree.
+        proc withImage(payloadLen: int): JsonNode =
+          result = convo(6)
+          # `elems[^1]`, not `[^1]` — `std/json` has no `[]=` for an array
+          # index, only for an object key. `trimHistory` reaches for `elems`
+          # for the same reason.
+          result.elems[^1] = %*{"role": "user", "content": [
+            {"type": "text", "text": "the question"},
+            {"type": "image_url", "image_url": {
+              "url": "data:image/png;base64," & repeat("A", payloadLen)}}]}
+
+        let plain = convo(6)
+        let picture = withImage(4_000_000)
+        let plainDropped = pipeline.trimHistory(plain, 100_000)
+        let pictureDropped = pipeline.trimHistory(picture, 100_000)
+        check("a conversation with a 4 MB image trims exactly as the same " &
+              "conversation without one",
+              pictureDropped == plainDropped and picture.len == plain.len,
+              "text dropped " & $plainDropped & ", image dropped " &
+              $pictureDropped)
+        check("...and that means nothing was dropped at all here",
+              pictureDropped == 0 and picture.len == 8, $picture.len)
+        check("the turns behind the picture are still there",
+              "turn 0" in $picture and "turn 5" in $picture)
+
+        # The root cause stated as an assertion: weight must not scale with the
+        # payload. Two images four hundred times apart in base64 length are the
+        # same number of embedding tokens, and a weight function that returns
+        # anything else is the defect returning.
+        check("an image's weight does not scale with its base64",
+              pipeline.messageWeight(withImage(10_000)[^1]) ==
+              pipeline.messageWeight(withImage(4_000_000)[^1]))
+
+        # ...and the other side of it, so a weight of zero for images — which
+        # would also satisfy every line above — does not pass. An image costs
+        # more than the text question it arrived with.
+        check("an image is not free either",
+              pipeline.messageWeight(withImage(10_000)[^1]) >
+              pipeline.messageWeight(%*{"role": "user",
+                                        "content": "the question"}))
 
       # Action purpose: T-2. The prepared-statement cache never evicted and one
       # API route builds a different SQL text per field combination, so a

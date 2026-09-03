@@ -4,7 +4,33 @@ Forward-looking only. Superseded plans are in git history at `349a9b5b~1`, path
 `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md` — *corrected 2026-09-03: that directory was deleted by
 the USER and does not exist, see **D-CE***.
 
-**Last updated:** 2026-09-03 07:24 (Session 023)
+**Last updated:** 2026-09-03 11:45 (Session 026c)
+
+> ## ORDERING, as it stands 2026-09-03 11:45 — **the defects first, the parity backlog next (D-CI).**
+>
+> **This supersedes the ordering written in the Step 12 and Step 13 blocks below**, both of which
+> were written at 09:48 when the parity backlog was the current work. **They are left in place as
+> the record of what was planned; this note is what is being built.**
+>
+> **D-CI, 11:40 — the USER's ruling.** `12e-1` (A-26) → `12f-1` (A-17) → `12e-2` (A-48) → `12f-2`
+> (A-16/A-18) → `12d` (A-7), then **13c**. Smallest and most assertable first, and **12d last
+> because it is the only one of the five that touches `upstream.forward`'s verbatim relay** — the
+> path every chat turn takes. The other four are contained and are inert-or-wrong in place; 12d is
+> currently *inert*, and **D-CD's own warning is that wiring the writer without also fixing the hit
+> response makes cached turns render blank.** It is the one change here that can make the product
+> worse than it is today, so it goes in last, against a tree the other four have been proven green
+> on.
+>
+> **Step 12c (A-3, A-4) is in flight and is NOT in D-CI's list.** It was given separately, in a
+> different terminal, and is being built now (`BRIEFING.md` §0a). **That is a gap in the ordering,
+> not a decision against 12c** — recorded so a later session does not read D-CI's five-item list as
+> a closed set and delete 12c as superseded.
+>
+> **A-69 is built and gone from `TODOS.md`** (`PROGRESS.md` 11:38). **A-68 is unaffected: test and
+> check work is still last.**
+>
+> **Read `BRIEFING.md` §0a before opening a file in `src/`.** Four sessions were live in this
+> checkout when this was written and two held source files.
 
 > ## Step 12 — the audit's findings. This is the current work and it is ahead of the parity list.
 >
@@ -17,7 +43,7 @@ the USER and does not exist, see **D-CE***.
 > are likely to keep failing until that work is done. **12a and 12b were built before that
 > instruction and stay built.**
 >
-> **12a — BUILT 2026-09-03 09:02 (`TODOS.md` A-1).** `task suites` now runs all fourteen
+> **12a — BUILT 2026-09-03 09:02 (`TODOS.md` A-1).** `task suites` now runs every
 > `X-selftest` subcommands before the shell suites, from a `SelfTests` const beside the task.
 > **Proven:** `nimble suites` exited 1 on a failing assertion and 0 once corrected. *The failure was
 > observed through a shell suite; making a self-test fail would mean damaging code (D-BX), so the
@@ -147,6 +173,78 @@ the USER and does not exist, see **D-CE***.
 > **13c — the remaining eight areas, and this is what is left of Step 13.** 866 leads. Not scoped
 > here, deliberately: each is verified on pickup per D-CG. **`TODOS.md` A-59 carries the inventory
 > table**; check a scope claim against it (rule 11) and never against a summary of it.
+>
+> > **CORRECTED 2026-09-03 11:45 — there are no 866 leads to pick up. They were never written
+> > down.** The sentence above says each is "verified on pickup", which reads as though there is a
+> > list to pick from. **There is not.** A-59's pointer to "the session record" was checked by
+> > search: `views-dialogs`, `models-server` and `sidebar-workspace` appear **nine times in the
+> > whole of `.devdocs/`**, every one inside A-59's nine-row summary table or the sentence naming
+> > them as where to start. Session 023's per-feature verdicts were produced by agents, counted
+> > into a table, and lost.
+> >
+> > **What survives is the nine-row count table and nothing else.** So **13c's first unit is
+> > re-deriving one area's inventory from `jca_web/src` first-hand** — the same way `data-services`
+> > was done at 09:48, which is the only area that was ever read rather than sampled, and which
+> > collapsed from 147 counted features to **three** real gaps. **Expect that ratio, not the row
+> > count.** Budget the re-derivation as the work; do not plan around a list that does not exist.
+> >
+> > **This is rule 9 at its most expensive:** a derived number was written into a tracker, the
+> > thing it was derived from was discarded, and for three sessions the number was planned against
+> > as though it were an inventory.
+>
+> ### 13c's real work list, first instalment — examined 2026-09-03 11:55, all `[V]`, re-verified here
+>
+> **This is what re-deriving an area produces, and it is the answer to "866 leads".** A session read
+> `views-dialogs`, `models-server` and `sidebar-workspace` first-hand in both trees. **Four findings.
+> Two of them collapse whole columns; one is a deletion from the backlog.**
+>
+> **13c-1 — the program has no model metadata at all. This is the root cause behind most of
+> `models-server`'s 61.** `gui.fetchProps` reads exactly four things out of `/props` — `n_ctx`,
+> `model_alias`, `default_generation_settings.params` and the vision modality — and discards the
+> document. **Nothing in `src/` has ever called `/v1/models`**: a search for `v1/models`,
+> `n_ctx_train`, `n_params`, `n_embd`, `n_vocab`, `vocab_type`, `build_info`, `chat_template` and
+> `total_slots` returns **nothing across the tree** *(one incidental hit in `settings.nim`, which is
+> a settings key name, not a metadata read)*. `models.InstalledModel` carries path, name and role —
+> **filesystem discovery, not model metadata.** So `DialogModelInformation`'s entire table has no
+> data source: Training Context, Model Size, Parameters, Embedding Size, Vocabulary Size, Vocabulary
+> Type, Parallel Slots, Build Info, Chat Template — **nine rows, one cause** — plus `BadgeModality`
+> (the window keeps only the vision boolean, so it cannot show a list) and `ModelsSelectorOption`'s
+> per-model detail. **The work is one fetch and one record, not eleven features.**
+>
+> **13c-2 — `views-dialogs`: a complete producer with no consumer, the fourth this project has
+> found.** `pipeline.ChatError.detail` — whose own docstring says *"the server's own words, when it
+> gave any"* — is populated by `classifyError` at both GUI call sites and then **dropped at the
+> channel boundary**: `UiMsg(kind: umError, …)` carries `text` and `retryable` and nothing else.
+> **Verified here:** both sends read `text: ce.message, retryable: ce.retryable`. So the Web UI's
+> `DialogChatError`, which shows the underlying detail beneath the friendly message, cannot be built
+> until `UiMsg` carries the field. **One enum field, one channel field, one expander.** *(The
+> `.detail` hits in `gui.nim` are `TrashItem.detail`, a different type — do not mistake them.)*
+>
+> **13c-3 — this belongs to Step 12d and 12d does not currently say so.** The Web UI's
+> `ChatMessageStatistics` shows a **Cache Hit** badge driven by the `X-Cache` header. **`server.nim`
+> already sends `X-Cache: HIT`** — verified, `extraHeaders = "X-Cache: HIT\r\n"` — **and the window
+> cannot see it**, because `gui.streamOnce` takes the status line and discards every header before
+> reading the body (the same bare skip loop **A-32** documents). **So wiring the cache writer would
+> produce hits that are silent and indistinguishable from an ordinary reply.** **12d is three parts,
+> not two: the writer, the hit-response shape, and the header read.**
+>
+> **13c-4 — two things NOT to schedule, both of which would have been scheduled off a verdict row.**
+> **(a) Sidebar search is built and is *ahead of* the Web UI.** `app.search` filters conversations
+> and, separately, notes and file assets — two filter sites in `gui.nim`. `ChatSidebar.svelte`
+> filters **conversations only**; `allNotes()` is iterated unfiltered in every branch. **If a verdict
+> says "search: Missing" it is wrong.** **(b) `ChatSidebarActions` carries `handlePush` and
+> `handlePull`, and only pull is a button (13b) — but push is not missing, it is *continuous*:**
+> `fssync.syncNote` writes the mirror on every save, so a Push button would have nothing to do.
+> **Record it N/A with that reason or someone will build a no-op button.** Also confirmed present,
+> so do not re-derive them: the attachment preview, conversation rename, and the fork.
+>
+> **Coverage, stated so silence is not read as a clean result.** `chat-messages`, `content-render`,
+> `settings` and `chat-form` were **not** examined. MCP dialogs excluded per the USER's deferral,
+> `VFSExplorer` per **D-AW**, audio per **D-BZ**, API-key and `serverUrl` per **D-BL**.
+>
+> **Build order, on the 13a/13b evidence that root causes collapse columns:** 13c-1 first (largest
+> fan-out, one fetch), then 13c-2 (cheap, and it closes a dialog), and **fold 13c-3 into 12d's scope
+> before anyone opens a file.** 13c-4 is a backlog deletion, not work.
 >
 > **Where to start, from what 13a and 13b showed.** Both turned out to be one root cause each
 > behind a column of "Missing" rows, and the largest remaining counts are `views-dialogs` (65),
