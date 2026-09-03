@@ -1,17 +1,9 @@
-## Script function and purpose: web search for the `Web Search:` intent,
-## replacing `lib/proxy.lua:259-415`. DuckDuckGo HTML first, falling back to the
-## Instant Answer API — HTML gives general results, the API gives good factual
-## answers, and that order is the original's.
-##
-## **Why this still shells out to `fetch`.** `proxy.lua` used `fetch` or `curl`
-## because LuaJIT had no TLS. Nim's `httpclient` needs OpenSSL linked in, which
-## would be a new dependency on a project that has spent seven stages removing
-## them — and FreeBSD's base `fetch(1)` already does HTTPS with no dependency at
-## all. The subprocess is deliberate. It runs on a worker thread under D-S, so
-## unlike the Lua original it blocks nothing but its own request.
-##
-## Called only on an explicit user intent, and bounded: 8s for HTML, 5s for the
-## API, so ~13s worst case for a user-initiated action on a single-user system.
+## Script function and purpose: web search for the `Web Search:` intent.
+## DuckDuckGo HTML first because it gives general results, then the Instant
+## Answer API because it gives better factual ones. HTTPS is delegated to
+## `fetch(1)` rather than `std/httpclient`, which would link OpenSSL into a
+## project that otherwise needs no TLS stack. Runs on a worker thread and is
+## bounded at ~13s, only ever on an explicit user intent.
 
 import std/[strutils, json, osproc, os, uri, strformat, streams]
 
@@ -20,16 +12,16 @@ const
   ApiTimeout = 5
   MaxResults = 5
 
-## Function purpose: pick the HTTPS client once. `fetch` is FreeBSD base and is
-## preferred; `curl` is the fallback for a host that has it. Returning an empty
-## string is a supported state — the caller emits a distinct message for "no
-## client" versus "no results", because they tell the model different things.
+## Function purpose: an empty string is a supported answer, not a failure — the
+## caller says something different for "no client" than for "no results".
 proc httpsClient*(): string =
   for candidate in ["fetch", "curl"]:
     if findExe(candidate).len > 0:
       return candidate
   ""
 
+## Function purpose: hides the two clients' incompatible flag spellings, so the
+## search paths below never branch on which one is installed.
 proc fetchUrl(url: string, timeout: int): string =
   let client = httpsClient()
   if client.len == 0: return ""
@@ -47,9 +39,8 @@ proc fetchUrl(url: string, timeout: int): string =
   except OSError, IOError:
     ""
 
-## Function purpose: strip tags and decode the entities DuckDuckGo's HTML
-## actually contains, matching `proxy.lua:strip_html`. Not a general HTML
-## parser and not meant to be — it handles the specific markup of one endpoint.
+## Function purpose: handles the markup of one endpoint and is not a general
+## HTML parser; the entity list is what DuckDuckGo actually emits.
 proc stripHtml*(s: string): string =
   var text = newStringOfCap(s.len)
   var inTag = false
@@ -63,9 +54,8 @@ proc stripHtml*(s: string): string =
                            ("\n", " "))
   text.strip()
 
-## Function purpose: pull the text between a marker and a closing tag, repeatedly.
-## Replaces the Lua pattern captures; written as a scan because Nim has no
-## equivalent one-liner and a regex dependency is not worth one call site.
+## Function purpose: a hand-written scan because a regex dependency is not worth
+## one call site.
 proc extractAll(html, marker, closing: string): seq[string] =
   var pos = 0
   while true:
@@ -78,6 +68,8 @@ proc extractAll(html, marker, closing: string): seq[string] =
     result.add html[gt + 1 ..< close]
     pos = close + closing.len
 
+## Function purpose: the preferred path — titles and snippets are paired by
+## position, so a result missing either half is dropped rather than mismatched.
 proc ddgHtmlSearch(query: string): seq[string] =
   let url = "https://html.duckduckgo.com/html/?q=" & encodeUrl(query)
   let html = fetchUrl(url, HtmlTimeout)
@@ -95,6 +87,7 @@ proc ddgHtmlSearch(query: string): seq[string] =
   for i in 0 ..< count:
     result.add &"[{i + 1}] {titles[i]}\n    {snippets[i]}"
 
+## Function purpose: the fallback, used when the HTML endpoint yields nothing.
 proc ddgInstantAnswer(query: string): seq[string] =
   let url = "https://api.duckduckgo.com/?q=" & encodeUrl(query) &
             "&format=json&no_html=1&skip_disambig=1"
@@ -106,7 +99,8 @@ proc ddgInstantAnswer(query: string): seq[string] =
   except CatchableError: return @[]
   if data.kind != JObject: return @[]
 
-  # AbstractText is a direct answer — a Wikipedia summary or similar.
+  # Action purpose: `AbstractText` is the API's name for a direct answer, such
+  # as a Wikipedia summary, and outranks the related topics below it.
   if data.hasKey("AbstractText"):
     let abstract = data["AbstractText"].getStr
     if abstract.len > 20:
@@ -120,8 +114,8 @@ proc ddgInstantAnswer(query: string): seq[string] =
       if topic.kind != JObject or not topic.hasKey("Text"): continue
       let text = topic["Text"].getStr
       if text.len <= 10: continue
-      # The original takes everything before the first " - " as a title, and
-      # falls back to the first 80 characters.
+      # Action purpose: related topics carry no title field, so one is cut from
+      # the text at the separator DuckDuckGo uses, or by length when absent.
       var title = text
       let dash = text.find(" -")
       if dash > 0: title = text[0 ..< dash]
@@ -129,19 +123,17 @@ proc ddgInstantAnswer(query: string): seq[string] =
       result.add &"[{result.len + 1}] {title}\n    " &
                  text[0 ..< min(300, text.len)]
 
-## Function purpose: run a search, HTML first then the Instant Answer API.
-## An empty result is not an error — the caller distinguishes it from "no HTTPS
-## client available", and tells the model something different in each case.
+## Function purpose: an empty result is not an error, and the caller keeps it
+## distinct from having no HTTPS client at all.
 proc search*(query: string): seq[string] =
   if httpsClient().len == 0: return @[]
   result = ddgHtmlSearch(query)
   if result.len > 0: return
   result = ddgInstantAnswer(query)
 
-## Function purpose: the `--- WEB SEARCH RESULTS ---` block, including the two
-## distinct failure messages from `proxy.lua:1282-1291`. The distinction is
-## load-bearing: "the search found nothing" and "this host cannot search" lead
-## the model to different, and differently honest, answers.
+## Function purpose: the two failure messages are deliberately different. "The
+## search found nothing" and "this host cannot search" lead the model to
+## different, and differently honest, answers.
 proc formatContext*(results: seq[string]): string =
   if results.len > 0:
     return "\n--- WEB SEARCH RESULTS ---\n" & results.join("\n")

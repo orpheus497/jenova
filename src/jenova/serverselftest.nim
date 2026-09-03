@@ -1,18 +1,9 @@
-## Script function and purpose: Evidence that the server does not serialize, and
-## that saturating one route class does not starve another.
-##
-## Two distinct properties are measured, because they fail for different reasons:
-##
-## * **Phase 1/2 — an established stream is not stalled by blocking work.** This
-##   is the Lua proxy's symptom: one thread served everyone, so a slow query
-##   froze every open stream.
-## * **Phase 3 — a saturated class does not take the server down with it.** This
-##   is the bug a single shared pool has even when it never blocks: completion
-##   streams are long-lived by design, so enough of them occupy every worker and
-##   health checks and assets stop being served.
-##
-## Phase 3 is the one that justifies per-class pools. A server that passes 1 and
-## 2 can still fail 3, and would look healthy right up until it went dark.
+## Script function and purpose: evidence that the server neither serializes nor
+## lets one saturated route class starve another. Those are separate failures:
+## a shared pool that never blocks still goes dark once enough long-lived
+## streams occupy every worker, so a server can hold a stream's cadence under
+## load and still fail to answer a health check. The third phase is what
+## justifies per-class pools, and it is the one that fails silently.
 
 import std/[net, strformat, strutils, os, monotimes, atomics]
 import ./server
@@ -49,8 +40,12 @@ var loadResults: array[16, ClientResult]
 # false and never terminate. `Atomic[bool]` makes the write visible.
 var loadRunning: Atomic[bool]
 
+## Function purpose: a monotonic clock, so a wall-clock adjustment mid-run
+## cannot forge a gap between stream events.
 proc nowMs(): float = getMonoTime().ticks.float / 1_000_000.0
 
+## Function purpose: a raw socket rather than `std/httpclient`, so a stalled
+## server shows up as a measured delay instead of a client-side retry.
 proc httpGet(path: string): string =
   let s = newSocket(buffered = false)
   defer: s.close()
@@ -64,6 +59,8 @@ proc httpGet(path: string): string =
     data.add chunk[0 ..< n]
   data
 
+## Function purpose: measures the gap between server-sent events, which is the
+## quantity that distinguishes a stalled stream from a slow one.
 proc streamClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
@@ -105,6 +102,7 @@ proc streamClient(arg: ClientArg) {.thread.} =
     r.failed = true
   streamResult = r
 
+## Function purpose: the blocking database load phase 2 runs a stream against.
 proc loadClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
@@ -115,6 +113,8 @@ proc loadClient(arg: ClientArg) {.thread.} =
     r.failed = true
   loadResults[arg.id] = r
 
+## Function purpose: occupies a debug worker for a fixed time, so phase 3 can
+## over-subscribe that class deliberately rather than by timing luck.
 proc holdClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
@@ -124,6 +124,8 @@ proc holdClient(arg: ClientArg) {.thread.} =
     r.failed = true
   loadResults[arg.id] = r
 
+## Function purpose: the entry point behind `jenova-core serve-selftest`;
+## returns a process exit status so the suite can be run from a script.
 proc run*(dbPath, staticRoot: string): int =
   echo "jenova-core serve-selftest"
   db.initDb(dbPath)
@@ -139,7 +141,7 @@ proc run*(dbPath, staticRoot: string): int =
 
   result = 0
 
-  # ---- Phase 1: baseline -------------------------------------------------
+  # ---- Phase 1: the stream's cadence with nothing else running -----------
   var st: Thread[ClientArg]
   createThread(st, streamClient,
                ClientArg(id: 0, events: StreamEvents, interval: StreamInterval))
@@ -148,7 +150,7 @@ proc run*(dbPath, staticRoot: string): int =
   echo &"  phase 1  stream, idle        events={idle.events:<3} " &
        &"max gap {idle.maxGapMs:6.1f} ms   avg {idle.avgGapMs:5.1f} ms"
 
-  # ---- Phase 2: stream under blocking database load ----------------------
+  # ---- Phase 2: the same cadence with blocking database work alongside ---
   loadRunning.store(true)
   var lt: array[LoadClients, Thread[ClientArg]]
   createThread(st, streamClient,
@@ -168,8 +170,9 @@ proc run*(dbPath, staticRoot: string): int =
        &"({SlowRows} rows each) during that stream"
 
   # ---- Phase 3: class isolation ------------------------------------------
-  # Over-subscribe the debug class, then time a health check. Health has its own
-  # threads; if classes shared a pool this is where the server would go dark.
+  # Action purpose: the debug class is over-subscribed and a health check timed
+  # against it. Health has its own threads, so a slow answer here means the
+  # classes share a pool — the failure that looks healthy until it goes dark.
   echo ""
   let debugThreads = ClassTable[rcDebug].threads
   var ht: array[SaturationClients, Thread[ClientArg]]
