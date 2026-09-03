@@ -2622,7 +2622,13 @@ from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
   gtk_text_view_new, gtk_text_view_set_buffer, gtk_text_view_set_editable,
   gtk_text_buffer_new, gtk_text_buffer_set_text, gtk_text_buffer_get_text,
   gtk_text_buffer_get_char_count,
-  gtk_text_buffer_get_start_iter, gtk_text_buffer_get_end_iter
+  gtk_text_buffer_get_start_iter, gtk_text_buffer_get_end_iter,
+  # `MenuItem`, below. All six are already in owlkettle's bindings — the first
+  # four are how its own `ModelButton` builds and labels a `GtkModelButton`,
+  # and `gtk_popover_popdown` is bound but reachable from no property it
+  # exposes, which is the gap `MenuItem` exists to close.
+  g_object_new, g_type_from_name, g_object_set_property, g_value_unset,
+  g_value_new, gtk_popover_popdown
 # `connect`, `disconnect` and `redraw(EventObj)` — the machinery a renderable
 # uses to expose a GTK signal as an owlkettle event, which is what `Entry` does
 # and what the first composer did not do. `owlkettle.nim` imports this module
@@ -3114,6 +3120,60 @@ renderable DraftView of BaseWidget:
     read:
       state.text = bufferText(state.buffer)
 
+## One row of a menu, and **the reason it is not owlkettle's `ModelButton` is a
+## defect that widget cannot avoid: a menu built from `ModelButton`s does not
+## close when you choose something.**
+##
+## GTK closes a `GtkPopoverMenu` when an item *activates an action*; owlkettle's
+## `ModelButton` sets no `action-name` and exposes an ordinary `clicked` event
+## instead, so a manually built menu stays open over whatever the click just
+## did. That is visible and wrong in the sidebar: "Rename" turns the row into an
+## entry, and the menu was left standing on top of it, swallowing the typing.
+##
+## So this is the same `GtkModelButton` — created exactly as `ModelButton` does,
+## through `g_object_new(g_type_from_name("GtkModelButton"))` — with one thing
+## added: the callback walks up to the enclosing `GtkPopover` and pops it down
+## **before** running the handler. Before, not after: the handler may put a
+## widget where the popover is standing, and the entry has to be the thing left
+## on screen.
+##
+## `gtk_widget_get_ancestor` is the only proto declared here; the other six calls
+## are already in owlkettle's bindings and are imported above, per rule 5.
+proc gtk_widget_get_ancestor(w: GtkWidget, t: GType): GtkWidget
+  {.importc, cdecl.}
+proc gtk_popover_get_type(): GType {.importc, cdecl.}
+
+renderable MenuItem of BaseWidget:
+  text: string
+
+  proc clicked()
+
+  hooks:
+    beforeBuild:
+      state.internalWidget =
+        GtkWidget(g_object_new(g_type_from_name("GtkModelButton")))
+    connectEvents:
+      proc itemCallback(w: GtkWidget, data: ptr EventObj[proc ()]) {.cdecl.} =
+        let popover = gtk_widget_get_ancestor(w, gtk_popover_get_type())
+        # `pointer(popover)` and not `popover.isNil`: the `isNil` borrow lives
+        # in the bindings module and this file imports it by name, so the
+        # operator is not in scope here — the same note `AutoScroll` carries.
+        if not pointer(popover).isNil: gtk_popover_popdown(popover)
+        if data.isNil or data[].callback.isNil: return
+        data[].callback()
+        data[].redraw()
+      state.connect(state.clicked, "clicked", itemCallback)
+    disconnectEvents:
+      state.internalWidget.disconnect(state.clicked)
+
+  hooks text:
+    property:
+      # `ModelButton`'s own mechanism: `GtkModelButton` has no C setter for its
+      # label, only the `text` GObject property.
+      var value = g_value_new(state.text)
+      g_object_set_property(state.internalWidget.pointer, "text", value.addr)
+      g_value_unset(value.addr)
+
 renderable SourceCode of BaseWidget:
   code: string
   language: string
@@ -3568,62 +3628,134 @@ proc forkConversationRow(app: AppState, id: string) =
 
 ## Function purpose: one sidebar row, including its rename state, so the tree
 ## does not have to branch on that at every level.
+## What a sidebar row can have done to it, as menu items.
+##
+## **One list, drawn twice.** The row's own `⋯` button and its right-click menu
+## are two `GtkPopover`s and a popover has one parent, so each needs its own
+## widget tree — but they must offer the same things, and a list written out
+## twice is a list that drifts. `entity` selects the items rather than each
+## caller assembling them: only a conversation can be forked, and a file asset
+## has no editor to open, so those differences live here where they can be seen
+## together.
+proc rowMenuItems(app: AppState, entity, id, name: string): Widget =
+  gui:
+    Box(orient = OrientY):
+      MenuItem:
+        text = "Rename"
+        proc clicked() =
+          app.renaming = id
+          app.renameDraft = name
+      if entity == "conversations":
+        MenuItem:
+          text = "Fork"
+          tooltip = "Copy this conversation's current branch into a new one"
+          proc clicked() = app.forkConversationRow(id)
+      MenuItem:
+        text = "Delete"
+        proc clicked() = app.deleteNode(entity, id)
+
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
+    # **Three icon buttons became one `⋯` and a right-click menu** (report 05,
+    # Phase 3). The sidebar is 260px wide and every row spent about sixty of
+    # them on rename/fork/delete, so a conversation named for its first sentence
+    # was ellipsised to make room for controls that are used once in its life.
+    #
+    # The `⋯` stays visible rather than the actions living *only* on
+    # right-click: a control that cannot be found is the defect this file argues
+    # against in three other places, and a right-click menu is discoverable only
+    # to someone who already suspects it is there.
     Box(orient = OrientX, spacing = 2):
-      # hAlign fill rather than expand: hexpand propagates up the tree and would
-      # make the whole sidebar demand half the window.
-      Button {.expand: false, hAlign: AlignFill.}:
-        style = [ButtonFlat, StyleClass("row-btn"),
-                 StyleClass(if c.id == app.convId: "conv-active" else: "conv-idle")]
-        proc clicked() = app.selectConversation(c.id)
-        insert(app.rowLabel("conversations", c.id, c.name))
-      Button {.expand: false.}:
-        icon = "document-edit-symbolic"
-        tooltip = "Rename"
+      # **The `ContextMenu` is inside this Box and not around it, and that is
+      # forced.** `ContextMenu`'s own adder calls `gtk_widget_set_hexpand(child,
+      # 1)`, and hexpand propagates upward through every ancestor that has not
+      # set it explicitly. Wrapping the row made the sidebar demand the whole
+      # window — the exact failure the note below has warned about since G-31,
+      # arriving from a new direction.
+      #
+      # Here it is a child of a *horizontal* Box, and owlkettle's Box adder sets
+      # `hexpand` from `{.expand.}` for that orientation (`widgets.nim:269`), so
+      # `expand: false` sets the flag explicitly on this widget and GTK stops
+      # computing it from what is inside. In the *vertical* sidebar Box the same
+      # annotation sets only `vexpand`, which is why wrapping the row did not
+      # get the same protection.
+      ContextMenu {.expand: false, hAlign: AlignFill.}:
+        # **A width floor, and it is what keeps the `⋯` in a column.** Nothing
+        # here can be made to *fill* the row: a GtkBox hands leftover space only
+        # to children that set `hexpand`, and setting it on anything in this row
+        # propagates the demand up through the sidebar — the failure documented
+        # on the line above and the reason the `ContextMenu` sits inside this
+        # Box rather than around it. So the row is given a minimum instead,
+        # which is the one thing a sizing API does well (the same argument
+        # `.draft-view`'s `min-height` carries in `theme.nim`).
+        #
+        # 204 = the sidebar's 260, less its `margin = 10` on each side, less the
+        # `⋯` button and this Box's `spacing = 2`. It is tied to a width that is
+        # fixed in two places (`sizeRequest` and `{.addFlap, width: 260.}`), so
+        # it cannot drift under a resize; if the sidebar ever becomes
+        # resizable, this is one of the things that has to go with it.
+        #
+        # On the Button and not on the `ContextMenu`: that renderable is
+        # declared `renderable ContextMenu:` with no `of BaseWidget`
+        # (`widgets.nim:3155`), so it has none of the common properties —
+        # no `sizeRequest`, no `style`, no `tooltip`.
+        Button:
+          sizeRequest = (204, -1)
+          style = [ButtonFlat, StyleClass("row-btn"),
+                   StyleClass(if c.id == app.convId: "conv-active" else: "conv-idle")]
+          proc clicked() = app.selectConversation(c.id)
+          insert(app.rowLabel("conversations", c.id, c.name))
+        # The same list as the `⋯` button's, on the third mouse button.
+        # `ContextMenu` attaches a right-click gesture that pops this up at the
+        # pointer; it is the GNOME idiom for a list row and costs nothing to add
+        # once the items are a proc.
+        PopoverMenu {.addMenu.}:
+          hasArrow = false
+          insert(app.rowMenuItems("conversations", c.id, c.name))
+      MenuButton {.expand: false.}:
+        icon = "view-more-symbolic"
+        tooltip = "Rename, fork or delete this chat"
         style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() =
-          app.renaming = c.id
-          app.renameDraft = c.name
-      # Step 13b.
-      Button {.expand: false.}:
-        icon = "edit-copy-symbolic"
-        tooltip = "Fork — copy this conversation's current branch into a new one"
-        style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() = app.forkConversationRow(c.id)
-      Button {.expand: false.}:
-        icon = "user-trash-symbolic"
-        tooltip = "Delete"
-        style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() = app.deleteNode("conversations", c.id)
+        # `MenuButton`'s adder takes the first child as its contents and the
+        # second as its popover, so the icon above and this are the two.
+        PopoverMenu:
+          hasArrow = false
+          insert(app.rowMenuItems("conversations", c.id, c.name))
 
 ## Function purpose: a note or file-asset row. Same shape as `convRow` — an
 ## activating button, a rename and a delete — but a file asset has no editor to
 ## open, because its content may be binary; it is listed, renamed and deleted.
 proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
   gui:
+    # Same shape as `convRow`, and the same reason: two icons per row of a
+    # 260px sidebar, spent on actions used once each.
     Box(orient = OrientX, spacing = 2):
-      Button {.expand: false, hAlign: AlignFill.}:
-        sensitive = entity == "notes"
-        style = [ButtonFlat, StyleClass("row-btn"),
-                 StyleClass(if entity == "notes" and n.id == app.openNote:
-                              "conv-active" else: "conv-idle")]
-        proc clicked() =
-          if entity == "notes": app.openNoteGuarded(n.id)
-        insert(app.rowLabel(entity, n.id,
-                            (if entity == "notes": "▤  " else: "◫  ") & n.name))
-      Button {.expand: false.}:
-        icon = "document-edit-symbolic"
-        tooltip = "Rename"
+      # Inside the Box, for the reason spelled out in `convRow`: `ContextMenu`
+      # sets `hexpand` on its child, and only a horizontal Box's `{.expand.}`
+      # stops that propagating into the sidebar's width.
+      ContextMenu {.expand: false, hAlign: AlignFill.}:
+        # The floor `convRow` explains, for the same reason.
+        Button:
+          sizeRequest = (204, -1)
+          sensitive = entity == "notes"
+          style = [ButtonFlat, StyleClass("row-btn"),
+                   StyleClass(if entity == "notes" and n.id == app.openNote:
+                                "conv-active" else: "conv-idle")]
+          proc clicked() =
+            if entity == "notes": app.openNoteGuarded(n.id)
+          insert(app.rowLabel(entity, n.id,
+                              (if entity == "notes": "▤  " else: "◫  ") & n.name))
+        PopoverMenu {.addMenu.}:
+          hasArrow = false
+          insert(app.rowMenuItems(entity, n.id, n.name))
+      MenuButton {.expand: false.}:
+        icon = "view-more-symbolic"
+        tooltip = (if entity == "notes": "Rename or delete this note"
+                   else: "Rename or delete this file")
         style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() =
-          app.renaming = n.id
-          app.renameDraft = n.name
-      Button {.expand: false.}:
-        icon = "user-trash-symbolic"
-        tooltip = "Delete"
-        style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() = app.deleteNode(entity, n.id)
+        PopoverMenu:
+          hasArrow = false
+          insert(app.rowMenuItems(entity, n.id, n.name))
 
 ## Function purpose: the per-row controls, built once for all four container
 ## kinds so a new one cannot arrive with a different set.

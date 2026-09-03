@@ -105,7 +105,8 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 > | `ToastOverlay` | **done**, using owlkettle's own (`adw.nim:1374`, ungated). Confirmations enqueue on a `ToastQueue` the widget drains; errors keep the inline row with Retry. **P-B1 stays open**: a message you have to act on must not time out, and it needs the server's own detail — not because a toast cannot carry a button, which it can |
 > | `ToolbarView` | available at `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}` — invisible only without `-d:adwminor=4`, which Phase 0 sets. Untouched |
 > | `OverlaySplitView` | available, but **larger than it looks**: `Flap` folds itself through `FlapFoldAuto` and `OverlaySplitView.collapsed` is a plain `bool` something must drive. libadwaita's answer is `AdwBreakpoint`, which owlkettle does *not* have — and binding it also needs the split view's own `GtkWidget`, which owlkettle does not expose from a `gui:` block. Plan the three together, or the swap trades a deprecated widget for a sidebar that stops adapting |
-> | `PopoverMenu` + `ContextMenu`, `SplitButton` | available and untouched |
+> | `PopoverMenu` + `ContextMenu` | **done** for the sidebar's chat, note and file rows: three inline icon buttons became one `⋯` plus right-click, so a row's name gets the width the controls were taking. Message rows are untouched |
+> | `SplitButton` | available and untouched. Nothing in the composer has a secondary action to put on one yet, so it would be a widget in search of a use |
 >
 > **A dependency correction came out of this.** `requires "owlkettle >= 3.0.0"` was satisfied by
 > both the `v3.0.0` tag and by `main`, which still calls itself 3.0.0 — and they differ:
