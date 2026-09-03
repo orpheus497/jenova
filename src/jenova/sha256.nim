@@ -1,19 +1,9 @@
-## Script function and purpose: SHA-256, replacing `lib/sha256.lua`.
-##
-## **Why this is hand-written rather than taken from the stdlib.** Nim ships
-## `std/sha1`, which is both the wrong algorithm and deprecated. The digest is
-## not decorative: `lib/proxy.lua:1386` keys the response cache on the SHA-256 of
-## the rewritten request body, so **a different algorithm silently orphans every
-## cache entry the running system has written.** Using SHA-1 would have been a
-## quiet compatibility break disguised as a dependency saving.
-##
-## A hand-written hash is normally a bad idea precisely because a subtle error
-## produces plausible-looking wrong digests rather than an obvious failure. That
-## risk is answered the only way it can be: **the published FIPS 180-4 test
-## vectors are asserted by `jenova-core sha256-selftest`**, including the empty
-## string, the standard "abc" vector, the 56-byte multi-block vector, and a
-## million repeated characters, which exercises the block loop and the length
-## encoding rather than a single pass.
+## Script function and purpose: SHA-256, which keys the response cache. Written
+## out here because the standard library offers only the deprecated `std/sha1`,
+## and a different algorithm would orphan every cache entry already on disk
+## rather than fail. A wrong digest looks plausible instead of breaking, so
+## correctness rests entirely on the FIPS 180-4 vectors that
+## `jenova-core sha256-selftest` asserts.
 
 import std/strutils
 
@@ -35,17 +25,20 @@ const K: array[64, uint32] = [
   0x748f82ee'u32, 0x78a5636f'u32, 0x84c87814'u32, 0x8cc70208'u32,
   0x90befffa'u32, 0xa4506ceb'u32, 0xbef9a3f7'u32, 0xc67178f2'u32]
 
+## Function purpose: Nim has no rotate operator and SHA-256 is defined in terms
+## of one.
 proc rotr(x: uint32, n: int): uint32 {.inline.} =
   (x shr n.uint32) or (x shl (32 - n).uint32)
 
-## Function purpose: the digest as lowercase hex, which is the form
-## `lib/sha256.lua` returns and therefore the form the cache keys are stored in.
+## Function purpose: lowercase hex because that is the form cache keys are
+## stored in, so the encoding is part of the contract rather than presentation.
 proc sha256*(data: string): string =
   var h: array[8, uint32] = [
     0x6a09e667'u32, 0xbb67ae85'u32, 0x3c6ef372'u32, 0xa54ff53a'u32,
     0x510e527f'u32, 0x9b05688c'u32, 0x1f83d9ab'u32, 0x5be0cd19'u32]
 
-  # Padding: a 0x80 byte, zeroes to 56 mod 64, then the bit length big-endian.
+  # Action purpose: FIPS 180-4 padding. The message is grown to 56 mod 64 so the
+  # 64-bit big-endian bit length lands in the final eight bytes of a block.
   var msg = data
   let bitLen = data.len.uint64 * 8
   msg.add '\x80'

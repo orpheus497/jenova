@@ -1,15 +1,12 @@
-## Script function and purpose: FlateDecode, which is the one thing this project
-## needs zlib for — a PDF's content streams are compressed with it and cannot be
-## read without it (G-30). Approved as a dependency by the USER on 2026-09-02;
-## `/usr/lib/libz.so.1` is FreeBSD base, and the zlib licence is permissive.
-##
-## Bound as `uncompress` and nothing else. That entry point takes no struct, so
-## no versioned C layout is mirrored into Nim — which is **D-V**: hand-declaring
-## `z_stream` would rebuild the `ffi_defs.lua` defect class the migration exists
-## to have deleted. The header supplies the prototype and the C compiler owns it.
+## Script function and purpose: FlateDecode, the one thing this project needs
+## zlib for — a PDF's content streams are compressed with it and cannot be read
+## otherwise. `libz` is FreeBSD base, so this adds no install step.
 
 {.passL: "-lz".}
 
+# Action purpose: only the buffer-at-a-time entry points are bound. They take no
+# struct, so no versioned C layout is mirrored into Nim and `zlib.h` keeps
+# ownership of the prototypes; hand-declaring `z_stream` would not.
 {.push importc, cdecl, header: "zlib.h".}
 proc uncompress(dest: ptr uint8, destLen: ptr culong,
                 source: ptr uint8, sourceLen: culong): cint
@@ -22,19 +19,17 @@ const
   ZOk = cint(0)
   ZBufError = cint(-5)   ## the output buffer was too small; nothing else failed
 
-  ## A decompressed stream larger than this is refused rather than grown into.
-  ## Same reasoning as `pipeline.MaxAttachmentBytes` (D-BQ): a zip bomb inside an
-  ## attached PDF must fail as a refusal, not as the window exhausting memory.
+  ## A stream that inflates past this is refused rather than grown into: a zip
+  ## bomb inside an attached PDF must fail as a refusal, not as the window
+  ## exhausting memory.
   MaxInflatedBytes* = 64 * 1024 * 1024
 
-## Function purpose: inflate a zlib stream whose decompressed length is unknown,
-## which is every PDF stream — the dictionary's `/Length` is the *compressed*
-## length and nothing records the other one.
+## Function purpose: a PDF stream's `/Length` is its *compressed* size and
+## nothing records the other one, so no caller can size the output buffer.
 ##
-## Action purpose: `uncompress` has to be told how much room it has, so the
-## buffer starts at four times the input and quadruples on `Z_BUF_ERROR` until
-## the cap. Retrying is cheap and bounded; guessing once and truncating would
-## hand the model half a document, which is the failure D-BQ refuses.
+## Action purpose: `uncompress` must be told how much room it has, so the buffer
+## starts at four times the input and quadruples on `Z_BUF_ERROR` up to the cap.
+## Retrying is cheap and bounded; guessing once would truncate the document.
 proc inflate*(src: string): tuple[ok: bool, data: string] =
   if src.len == 0: return (false, "")
   var cap = max(src.len * 4, 4096)
@@ -51,11 +46,9 @@ proc inflate*(src: string): tuple[ok: bool, data: string] =
     cap = cap * 4
   (false, "")
 
-## Function purpose: the other half of the round trip, and it exists for the
-## assertions rather than for the product — nothing in Jenova compresses
-## anything. `rag.vectorRoundTrip` is the precedent: a codec is proven by
-## putting a known value through both directions, and embedding pre-compressed
-## bytes as a literal would assert against something nobody can read.
+## Function purpose: nothing in Jenova compresses anything — this exists so the
+## self-test can prove the codec by round trip, rather than by asserting against
+## literal compressed bytes no reader can check.
 proc deflate*(src: string): tuple[ok: bool, data: string] =
   if src.len == 0: return (false, "")
   var cap = int(compressBound(culong(src.len)))
