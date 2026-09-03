@@ -10,9 +10,9 @@
 import std/[os, strutils, tables]
 import owlkettle/bindings/gtk
 import ./theme
+import ./pkgconfig
 
-{.passC: staticExec("pkg-config --cflags gtksourceview-5").}
-{.passL: staticExec("pkg-config --libs gtksourceview-5").}
+pkgConfig("gtksourceview-5", "x11-toolkits/gtksourceview5")
 
 # Action purpose: bound through GtkSourceView's own header, so a changed
 # signature is a C compile error rather than a wrong call. The handle types are

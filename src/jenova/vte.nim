@@ -6,9 +6,9 @@
 import std/[os, strutils]
 import owlkettle/bindings/gtk
 import ./theme
+import ./pkgconfig
 
-{.passC: staticExec("pkg-config --cflags vte-2.91-gtk4").}
-{.passL: staticExec("pkg-config --libs vte-2.91-gtk4").}
+pkgConfig("vte-2.91-gtk4", "x11-toolkits/vte3")
 
 type
   GdkRGBA = object

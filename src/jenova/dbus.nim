@@ -10,8 +10,9 @@
 ## smaller API keeps the marshalling visible, which matters for a protocol where
 ## a wrong signature yields a silently absent icon rather than an error.
 
-{.passC: gorge("pkg-config --cflags dbus-1").}
-{.passL: gorge("pkg-config --libs dbus-1").}
+import ./pkgconfig
+
+pkgConfig("dbus-1", "devel/dbus")
 
 # Action purpose: bound through the real header rather than by mirroring the
 # ABI in Nim, so a struct whose layout moves is a C compile error instead of a
