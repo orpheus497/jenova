@@ -112,7 +112,14 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
   result.add ["-np", $c.getInt("NUM_SLOTS", 1)]
   result.add ["-t", $c.getInt("THREADS", 4)]
   result.add ["-tb", $c.getInt("THREADS_BATCH", 4)]
-  result.add ["-fa", "auto", "-cb", "--spm-infill", "--cache-prompt", "--offline"]
+  # A key in `config.Keys` is always present, empty when no conf sets it — so
+  # the default belongs here, not in `get`, which only substitutes for a missing
+  # key. `-fa ""` is what that mistake produces.
+  let flashAttn = c.get("JENOVA_FLASH_ATTN").strip
+  result.add ["-fa", if flashAttn.len > 0: flashAttn else: "auto"]
+  if c.getInt("JENOVA_MLOCK", 0) != 0: result.add "--mlock"
+  if c.getInt("JENOVA_MMAP", 1) == 0: result.add "--no-mmap"
+  result.add ["-cb", "--spm-infill", "--cache-prompt", "--offline"]
   result.add ["--host", l.bindHost, "--port", $l.llamaPort]
 
   # Speculative decoding, when a draft model exists and is not disabled.

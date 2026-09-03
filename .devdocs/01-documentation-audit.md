@@ -314,6 +314,46 @@ self-tests including the one whose assertion is timing-sensitive (`docs/usage.md
 
 ---
 
+## Coverage gap found in session 4 — documentation I claimed to audit and did not
+
+Ask 1 was "the readme and all documentation". Session 1 audited `README.md` and the five files
+under `docs/`. It did not open:
+
+| Never audited | Result of auditing it now |
+|---|---|
+| `hardware-profiles/README.md` (308 lines) | Profile tables **verified correct** against all six `jenova.conf` files, including the Drafter column, which I had suspected was wrong and is not — `JENOVA_DRAFT` is read at `lifecycle.nim:120` and all six values match |
+| `docs/privacy.md`, second half | **Defect found** — see D-14 |
+| `jca_web/README.md` claims | Reviewed; the one stale statement it contains it already flags itself |
+| `jca_web/docs/**` (10 files) | **Still unaudited.** Frozen tree, but user-facing |
+
+### D-14 — privacy.md's self-audit command does not support its own claim · severity: medium · **fixed**
+
+The document says *"The outbound calls are the only `http` URLs in the runtime"* and hands the
+reader `grep -rn 'https\?://' src/` to check it. Running that returns **ten distinct URLs**, of
+which two are real: about a dozen `x.example` / `img.example` / `rfc.example` fixtures in
+`src/jenova_core.nim`'s self-tests, plus one example inside a comment in `src/jenova/markdown.nim`.
+
+For a privacy document that invites verification, teaching a check whose output the reader cannot
+interpret is worse than not offering one. The section now names every extra the command returns,
+says what each is, and gives a narrowed command that yields exactly the two real hosts.
+
+### D-15 — `etc/jenova.conf` has drifted from its source profile · severity: medium · **open, not changed here**
+
+The deployed config sets `JENOVA_DRAFT=0`; its closest source profile,
+`Vulkan/dgpu-igpu-i5-1135g7`, sets `1`, and the README's table says that profile has a drafter.
+Speculative decoding is therefore off on the deployed configuration while three places document it
+as on.
+
+The drift came from commit `7b859f5` (#115) updating the profile without re-applying it —
+`eee557e` (#113) had previously reverted a hand-edit for exactly this reason, so parity is the
+established convention.
+
+**Not fixed here.** It changes inference behaviour on the owner's own machine, and the correct
+action is `jenova-core hardware apply` with the intended profile rather than a hand-edit of the
+file — which is the thing #113 reverted. Re-applying the profile resolves it.
+
+---
+
 ## Findings added in session 2
 
 ### D-11 — `PLANS.md` is referenced from ten places and does not exist · severity: low

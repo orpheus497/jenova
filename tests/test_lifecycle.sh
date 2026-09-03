@@ -62,6 +62,24 @@ has "continuous batching"         '\-cb'              "$LLAMA_LINE"
 has "flash attention auto"        '\-fa auto'         "$LLAMA_LINE"
 has "split mode layer"            '\-sm layer'        "$LLAMA_LINE"
 
+# The profiles set JENOVA_FLASH_ATTN, JENOVA_MLOCK and JENOVA_MMAP and nothing
+# read them: -fa auto ran even where a profile said off, and MLOCK=1 locked
+# nothing. These pin the defaults, so the wiring cannot silently regress to a
+# hardcoded flag again.
+hasnt "mlock is off unless a profile asks"  '\-\-mlock'   "$LLAMA_LINE"
+hasnt "mmap stays on unless a profile asks" '\-\-no-mmap' "$LLAMA_LINE"
+
+# In a subshell: `VAR=x FOO=$(cmd)` applies VAR to the assignment, not to the
+# command substitution, so the override would not reach the child.
+TUNED_LLAMA=$(
+    JENOVA_FLASH_ATTN=off JENOVA_MLOCK=1 JENOVA_MMAP=0
+    export JENOVA_FLASH_ATTN JENOVA_MLOCK JENOVA_MMAP
+    "$CORE" backends args 2>/dev/null | head -1
+)
+has "a profile can turn flash attention off" '\-fa off'   "$TUNED_LLAMA"
+has "a profile can request mlock"            '\-\-mlock'   "$TUNED_LLAMA"
+has "a profile can disable mmap"             '\-\-no-mmap' "$TUNED_LLAMA"
+
 # --- ports and binding -------------------------------------------------------
 # S-0 and D-E: backends are loopback-only regardless of --lan, so LAN mode
 # cannot publish two unauthenticated inference endpoints to the network.

@@ -80,10 +80,21 @@ Two habits matter anyway:
 
 ## Auditing this yourself
 
-Every claim above is checkable. The outbound calls are the only `http` URLs in the runtime:
+Every claim above is checkable. The two outbound hosts are the only ones the runtime contacts:
 
 ```sh
 grep -rn 'https\?://' src/                        # both binaries
 grep -rn 'https\?://' jca_web/src/                # Web UI
 sockstat -4l | grep -E '8080|8081|8082'           # what is actually listening
 ```
+
+The first command returns more than two hosts, and all the extras are inert:
+
+| What you will also see | Where | What it is |
+|---|---|---|
+| `x.example`, `img.example`, `rfc.example` (about a dozen) | `src/jenova_core.nim` | Self-test fixtures for the markdown link renderer |
+| `https://host/a_b_c` | `src/jenova/markdown.nim` | An example inside a comment |
+
+`grep -rn 'https\?://' src/jenova/*.nim | grep -v '#'` narrows it to the two real ones. Neither
+fixture is ever fetched: nothing in the runtime performs an outbound request except
+`websearch.nim`.

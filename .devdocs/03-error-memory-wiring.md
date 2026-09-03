@@ -462,36 +462,81 @@ all seventeen self-tests pass without them.
 The three `importc` declarations in `dbus.nim` with no caller were **kept**: an FFI binding surface
 is not dead logic, and removing a declaration buys nothing at runtime.
 
-### D-11 — the code's entire explanatory apparatus cites deleted documents · severity: medium · **open, needs your decision**
+### W-08 — five profile settings that nothing could read · severity: medium · **fixed**
 
-The finding as first written was too small. It said nine comments reference a missing `PLANS.md`.
-The real scope:
+`hardware-profiles/CPU/generic/jenova.conf` set `JENOVA_FLASH_ATTN`, `JENOVA_MLOCK`,
+`JENOVA_MMAP`, `JENOVA_LOG_LEVEL` and `JENOVA_LOG_FILE`. None reached the program.
 
-| Dangling | Count |
+The gate is `config.Keys`, whose own comment states the contract: *"an unlisted key is a key
+nothing consumes."* All five were unlisted. `lifecycle` meanwhile passed `-fa auto`
+unconditionally — so a profile declaring flash attention **off** got it **on**, and
+`JENOVA_MLOCK=1` locked nothing.
+
+The same file carries a comment describing this exact defect happening before, for a different set
+of keys: *"This profile previously set JENOVA_-prefixed variants, which jenova-ca never read, so
+llama-server launched with -c '' -np '' -t ''."* These five were the surviving remnant.
+
+Fixed: the three performance keys are added to `config.Keys` and read in `llamaArgs`; the two
+logging keys are removed, because `lifecycle.logFileFor` already owns the log path and a second
+source of truth for it is worse than none. Profile values were set to what the program already
+did, so no machine's behaviour changes until someone opts in.
+
+**Two mistakes of mine on the way to this, both caught only by running it:**
+
+1. The first attempt wired `llamaArgs` to keys `config` never populated — a fix that did nothing.
+   Adding them to `Keys` was the missing half.
+2. The second attempt then emitted `-fa` with an **empty argument** on the five profiles that do
+   not declare the key. `config.get(key, default)` substitutes the default only when the key is
+   *absent*, and a `Keys` entry is always present, empty when unset. That would have broken
+   `llama-server` startup on five of six profiles. The default belongs at the call site.
+
+Six assertions in `tests/test_lifecycle.sh` pin both directions: the defaults with no profile
+override, and each of the three flags responding to one.
+
+### D-11 — WITHDRAWN AS FRAMED. The labels are the defect, not an asset · **corrected**
+
+I had this backwards, and the correction matters more than the finding did.
+
+The original text treated the 600 dangling label references as documentation that had lost its
+referent, and offered **"restore the decision record"** as the first of three options. That is
+exactly wrong. The repository owner deleted `.devdocs/` — twelve files, 17,635 lines — *because*
+the AI working in this codebase had been given strict commenting rules, disobeyed them, and
+produced this apparatus. Removing the folder was the containment action. Restoring it would
+reinstate the thing that was removed on purpose.
+
+So the finding is not "600 references have no target". It is: **600 cross-references and the
+comment style around them are the pollution**, and the owner has already decided what happens to
+them.
+
+Corrected options, with the first two now the only sensible ones:
+
+1. **Leave them.** They are inert. Stripping 600 references across every module is a large,
+   risk-bearing diff for no functional gain, and the labels still disambiguate one ruling from
+   another inside the comments.
+2. **Retire them opportunistically** — when a function is touched for another reason, cut its
+   comment back to what the code cannot say for itself and drop the label with it. No dedicated
+   pass, no churn.
+3. ~~Restore the decision record.~~ **Withdrawn.** It undoes a deliberate decision.
+
+### D-13 — this audit reproduced the pattern it was documenting · severity: medium · **acknowledged**
+
+Measured on this branch's own diff to `src/**.nim`:
+
+| | |
 |---|---|
-| Explicit filename references (`PLANS.md`, `TODOS.md`, `TESTS.md`, `BRIEFING`) in `src/`, `tests/`, `docs/` | **28** |
-| Bare decision and defect labels (`D-BQ`, `A-48`, `G-30`, `B-12`, `N-30`, `T-17`, `S-1` …) in `src/` | **600 references, 122 distinct labels** |
+| Comment lines added | **939 of 2032 added lines — 46%** |
+| New label references introduced (`W-06`, `E-01`, `M-03`, `P-B3` …) | **69** |
 
-Commit `c5111ce` — the most recent on `main` — deliberately deleted **the entire `.devdocs/`
-process record**: `PLANS.md`, `TODOS.md`, `DECISIONS_LOG.md`, `BLUEPRINT.md`, `BRIEFING.md`,
-`PROGRESS.md`, `TESTS.md`, `SESSION_HANDOFF.md` and four more — twelve files, 17,635 lines, with
-`AGENTS.md`.
+Much of it restates what the code says, and the labels point into `.devdocs/03` — a file that
+exists only because this audit created it, which is the same coupling that produced the original
+problem.
 
-Every one of those 600 labels is now unresolvable for a reader. The comments remain the best
-documentation in this codebase and they constantly cite a corpus that is gone.
+Standing correction for future work in this repository, from the owner:
 
-**Three options, and this is the user's call, not a defect to fix unilaterally:**
+> Cut commenting back to the bare necessity of its purpose. Do not repeat what the code already
+> says. This applies as work is done, not as a separate cleanup pass.
 
-1. **Restore the decision record.** The blobs are still reachable — `git show
-   a6eccaf5883a99dcf5fd95b7b754b3d5a13b39ec > .devdocs/PLANS.md`, and `git show c5111ce^:<path>`
-   for the rest. This undoes the most recent commit on `main`, which is why it was not done here.
-2. **Accept the labels as opaque tags.** They still distinguish one ruling from another *within*
-   the comments, which is most of their working value. Cost: a new reader can never look one up.
-3. **Strip them.** 600 edits across every module, for no functional gain and real churn risk.
-
-Nothing was changed for this finding except the one case that was user-facing: the FreeBSD guard's
-error message in `jenova_core.nim` pointed at `.devdocs/PLANS.md` and now points at
-`docs/install.md`.
+No mass rewrite is scheduled. The rule applies to new and touched code.
 
 ---
 

@@ -47,6 +47,8 @@ const
     "THREADS", "THREADS_BATCH", "BATCH_SIZE", "UBATCH_SIZE",
     # speculative decoding
     "JENOVA_DRAFT", "DRAFT_DEVICE",
+    # llama-server performance flags
+    "JENOVA_FLASH_ATTN", "JENOVA_MLOCK", "JENOVA_MMAP",
     # agent limits
     "MAX_TURNS", "MAX_ACTIONS", "TIMEOUT",
     # health
