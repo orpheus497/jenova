@@ -993,8 +993,14 @@ proc hwWorker() {.thread.} =
 ## problem.
 ##
 ## Everything that makes a notice a *message* rather than a *string* lives here
-## and only here: the serial that turns it into an event for `ToastOverlay`, and
-## the two flags whose stale values were a defect (see `noticeRetryable`).
+## and only here: the enqueue that turns it into an event, and the two flags
+## whose stale values were a defect (see `noticeRetryable`).
+##
+## A toast is an event and owlkettle is declarative, which is the tension. The
+## answer is upstream's: `ToastQueue` is a `ref` the widget *drains* on each
+## update, so a message raises exactly one toast and the same text twice raises
+## two. Errors are not enqueued — they keep the inline row, where the Retry
+## button shares the widget's lifetime.
 template setNotice(target, text: untyped) =
   target.noticeMsg = text
   target.noticeIsError = false
@@ -1003,8 +1009,12 @@ template setNotice(target, text: untyped) =
   # calling this, precisely so that an error does not queue a toast: an error
   # keeps the inline row, where it does not time out and where the Retry button
   # can live. See that branch and the notice row in `view`.
-  if target.noticeMsg.len > 0:
-    target.toasts.add(newToast(target.noticeMsg))
+  #
+  # No nil check on the queue: `toasts` carries a field default, so it exists
+  # from `buildState` onwards on every construction path — the same guarantee
+  # `noteBuffer` has a few fields down, and for the same reason.
+  if text.len > 0:
+    target.toasts.add newToast(text)
 
 viewable App:
   ## Application state. `paths` and `cfg` are resolved once at startup rather
@@ -1075,7 +1085,7 @@ viewable App:
   streaming: bool
   ## **Written through `notice=` below, never directly.** The field is spelled
   ## differently from the property so that `app.notice = "…"` resolves to the
-  ## setter, which is where the serial is bumped and the two flags below are
+  ## setter, which is where the toast is enqueued and the two flags below are
   ## reset — see `setNotice`.
   noticeMsg: string
   ## The messages waiting to be raised as toasts. **A `ref` the widget drains**
@@ -1084,6 +1094,10 @@ viewable App:
   ## the queue is emptied by the act of showing it, so the next redraw has
   ## nothing left to show. Adding the same text twice is two entries and two
   ## toasts, so saving a note twice confirms it twice.
+  ##
+  ## A field default rather than an argument at the one construction site, as
+  ## `noteBuffer` is: it then exists on every path into `buildState`, and
+  ## `setNotice` needs no nil check to say so.
   toasts: ToastQueue = newToastQueue()
   ## Whether this notice is a failure. **Errors stay on the inline row and
   ## confirmations become toasts**, because a message you have to act on should
@@ -1531,7 +1545,7 @@ viewable App:
 ##
 ## **The point of the pair is that the fifty-odd `app.notice = "…"` sites did not
 ## have to change.** With no field of that name, each one resolves to the setter
-## below, so the serial and the flags are maintained at every one of them rather
+## below, so the queue and the flags are maintained at every one of them rather
 ## than at the handful somebody remembered. That is what made the stale-Retry
 ## defect possible: `noticeRetryable` was documented as "cleared by every other
 ## writer" and was in fact cleared by one of them.
@@ -5111,13 +5125,13 @@ method view(app: AppState): Widget =
       ShortcutHost:
         bindings = app.keyBindings()
 
-        # It wraps the whole window because that is where libadwaita floats a
+        # Wraps the whole window because that is where libadwaita floats a
         # toast: bottom centre, over everything, out of the layout.
         #
-        # The queue is a `ref` shared with `app.toasts`, and the hook drains it
-        # — so what decides whether a message becomes a toast is whether
-        # anything put it in the queue, which is `setNotice` and only
-        # `setNotice`. Errors never reach it.
+        # The queue is the `ref` `app.toasts` holds and the hook drains it — so
+        # what decides whether a message becomes a toast is whether anything put
+        # it in the queue, which is `setNotice` and only `setNotice`. Errors
+        # never reach it.
         ToastOverlay:
           toastQueue = app.toasts
 

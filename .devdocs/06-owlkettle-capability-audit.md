@@ -114,7 +114,7 @@ the right widget, not a bigger lid.
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
 | Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
-| Transient notification | `ToastOverlay` | ~~A one-line notice label~~ — owlkettle's own, session 7: confirmations toast, and the row is now errors only |
+| Transient notification | `ToastOverlay` (`adw.nim:1374` on the pinned revision, ungated) | ~~A one-line notice label~~ — upstream's widget: confirmations toast, and the row is now errors only |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
@@ -142,25 +142,49 @@ Where owlkettle lacks a widget, you declare one. `owlkettle.nim:25` exports `wid
 **"owlkettle does not have widget X" is therefore never a wall.** It is roughly forty lines of
 `renderable` plus `importc`, and the author has written it four times already.
 
-What owlkettle genuinely does not expose (verified absent from `owlkettle/` at `ac61ecf`,
-`adw.nim` and `bindings/adw.nim` both): `NavigationView`, `TabView`, `AdwDialog`/`AlertDialog`,
-`BottomSheet`, and **`AdwBreakpoint`/`AdwBreakpointBin`**. All are reachable by the same hatch if
-wanted.
+What owlkettle genuinely does not expose, verified absent from `owlkettle/` at the revision
+`jenova_core.nimble` pins: `NavigationView`, `TabView`, `AdwDialog`/`AlertDialog`, `BottomSheet`,
+and `BreakpointBin`/`AdwBreakpoint`. All are reachable by the same hatch if wanted.
 
-**`ToastOverlay` and `ToolbarView` are *not* on that list, and session 7 put them there in
-error** — measured against the `v3.0.0` tag rather than the revision this report audits. The
-mistake had a cost worth recording: a hand-bound `ToastOverlay` was written and committed before
-the tag/`main` distinction surfaced, and it did not merely duplicate owlkettle's — it **collided**
-with it, so the tree would not compile against `main` at all. It has been deleted.
+### Correction: `ToolbarView` and `ToastOverlay` were never absent — and "v3.0.0" is why both passes got it wrong
 
-**owlkettle's own `ToastOverlay` also solves the design problem better than the hand-binding
-did.** A toast is an event and a `renderable` property is state; the hand-binding reconciled them
-with a serial the window bumped per message. owlkettle passes a `ToastQueue`, a `ref object` whose
-hook **drains it** (`state.toastQueue.clear()`) after adding each toast — so a toast fires exactly
-once by construction, with no counter to keep. It also carries what the hand-binding declined to:
-buttons with handlers, priorities, custom titles and dismissal callbacks, made safe by
-`allocSharedCell` plus a disconnect-after-fire, which is the lifetime problem the hand-binding
-could not solve on its own terms.
+This section listed them as missing, and `AdwToastOverlay` was bound by hand in
+`src/jenova/toast.nim` on that basis. The module is deleted and the window uses upstream's
+widget. It was not merely redundant: it **collided** with upstream's, so the tree would not
+compile at all against the revision this report audits —
+`Error: ambiguous identifier: 'ToastOverlay'`.
+
+**The trap is that two different trees both answer to "owlkettle 3.0.0."** `main` has never
+bumped its own nimble file, so it still declares `version = "3.0.0"` thirty-four commits past the
+tag of that name — and `requires "owlkettle >= 3.0.0"` was satisfied by either. The two are not
+the same toolkit:
+
+| | `v3.0.0` tag (`861092d`) | `ac61ecf` (`main`, +34) |
+|---|---|---|
+| `renderable` count in `adw.nim` | **21** | **23** |
+| `ToastOverlay`, `Toast`, `ToastQueue` | absent | present, `adw.nim:1374` |
+| `ToolbarView` | absent | present, `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}` |
+| `adw_toast_*` in `bindings/adw.nim` | **0 symbols** | **23 symbols** |
+
+This report's header names `ac61ecf`, and that is the column its census and §2 come from. A later
+pass recounted against the tag, found 21 and no toasts, and "corrected" a correct report; a pass
+after that restored it and attributed the widgets to `v3.0.0`, which is the same conflation
+running the other way. **`jenova_core.nimble` now pins the commit**, so the question cannot be
+answered two ways again, and `tests/gui_build.sh` refuses a tag checkout by name rather than
+letting it surface as `undeclared identifier` inside a `gui:` block.
+
+**Upstream's `ToastOverlay` also answers the design question better than the hand-binding did.**
+*A toast is an event and a `renderable` property is state*: the hand-binding reconciled them with
+a serial the window bumped per message and the widget compared against the last one raised.
+`ToastQueue` is a `ref` the widget **drains** on each update, so a message raises exactly one
+toast and the same text twice raises two — by construction, with no counter to keep anywhere.
+
+**And a toast can carry a button.** `newToast` takes `buttonLabel` and `clickedHandler`, and
+`connectSignal` (`adw.nim:1314`) puts the closure in its own shared cell and disconnects it on
+fire, so it is not the per-update `EventObj` that ARC frees under a live toast — the
+`DraftView.submit` hazard does not apply, and the hand-binding's note claiming it did was wrong.
+**P-B1 stays open on different grounds:** a message you have to act on must not time out, and it
+needs the server's own detail rather than one line. Errors keep the inline row.
 
 **One item genuinely is missing, and it gates a planned one:**
 
