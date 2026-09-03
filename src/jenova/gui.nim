@@ -2619,8 +2619,11 @@ renderable NvimTerminal of BaseWidget:
 ## `set_propagate_natural_height`, which is what collapsed the plain-Label code
 ## blocks to their header. The view word-wraps instead.
 # Action purpose: the transcript follows a reply as it streams unless the
-# setting turns that off, and owlkettle's `ScrolledWindow` exposes only `child`
-# — no adjustment — so the follow has to be its own renderable.
+# setting turns that off, and owlkettle's `ScrolledWindow` offers no way to move
+# the view. It exposes `child`, `propagateNaturalWidth`/`propagateNaturalHeight`
+# and the `edgeReached`/`edgeOvershot` events, and no adjustment — the events
+# report arriving at an edge but never leaving one, and nothing there scrolls.
+# So the follow has to be its own renderable.
 #
 # Only the adjustment getters are missing from owlkettle's bindings, so only
 # those are declared, and by name rather than as a fourth open import.
@@ -2645,13 +2648,24 @@ from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
   g_signal_handler_disconnect,
   gtk_scrolled_window_new, gtk_scrolled_window_set_child,
   gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value,
+  gtk_scrolled_window_set_propagate_natural_width,
+  gtk_scrolled_window_set_propagate_natural_height,
   gtk_frame_new, gtk_frame_set_child,
+  # The setter and not owlkettle's `hAlign`, which is a `Box` and `Overlay`
+  # *adder* property (`widgets.nim:209`) — the parent aligning a child it is
+  # given. `ContentScroll` has to align itself, from its own hook, because the
+  # call site inserts every markdown block through one `insert` and a table is
+  # the only kind that must not stretch. `GtkAlign` and its two values come
+  # along because owlkettle types the parameter, so the call names a constant
+  # rather than passing a `cint` nothing checks.
+  GtkAlign, GTK_ALIGN_FILL, GTK_ALIGN_START, gtk_widget_set_halign,
   # Step 13a's composer owns its own `GtkTextView` and buffer, so it needs the
   # buffer surface directly. All of it is already in owlkettle's bindings —
   # checked before declaring anything, per rule 5. The private field that looked
   # like a blocker (`TextBufferObj.gtk`) is not needed at all: the buffer is
   # created here and attached with `set_buffer`, both exported.
   GtkTextBuffer, GtkTextIter, GtkTextTagTable, OwnedGtkString, `$`,
+  GtkWrapMode, GTK_WRAP_WORD_CHAR, gtk_text_view_set_wrap_mode,
   gtk_text_view_new, gtk_text_view_set_buffer, gtk_text_view_set_editable,
   gtk_text_buffer_new, gtk_text_buffer_set_text, gtk_text_buffer_get_text,
   gtk_text_buffer_get_char_count,
@@ -2672,37 +2686,21 @@ proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_page_size(a: GtkAdjustment): cdouble {.importc, cdecl.}
 
-# Declared rather than imported because none of the three is in
-# owlkettle's bindings — checked before writing them, per rule 5. They are what
-# makes a `ScrolledWindow` size to its content instead of collapsing, which
-# owlkettle's own `ScrolledWindow` has no way to express: it exposes `child` and
-# nothing else.
-proc gtk_scrolled_window_set_propagate_natural_height(
-  sw: GtkWidget, p: cbool) {.importc, cdecl.}
-proc gtk_scrolled_window_set_propagate_natural_width(
-  sw: GtkWidget, p: cbool) {.importc, cdecl.}
+# The two calls a `ScrolledWindow` needs that owlkettle's bindings do not carry
+# — checked against `bindings/gtk.nim` before writing them, per rule 5. The
+# scroll policy is what keeps a wide table on its own horizontal scrollbar, and
+# the height ceiling is what stops the composer growing until it has eaten the
+# transcript. Both are absent there; the natural-size pair beside them is
+# imported.
 proc gtk_scrolled_window_set_policy(sw: GtkWidget, h, v: cint) {.importc, cdecl.}
-# Step 13a. The composer's height ceiling. Declared here with the other three
-# for the same reason — owlkettle's `ScrolledWindow` exposes `child` and nothing
-# else — and checked against the bindings first, per rule 5.
 proc gtk_scrolled_window_set_max_content_height(
   sw: GtkWidget, h: cint) {.importc, cdecl.}
-## Not in owlkettle's bindings — `hAlign` there is a `Box` *packing*
-## property set by the parent, and this has to be the widget's own, because the
-## call site inserts every markdown block through one `insert` and a table is the
-## only kind that must not stretch.
-proc gtk_widget_set_halign(w: GtkWidget, align: cint) {.importc, cdecl.}
 
 const
   ## `GtkPolicyType`. Named rather than passed as bare integers, because
   ## `set_policy(w, 1, 2)` at the call site says nothing about what it does.
   PolicyAutomatic = cint(1)
   PolicyNever = cint(2)
-  ## `GtkAlign`. `FILL` is the default and is what made a table stretch — which
-  ## is why `ContentScroll` overrides it to `START`. The composer needs it back:
-  ## an input field that hugs its content is a field with nothing to click.
-  AlignFillG = cint(0)
-  AlignStartG = cint(1)
 
 ## Whether the transcript is currently following a reply, and whether the
 ## reader is sitting at the bottom. Two separate facts and they must stay
@@ -2807,10 +2805,10 @@ proc applyScrollSizing(w: GtkWidget, maxHeight: int) =
     #
     # Vertical scrolls past the ceiling, or the extra lines are simply cut off.
     # Horizontal never scrolls, because the view wraps instead — see
-    # `DraftView`, which sets the wrap mode owlkettle has no property for.
+    # `DraftView`, which sets the wrap mode on the view it owns.
     gtk_scrolled_window_set_max_content_height(w, maxHeight.cint)
     gtk_scrolled_window_set_propagate_natural_width(w, cbool(0))
-    gtk_widget_set_halign(w, AlignFillG)
+    gtk_widget_set_halign(w, GTK_ALIGN_FILL)
     gtk_scrolled_window_set_policy(w, PolicyNever, PolicyAutomatic)
   else:
     # unchanged and still the default. This was `0` and that is why a
@@ -2833,14 +2831,15 @@ proc applyScrollSizing(w: GtkWidget, maxHeight: int) =
     # width upward and absorbs whatever this one asks for. The window cannot be
     # widened by a table.
     gtk_scrolled_window_set_propagate_natural_width(w, cbool(1))
-    gtk_widget_set_halign(w, AlignStartG)
+    gtk_widget_set_halign(w, GTK_ALIGN_START)
     gtk_scrolled_window_set_policy(w, PolicyAutomatic, PolicyNever)
 
 ## A `ScrolledWindow` that sizes to its content's height and scrolls only
 ## sideways, for a table or any other block that must not be clipped to an
-## arbitrary height. owlkettle's own cannot express this — it exposes `child`
-## and nothing else — and a bare one reports a near-zero minimum height, so it
-## collapses whatever is inside it to a stub.
+## arbitrary height. A bare one reports a near-zero minimum height and collapses
+## whatever is inside it to a stub, and owlkettle's own gets only halfway out of
+## that: it has the natural-size pair but no scroll policy, no height ceiling
+## and no alignment of its own, which are the other three calls below.
 ##
 ## Natural *height* propagates and natural *width* deliberately does not: a wide
 ## table must not widen the transcript, so the horizontal axis stays scrollable
@@ -2998,9 +2997,9 @@ renderable DropZone of BaseWidget:
     widget.valChild = child
 
 # Step 13a. The composer's own widget. Four protos: the key controller's three,
-# and the wrap mode. Everything else it needs — `gtk_text_view_new`, the buffer
-# surface, `g_signal_connect` — is already in owlkettle's bindings and is
-# imported rather than re-declared (rule 5).
+# and the scroll policy. Everything else it needs — `gtk_text_view_new`, the
+# buffer surface, the wrap-mode setter, `g_signal_connect` — is already in
+# owlkettle's bindings and is imported rather than re-declared (rule 5).
 type GtkEventController = distinct pointer
 
 proc gtk_event_controller_key_new(): GtkEventController {.importc, cdecl.}
@@ -3008,11 +3007,6 @@ proc gtk_event_controller_set_propagation_phase(c: GtkEventController,
                                                 phase: cint) {.importc, cdecl.}
 proc gtk_widget_add_controller(w: GtkWidget, c: GtkEventController)
   {.importc, cdecl.}
-# owlkettle's `TextView` has no wrap property — checked in `widgets.nim`, per
-# rule 5 — and a GtkTextView defaults to `GTK_WRAP_NONE`, so a long draft
-# scrolls sideways instead of wrapping. This view is built here, so it is set
-# directly on the widget rather than found by walking a tree.
-proc gtk_text_view_set_wrap_mode(v: GtkWidget, mode: cint) {.importc, cdecl.}
 # `GtkScrollable`'s vertical policy. It defaults to `GTK_SCROLL_MINIMUM`
 # (`gtkenums.h`, value 0), under which a scrolled window negotiates against the
 # child's *minimum* height — so `propagate-natural-height` has nothing to grow
@@ -3023,9 +3017,6 @@ proc gtk_scrollable_set_vscroll_policy(s: GtkWidget, policy: cint)
 
 const
   PhaseCapture = 1.cint
-  ## `GTK_WRAP_WORD_CHAR` — break on a word, and inside a word when one word is
-  ## wider than the box. The same value `sourceview.nim` uses for a code block.
-  WrapWordChar = 3.cint
   ## `GTK_SCROLL_NATURAL`.
   ScrollNatural = 1.cint
 
@@ -3077,7 +3068,13 @@ renderable DraftView of BaseWidget:
       gtk_event_controller_set_propagation_phase(state.keyCtl, PhaseCapture)
       gtk_widget_add_controller(state.internalWidget, state.keyCtl)
     afterBuild:
-      gtk_text_view_set_wrap_mode(state.internalWidget, WrapWordChar)
+      # `GTK_WRAP_WORD_CHAR` breaks on a word, and inside a word when one
+      # word is wider than the box. A GtkTextView defaults to `GTK_WRAP_NONE`,
+      # so without this a long draft scrolls sideways instead of wrapping.
+      # owlkettle's `TextView` has a `wrapMode` property, but this renderable
+      # owns its `GtkTextView` rather than using that widget, so it sets the
+      # mode on the widget it built.
+      gtk_text_view_set_wrap_mode(state.internalWidget, GTK_WRAP_WORD_CHAR)
       # So the enclosing `ContentScroll`'s natural-height propagation has a
       # growing number to propagate.
       gtk_scrollable_set_vscroll_policy(state.internalWidget, ScrollNatural)
