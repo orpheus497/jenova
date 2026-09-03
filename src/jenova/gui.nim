@@ -555,6 +555,8 @@ proc runOutput(cmd: string, args: openArray[string],
   except CatchableError:
     ""
 
+## The first non-empty line of `runOutput`, for the callers that want one value
+## rather than a block to parse.
 proc runCapture(cmd: string, args: openArray[string],
                 timeoutMs = 5000): string =
   for line in runOutput(cmd, args, timeoutMs).splitLines():

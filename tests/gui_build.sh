@@ -115,8 +115,19 @@ echo "gui_build: jenova --check"
 # `gdk_display_manager_get`, which is why it is inside the display block below
 # on a host with no X server of its own.
 run_check() {
+  # Redirected, not piped. A pipeline reports the *last* command's status, so
+  # `| tee` discarded `jenova`'s: a `--check` that crashed after printing its
+  # line still satisfied the `grep` below and the whole step passed. POSIX `sh`
+  # has no `pipefail` to lean on, so the pipe is removed instead.
+  rc=0
   JENOVA_ROOT="$RT" JENOVA_NO_BACKENDS=1 CANVAS=0 \
-    "$OUT/jenova" --check 2>"$OUT/check.err" | tee "$OUT/check.out"
+    "$OUT/jenova" --check >"$OUT/check.out" 2>"$OUT/check.err" || rc=$?
+  cat "$OUT/check.out"
+  if [ "$rc" -ne 0 ]; then
+    echo "gui_build: jenova --check exited $rc"
+    cat "$OUT/check.err"
+    return 1
+  fi
   # GTK writes its complaints to stderr and still exits 0, so the exit status is
   # not the whole answer. A CSS parse error is the one this catches most often:
   # owlkettle takes the stylesheet at `brew` and a bad property is a warning,
@@ -281,8 +292,8 @@ if [ -z "${DISPLAY:-}" ]; then
   sleep 2
 fi
 
-have import && have convert && have xwininfo || {
-  echo "gui_build: ImageMagick's import/convert and xwininfo are needed to prove the window works"
+have import && have convert && have xwininfo && have xdotool || {
+  echo "gui_build: ImageMagick's import/convert, xwininfo and xdotool are needed to prove the window works"
   echo "gui_build: FAIL"
   exit 1
 }
