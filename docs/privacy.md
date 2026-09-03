@@ -32,8 +32,11 @@ exposing your IP address and the fact that you are running Jenova. That import w
 locally gets them, and everyone else falls through to the platform's own UI and monospace faces.
 Nothing is downloaded either way.
 
-**MCP servers you configure yourself** are an additional outbound path under your control. A
-remote MCP server receives whatever the model sends it.
+**MCP is not implemented.** The Settings screen has no MCP section and neither binary contains an
+MCP client, so a configured remote MCP server is not an outbound path here — it is not a path at
+all. The `mcpServerOverrides` column exists in the database only because the schema is shared with
+the frozen Web UI. If MCP is ever added, a remote server would receive whatever the model sends it,
+and this page will have to say so.
 
 ## No authentication
 
@@ -80,7 +83,8 @@ Two habits matter anyway:
 
 ## Auditing this yourself
 
-Every claim above is checkable. The two outbound hosts are the only ones the runtime contacts:
+Every claim above is checkable. The two DuckDuckGo hosts are the only ones the runtime itself ever
+contacts — model downloads and package updates are commands you run, not things it does:
 
 ```sh
 grep -rn 'https\?://' src/                        # both binaries

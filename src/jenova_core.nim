@@ -19,7 +19,7 @@
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see docs/install.md.".}
 
-import std/[os, posix, sequtils, strformat, strutils, times, json]
+import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
@@ -2432,6 +2432,59 @@ proc main() =
         check("pid 0 is never alive", not lifecycle.isAlive(0))
         check("a negative pid is never alive", not lifecycle.isAlive(-1))
         check("this process is alive", lifecycle.isAlive(getCurrentProcessId()))
+
+      block execHandshake:
+        # `fork` succeeding does not mean the binary ran. A `llama-server` that
+        # is present but not executable fails inside `execve`, after the pid is
+        # known — so `start` published a pid file for a process already exiting
+        # 127, and `watchOnce` read the positive return as a successful restart
+        # and cleared its failure counter.
+        #
+        # A file with no execute bit reproduces that exactly, and is the one
+        # shape of the defect testable without a real backend.
+        let root = getTempDir() / "jenova-exec-" & $getCurrentProcessId()
+        createDir(root / "var" / "run")
+        createDir(root / "var" / "log")
+        defer: removeDir(root)
+
+        let fakeServer = root / "llama-server"
+        writeFile(fakeServer, "#!/nonexistent\n")
+        setFilePermissions(fakeServer, {fpUserRead, fpUserWrite})
+        let fakeModel = root / "model.gguf"
+        writeFile(fakeModel, "not a model")
+
+        var cfg: config.Config
+        cfg.values = initTable[string, string]()
+        cfg.values["MODEL_PATH"] = fakeModel
+
+        var lp: paths.Paths
+        lp.root = root
+        lp.state = root / "var" / "run"
+        lp.logDir = root / "var" / "log"
+        lp.llamaServer = fakeServer
+        lp.llamaLibDir = root / "lib"
+
+        # A port nothing is listening on, so `portInUse` does not short-circuit
+        # the path under test.
+        let l = lifecycle.Lifecycle(paths: lp, cfg: cfg, llamaPort: 28081,
+                                    embedPort: 28082, bindHost: "127.0.0.1")
+        let pid = l.start(lifecycle.beLlama)
+        check("a binary that cannot be executed is reported as a failure",
+              pid == 0, "start returned " & $pid & " for a non-executable file")
+        check("and no pid file is left naming a process that never ran",
+              not fileExists(lp.state / "llama-server.pid"))
+        check("the log says why rather than staying silent",
+              fileExists(lp.logDir / "llama-server.log") and
+              readFile(lp.logDir / "llama-server.log").contains("could not exec"))
+        check("and the failed child is reaped, not left a zombie",
+              not lifecycle.isAlive(pid))
+
+        # The start lock is per backend and must not be mistaken for state: a
+        # second call takes it, finds nothing running, and fails the same way.
+        check("a second attempt behaves identically rather than deadlocking",
+              l.start(lifecycle.beLlama) == 0)
+        check("the lock file is the pid file's, not the pid file itself",
+              fileExists(lp.state / "llama-server.pid.lock"))
 
       block cacheSweep:
         # M-02. Every image ever attached, pasted or previewed was written to

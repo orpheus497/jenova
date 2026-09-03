@@ -27,6 +27,14 @@ import std/[os, strutils, strformat, posix, times, net]
 import ./config
 import ./paths
 
+# `std/posix` binds `fcntl` and `lockf` but none of the flag constants they
+# take, so these come from the headers rather than being written as numbers.
+let
+  FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
+  FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
+  LockWait {.importc: "F_LOCK", header: "<unistd.h>".}: cint
+  LockRelease {.importc: "F_ULOCK", header: "<unistd.h>".}: cint
+
 type
   Backend* = enum
     beLlama = "llama-server"
@@ -267,7 +275,56 @@ proc rotateLog*(path: string) =
   except CatchableError:
     discard
 
+proc lockFileFor(l: Lifecycle, be: Backend): string =
+  pidFileFor(l, be) & ".lock"
+
+## The window between "nothing is running" and "the pid file names my child" is
+## open across processes, not just threads: the desktop app's control worker and
+## a separate `jenova-core serve` watchdog can both reach `start` for the same
+## backend, both see the slot free, and both fork. The later pid-file write then
+## names whichever child lost the bind, and the watchdog supervises a process
+## that is about to die.
+##
+## `lockf` is the right primitive because the kernel releases the lock when the
+## holder exits: a process killed mid-start leaves nothing to clean up, which a
+## lock file created with `O_EXCL` would.
+##
+## Failing to take the lock is not a reason to refuse to start — a state
+## directory that cannot be written is already reported by everything else here
+## — so the descriptor is optional and the caller proceeds without it.
+proc lockStart(l: Lifecycle, be: Backend): cint =
+  result = -1
+  try:
+    let fd = posix.open(lockFileFor(l, be).cstring,
+                        O_WRONLY or O_CREAT, 0o644.Mode)
+    if fd < 0: return -1
+    # POSIX record locks are not inherited across `fork`, but the descriptor is,
+    # and nothing closes it before `execve` — so it is marked close-on-exec
+    # rather than left open in `llama-server` for its lifetime.
+    discard fcntl(fd, FdSetFd, FdCloexec)
+    if lockf(fd, LockWait, 0) != 0:
+      discard posix.close(fd)
+      return -1
+    result = fd
+  except CatchableError:
+    result = -1
+
+proc unlockStart(fd: cint) =
+  if fd < 0: return
+  discard lockf(fd, LockRelease, 0)
+  discard posix.close(fd)
+
 proc start*(l: Lifecycle, be: Backend): int =
+  if l.state(be).running:
+    return l.state(be).pid
+
+  createDir(l.paths.state)
+  let lock = lockStart(l, be)
+  defer: unlockStart(lock)
+
+  # Asked again with the lock held: another process may have started this
+  # backend while this one was waiting, and the answer from before the wait is
+  # the stale one.
   let existing = l.state(be)
   if existing.running:
     return existing.pid
@@ -358,8 +415,28 @@ proc start*(l: Lifecycle, be: Backend): int =
   var cargs = allocCStringArray(argv)
   var cenv = allocCStringArray(envSeq)
 
+  # `fork` succeeding says only that a process exists, not that it became
+  # `llama-server`. A binary that is present but not executable, or built for
+  # another architecture, fails in `execve` — after the pid is known — so the
+  # parent published a pid file for a process already exiting 127, and
+  # `watchOnce` cleared its failure counter and logged a restart that had not
+  # happened.
+  #
+  # The pipe closes the gap. Its write end is close-on-exec, so a successful
+  # `execve` closes it and the parent's read returns 0; a failed one writes
+  # `errno` first, which is the only thing distinguishing the two from here.
+  # `write` and `_exit` are both async-signal-safe, so the child stays within
+  # what POSIX permits between `fork` and `exec`.
+  var efd: array[0..1, cint] = [cint(-1), cint(-1)]
+  let haveHandshake = pipe(efd) == 0
+  if haveHandshake:
+    discard fcntl(efd[1], FdSetFd, FdCloexec)
+
   let pid = fork()
   if pid < 0:
+    if haveHandshake:
+      discard posix.close(efd[0])
+      discard posix.close(efd[1])
     deallocCStringArray(cargs)
     deallocCStringArray(cenv)
     return 0
@@ -367,6 +444,7 @@ proc start*(l: Lifecycle, be: Backend): int =
     # Child. Nothing below allocates. Detach from the controlling terminal so
     # the backend survives this process exiting, then point stdout and stderr at
     # the log before exec.
+    if haveHandshake: discard posix.close(efd[0])
     discard setsid()
     let fd = posix.open(logPath.cstring,
                         O_WRONLY or O_CREAT or O_APPEND, 0o644.Mode)
@@ -389,12 +467,37 @@ proc start*(l: Lifecycle, be: Backend): int =
     # failure. `exitnow` is Nim's binding for `_exit(2)`: immediate
     # termination, no handlers, no flush. E-02 hoisted every allocation out of
     # the child and then left the one call that undoes the point of it.
+    if haveHandshake:
+      var why = errno
+      discard posix.write(efd[1], addr why, sizeof(cint))
     posix.exitnow(127)
 
   # Parent only. The child either replaced its image or exited, so neither array
   # is reachable from it any more.
   deallocCStringArray(cargs)
   deallocCStringArray(cenv)
+
+  var execErr: cint = 0
+  if haveHandshake:
+    discard posix.close(efd[1])
+    # Blocks only until `execve` resolves either way: on success the
+    # close-on-exec descriptor is closed for us and this reads 0.
+    if posix.read(efd[0], addr execErr, sizeof(cint)) <= 0: execErr = 0
+    discard posix.close(efd[0])
+
+  if execErr != 0:
+    # No pid file: the process is gone, and a file naming it would send `stop`
+    # and the watchdog after a pid the system is free to reissue.
+    var status: cint = 0
+    discard waitpid(Pid(pid), status, 0)
+    try:
+      let f = open(logPath, fmAppend)
+      f.write(&"[{now()}] jenova-core could not exec {binary}: " &
+              $strerror(execErr) & "\n")
+      f.close()
+    except IOError, OSError:
+      discard
+    return 0
 
   try:
     writeFile(pidFileFor(l, be), $pid)

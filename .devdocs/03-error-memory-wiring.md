@@ -581,6 +581,32 @@ no longer retrievable". R-7's call site is in `gui.nim` and cannot be type-check
 `appInt` was verified to resolve by renaming it at that call site and confirming the differential
 harness reports `attempting to call undeclared routine` — and reports nothing under the real name.
 
+### A third pass: two real races in `start`, and a privacy claim that was wrong the other way
+
+| # | Finding | Verdict |
+|---|---|---|
+| R-9 | `start` reported success on a `fork` whose `execve` then failed | **Valid.** `fork` returning a positive pid says a process exists, not that it became `llama-server`. A binary present but not executable, or built for another architecture, fails inside `execve` — after the pid is known — so the parent published a pid file for a process already exiting `127`, wrote a "started" line to the log, and `watchOnce` read the positive return as a successful restart and cleared `failures`. The next call then read that pid file back as a running backend |
+| R-10 | No cross-process serialisation in `start` | **Valid.** The desktop app's control worker and a separate `jenova-core serve` watchdog are different processes sharing the same ports and pid files. Both can pass the `state` and `portInUse` checks, both fork, and the later pid-file write names whichever child lost the bind |
+| R-11 | `docs/privacy.md` claimed two outbound hosts while also documenting MCP as an outbound path | **Valid, but inverted.** The reviewer assumed line 83 was the wrong one. It is not: MCP is *not implemented* — `settings.OmittedFields` records it as deferred by ruling, and neither binary contains an MCP client. The defect was a privacy document inventing an egress channel that does not exist |
+
+R-9 is fixed with the standard close-on-exec pipe handshake: the write end carries `FD_CLOEXEC`, so
+a successful `execve` closes it and the parent's `read` returns 0, while a failure writes `errno`
+first. `write` and `_exit` are both async-signal-safe, so the child stays inside what POSIX permits
+between `fork` and `exec` — the constraint E-02 exists to honour. On failure the child is reaped, no
+pid file is written, and the reason is appended to the backend log.
+
+R-10 is fixed with `lockf` on `<pidfile>.lock`, taken before the checks and held through the pid-file
+write. `lockf` rather than an `O_EXCL` lock file because the kernel releases it when the holder
+exits, so a process killed mid-start leaves nothing stale behind. The critical section is a fork and
+a small write, not the model load: `llama-server` binds its port long after `start` returns, and the
+second caller only needs to see the pid file before it decides.
+
+Six assertions were added, driving `start` against a real file with no execute bit — the one shape of
+R-9 reproducible without a backend. **Reverting the handshake read fails four of them**, including
+that a pid file is left naming a process that never ran and that the second call then reports that
+dead pid as running. `F_SETFD`, `FD_CLOEXEC`, `F_LOCK` and `F_ULOCK` are imported from their headers
+rather than written as numbers, since `std/posix` binds the calls but not the flags.
+
 ---
 
 ## How session 2's changes were verified
