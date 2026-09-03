@@ -1354,6 +1354,149 @@ proc main() =
         check("brackets that are not a link are left alone",
               noLink == "an array [0] and a stray ( paren", noLink)
 
+      block markupValidity:
+        # Pango's markup parser is XML-shaped: one mismatched tag and it
+        # refuses the whole string, so the Label draws **nothing**. That is the
+        # failure mode being asserted against here — not a lost bold, a lost
+        # line. `***bold***` produced exactly that, and it is what a model
+        # writes whenever it wants both.
+        check("triple emphasis nests instead of crossing",
+              markdown.inlineMarkup("***both***") == "<b><i>both</i></b>",
+              markdown.inlineMarkup("***both***"))
+        check("underscores do the same",
+              markdown.inlineMarkup("___both___") == "<b><i>both</i></b>",
+              markdown.inlineMarkup("___both___"))
+
+        # The guard's own truth table. Without this a guard that answered
+        # `true` unconditionally would satisfy every test above — the malformed
+        # cases would sail through it exactly as they did before it existed —
+        # and one answering `false` unconditionally would strip the emphasis
+        # off every line while still looking correct here.
+        check("balanced markup is accepted",
+              markdown.markupBalanced("<b>a</b> <i>b</i> &amp; <tt>c</tt>"))
+        check("an anchor with an attribute is accepted",
+              markdown.markupBalanced("<a href=\"https://x.example/\">t</a>"))
+        check("crossed tags are rejected",
+              not markdown.markupBalanced("<b><i>x</b></i>"))
+        check("an unclosed tag is rejected",
+              not markdown.markupBalanced("<b>x"))
+        check("a close with nothing open is rejected",
+              not markdown.markupBalanced("x</b>"))
+        check("a stray > is rejected",
+              not markdown.markupBalanced("a > b"))
+        check("an unknown entity is rejected",
+              not markdown.markupBalanced("a &nbsp; b"))
+        check("a bare ampersand is rejected",
+              not markdown.markupBalanced("a & b"))
+        check("an odd number of quotes inside a tag is rejected",
+              not markdown.markupBalanced("<a href=\"x>y</a>"))
+
+        # The case no ordering of the passes can fix: each delimiter pairs
+        # correctly on its own and the two runs interleave. The fallback is a
+        # visible loss — the line's own text — rather than a silent one.
+        let crossed = markdown.inlineMarkup("*a~~b*c~~")
+        check("interleaved delimiters fall back to the source line",
+              crossed == "*a~~b*c~~", crossed)
+
+        # Every fixture above and below has to survive the guard, or the
+        # fallback would be firing on ordinary text and quietly removing all
+        # emphasis from the transcript.
+        for src in ["**b** and *i*", "~~s~~", "`code`", "***x***",
+                    "[t](https://x.example/a&b)", "a < b > c", "100% & more",
+                    "![alt](https://i.example/p.png)", "**b** `a*b*c` ~~s~~"]:
+          check("the guard passes ordinary markup: " & src,
+                markdown.markupBalanced(markdown.inlineMarkup(src)),
+                markdown.inlineMarkup(src))
+
+      block delimiterRuns:
+        # A run that opens on a blank turned arithmetic into emphasis, which is
+        # the most common false positive there is in a reply about code.
+        check("multiplication is not emphasis",
+              markdown.inlineMarkup("2 * 3 * 4") == "2 * 3 * 4",
+              markdown.inlineMarkup("2 * 3 * 4"))
+        check("a spaced asterisk pair is left alone",
+              markdown.inlineMarkup("a * b * c") == "a * b * c",
+              markdown.inlineMarkup("a * b * c"))
+        # The module's stated invariant, which the single-asterisk pass broke:
+        # it read the second star of an unpaired `**` as its own closing
+        # delimiter and emitted an empty italic, so the two characters the
+        # model had written disappeared. Every streaming reply passes through
+        # this state.
+        check("an unpaired bold marker survives as text",
+              markdown.inlineMarkup("**unclosed") == "**unclosed",
+              markdown.inlineMarkup("**unclosed"))
+        check("a bare triple survives as text",
+              markdown.inlineMarkup("***") == "***",
+              markdown.inlineMarkup("***"))
+        check("emphasis with content still works",
+              markdown.inlineMarkup("*a* **b** ~~c~~") ==
+              "<i>a</i> <b>b</b> <s>c</s>",
+              markdown.inlineMarkup("*a* **b** ~~c~~"))
+
+      block backslashEscapes:
+        # The characters this renderer acts on are the ones a backslash has to
+        # be able to take back, or a reply that says "write \\*args" renders it
+        # in italics and loses the stars it was talking about.
+        check("an escaped asterisk is a literal asterisk",
+              markdown.inlineMarkup("\\*escaped\\*") == "*escaped*",
+              markdown.inlineMarkup("\\*escaped\\*"))
+        check("an escaped underscore does not start emphasis",
+              markdown.inlineMarkup("a\\_b\\_c") == "a_b_c",
+              markdown.inlineMarkup("a\\_b\\_c"))
+        check("an escaped backtick does not open a code span",
+              markdown.inlineMarkup("\\`not code\\`") == "`not code`",
+              markdown.inlineMarkup("\\`not code\\`"))
+        check("an escaped backslash is one backslash",
+              markdown.inlineMarkup("a\\\\b") == "a\\b",
+              markdown.inlineMarkup("a\\\\b"))
+        # A backslash in front of anything outside the set is not an escape.
+        check("a Windows path keeps its backslashes",
+              markdown.inlineMarkup("C:\\Users\\me") == "C:\\Users\\me",
+              markdown.inlineMarkup("C:\\Users\\me"))
+        # `\[` is deliberately not escapable: it opens display math in every
+        # model that writes any, and consuming the backslash here would destroy
+        # the delimiter before anything can decide what to do with it.
+        check("a math delimiter is left intact",
+              markdown.inlineMarkup("\\[x\\]") == "\\[x\\]",
+              markdown.inlineMarkup("\\[x\\]"))
+        check("no escape placeholder leaks into the markup",
+              not markdown.inlineMarkup("\\*a\\*").contains('\x03'))
+
+      block codeBlockState:
+        # An unterminated fence is every code block while the reply is still
+        # streaming. The widget layer refuses to copy one, so the flag has to
+        # be right in both directions or Copy is either dead on a finished
+        # block or handing out half a snippet.
+        let streaming = markdown.parse("text\n```py\nprint(1)")
+        let open = streaming.filterIt(it.kind == markdown.bkCode)
+        check("an unterminated fence still renders as code", open.len == 1)
+        if open.len == 1:
+          check("...and is marked incomplete", not open[0].complete)
+        check("the text before it is complete",
+              streaming.filterIt(it.kind == markdown.bkText).allIt(it.complete))
+
+        let closed = markdown.parse("```py\nprint(1)\n```\nafter")
+        check("a closed fence is complete",
+              closed.filterIt(it.kind == markdown.bkCode).allIt(it.complete))
+        check("and so is everything else in the message",
+              closed.allIt(it.complete))
+        let tbl = markdown.parse("| a | b |\n|---|---|\n| 1 | 2 |")
+        check("a table is complete", tbl.allIt(it.complete))
+
+        # Which blocks are too long to read where they sit — the rule the
+        # preview surface is gated on, decided here rather than in the widget
+        # tree, which links into no test binary.
+        let short = markdown.parse("```\n" & "x\n".repeat(4) & "```")
+        check("a short block is not long code",
+              short.len == 1 and not short[0].isLongCode)
+        let long = markdown.parse(
+          "```\n" & "x\n".repeat(markdown.CodeCapLines + 4) & "```")
+        check("a block past the cap is long code",
+              long.len == 1 and long[0].isLongCode)
+        check("a long paragraph is not long code — only code blocks are",
+              markdown.parse("word\n".repeat(markdown.CodeCapLines + 4))
+                .allIt(not it.isLongCode))
+
       if bad == 0:
         echo ""
         echo "markdown-selftest: PASS"
