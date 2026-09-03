@@ -1005,7 +1005,15 @@ template setNotice(target, text: untyped) =
   target.noticeMsg = text
   target.noticeIsError = false
   target.noticeRetryable = false
-  if target.toasts != nil and text.len > 0:
+  # **Confirmations only.** `umError` sets the three fields itself rather than
+  # calling this, precisely so that an error does not queue a toast: an error
+  # keeps the inline row, where it does not time out and where the Retry button
+  # can live. See that branch and the notice row in `view`.
+  #
+  # No nil check on the queue: `toasts` carries a field default, so it exists
+  # from `buildState` onwards on every construction path — the same guarantee
+  # `noteBuffer` has a few fields down, and for the same reason.
+  if text.len > 0:
     target.toasts.add newToast(text)
 
 viewable App:
@@ -1080,9 +1088,17 @@ viewable App:
   ## setter, which is where the toast is enqueued and the two flags below are
   ## reset — see `setNotice`.
   noticeMsg: string
-  ## The messages waiting to be raised. Owned here and drained by the widget on
-  ## the next update, which is what makes the same text confirm twice.
-  toasts: ToastQueue
+  ## The messages waiting to be raised as toasts. **A `ref` the widget drains**
+  ## (`ToastOverlay`'s `toastQueue` hook calls `clear` after adding each one),
+  ## which is what makes a toast fire exactly once from a declarative property:
+  ## the queue is emptied by the act of showing it, so the next redraw has
+  ## nothing left to show. Adding the same text twice is two entries and two
+  ## toasts, so saving a note twice confirms it twice.
+  ##
+  ## A field default rather than an argument at the one construction site, as
+  ## `noteBuffer` is: it then exists on every path into `buildState`, and
+  ## `setNotice` needs no nil check to say so.
+  toasts: ToastQueue = newToastQueue()
   ## Whether this notice is a failure. **Errors stay on the inline row and
   ## confirmations become toasts**, because a message you have to act on should
   ## not time out — and the Retry button has to have the same lifetime as its
@@ -1426,9 +1442,11 @@ viewable App:
             # `convs` is cached at all.
             st.convs = listConversations()
           of umError:
-            # The two flags after the template and not before it: `setNotice`
-            # resets both, so an error that set them first would clear its own.
-            setNotice(st, m.text)
+            # **Written field by field rather than through `setNotice`**, which
+            # is the one caller that does not want what the template does: it
+            # queues a toast and clears `noticeIsError`. An error belongs on the
+            # inline row and nowhere else.
+            st.noticeMsg = m.text
             st.noticeIsError = true
             st.noticeRetryable = m.retryable
             if st.messages.len > 0 and st.messages[^1].role == rAssistant and
@@ -5109,6 +5127,11 @@ method view(app: AppState): Widget =
 
         # Wraps the whole window because that is where libadwaita floats a
         # toast: bottom centre, over everything, out of the layout.
+        #
+        # The queue is the `ref` `app.toasts` holds and the hook drains it — so
+        # what decides whether a message becomes a toast is whether anything put
+        # it in the queue, which is `setNotice` and only `setNotice`. Errors
+        # never reach it.
         ToastOverlay:
           toastQueue = app.toasts
 
@@ -5394,12 +5417,14 @@ method view(app: AppState): Widget =
                   # replaced it, and by then it described something the user did
                   # minutes ago.
                   #
-                  # An error stays, and stays *here*, for two reasons. It is the
-                  # thing you may have to act on, and a message that times out is
-                  # a message you can miss; and the Retry button below has to
-                  # have the same lifetime as its handler, which a toast —
-                  # outliving several redraws while owlkettle replaces the
-                  # `EventObj` under it — does not. See `toast.nim`.
+                  # An error stays, and stays *here*, because it is the thing
+                  # you may have to act on and a message that times out is a
+                  # message you can miss. **Not** because a toast could not
+                  # carry the button: owlkettle's `Toast` takes a
+                  # `clickedHandler`, and its `connectSignal` puts that handler
+                  # in an `allocSharedCell` and disconnects it after one fire,
+                  # so it outlives the update cycle that frees an ordinary
+                  # `EventObj`. The reason is the timeout, not the lifetime.
                   margin = (if app.noticeIsError and app.notice.len > 0 and
                                not app.editorOpen: 8 else: 0)
                   Label {.expand: true.}:
@@ -5690,8 +5715,6 @@ proc run*(withTray = true, checkOnly = false) =
   let widget = gui(App(p = p,
                        cfg = c,
                        lc = lc,
-                       # The widget drains this; it only has to exist.
-                       toasts = newToastQueue(),
                        status = bsDown,
                        lanEnabled = initialLan,
                        # From `host`, which is what `server.start` was actually

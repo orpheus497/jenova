@@ -16,16 +16,22 @@ native widgets exist.
 | | Available | Used by `gui.nim` |
 |---|---|---|
 | `owlkettle/widgets.nim` renderables | **62** | — |
-| `owlkettle/adw.nim` renderables | **21** | — |
-| **Total** | **83** | **18 distinct types** |
+| `owlkettle/adw.nim` renderables | **23** | — |
+| **Total** | **85** | **18 distinct types** |
 
-> **Corrected, session 7.** The adw figure was 23. `grep -c "renderable [A-Z]"
-> owlkettle/adw.nim` at `v3.0.0` returns **21**, guarded declarations included. The
-> conclusion is unchanged; the number is not.
+> **Session 7 first "corrected" these to 21 and 83, and that was wrong.** The
+> recount was taken against the **`v3.0.0` tag**; this report states its revision in
+> its own header and audited **`ac61ecf`, which is `main`** — where `grep -c
+> "renderable [A-Z]" owlkettle/adw.nim` returns 23. The figures above are restored
+> and the revision distinction is now stated wherever it changes an answer, because
+> it changes several. **The two are not interchangeable and `jenova_core.nimble`
+> could not tell them apart** until session 7 pinned it: owlkettle's `main` still
+> declares `version = "3.0.0"` in its own nimble file, so `requires "owlkettle >=
+> 3.0.0"` was satisfied by both.
 
 Of ~160 widget instances in `gui.nim`, **130 are `Button` (72) or `Label` (58)**.
 
-That ratio is the finding. A native toolkit offering 83 widgets is being used as though it
+That ratio is the finding. A native toolkit offering 85 widgets is being used as though it
 offered two, with structure expressed through nested `Box`es and CSS classes. It is a web
 document tree rendered by GTK.
 
@@ -47,19 +53,24 @@ widget guarded `{.since: AdwVersion >= (1, x).}` does not exist in the binary:
 | Widget | Since | What it is |
 |---|---|---|
 | `OverlaySplitView` | 1.4 | The modern adaptive sidebar. **The window uses `Flap` instead** |
+| `ToolbarView` | 1.4 | Header/content/footer layout with correct adaptive styling |
 | `SwitchRow` | 1.4 | A labelled switch row — the native settings primitive |
 | `EntryRow` | 1.2 | A labelled text-entry row |
 | `PasswordEntryRow` | 1.2 | Ditto, masked |
 | `Banner` | 1.3 | Inline message strip with an optional button |
 | `AboutWindow` | 1.2 | The standard About dialog |
 
-> **Corrected, session 7. `ToolbarView` was listed here and does not exist.** It is
-> not gated by `AdwVersion` — it is absent from owlkettle 3.0.0 altogether:
-> `grep -rn ToolbarView owlkettle/` returns nothing, in `adw.nim` and in
-> `bindings/adw.nim` alike. The six above are real, and every one of them is now in
-> the binary: `-d:adwminor=4` is set in `jenova_core.nimble` and `Banner` is in use
-> in `gui.nim`'s chat column. The guards are `when AdwVersion >= (1, x) or
-> defined(owlkettleDocs)` at `adw.nim:488`, `:714`, `:1061`, `:1251`, `:1281`.
+> **This table is correct and session 7 briefly claimed otherwise.** `ToolbarView`
+> was struck from it on the finding that `grep -rn ToolbarView owlkettle/` returns
+> nothing — which is true of the **`v3.0.0` tag** and false of `ac61ecf`, the
+> revision this report audits and the one `jenova_core.nimble` now pins. It is
+> declared `renderable ToolbarView {.since: AdwVersion >= (1, 4).}` at
+> `adw.nim:1010`, so it is exactly what this section says it is: present, and
+> compiled out at `adwminor=0`.
+>
+> **All seven are now in the binary.** `-d:adwminor=4` is set, and `Banner` is in
+> use in `gui.nim`'s chat column — for backend-down, and for the LAN flag/socket
+> disagreement (session 7).
 
 Plus **13 individual properties** on widgets that do compile, among them `StatusPage.description`
 (1.4), `ActionRow.titleLines`/`subtitleLines` (1.3), `ButtonContent.canShrink` (1.4).
@@ -103,7 +114,7 @@ the right widget, not a bigger lid.
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
 | Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
-| Transient notification | `ToastOverlay` (`adw.nim:1374`, ungated) | ~~A one-line notice label~~ — confirmations toast; errors keep the row, which is now only errors |
+| Transient notification | `ToastOverlay` (`adw.nim:1374` on the pinned revision, ungated) | ~~A one-line notice label~~ — upstream's widget: confirmations toast, and the row is now errors only |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
@@ -131,37 +142,60 @@ Where owlkettle lacks a widget, you declare one. `owlkettle.nim:25` exports `wid
 **"owlkettle does not have widget X" is therefore never a wall.** It is roughly forty lines of
 `renderable` plus `importc`, and the author has written it four times already.
 
-What owlkettle genuinely does not expose (`adw.nim` declares 23 renderables at `v3.0.0`;
-these are not among them): `NavigationView`, `TabView`, `AdwDialog`/`AlertDialog`,
-`BottomSheet`, and `BreakpointBin`/`AdwBreakpoint`. All are reachable by the same hatch if
-wanted.
+What owlkettle genuinely does not expose, verified absent from `owlkettle/` at the revision
+`jenova_core.nimble` pins: `NavigationView`, `TabView`, `AdwDialog`/`AlertDialog`, `BottomSheet`,
+and `BreakpointBin`/`AdwBreakpoint`. All are reachable by the same hatch if wanted.
 
-### Correction, session 8: two of those were never absent
+### Correction: `ToolbarView` and `ToastOverlay` were never absent — and "v3.0.0" is why both passes got it wrong
 
-An earlier pass in this session listed `ToolbarView`, `ToastOverlay` and `Toast` as missing and
-bound `AdwToastOverlay` by hand in `src/jenova/toast.nim`. Checked against the source, all three
-are in `owlkettle/adw.nim` at `v3.0.0` and `bindings/adw.nim` carries 23 `adw_toast_*` symbols.
-The hand-written module is removed; the window uses upstream's widget.
+This section listed them as missing, and `AdwToastOverlay` was bound by hand in
+`src/jenova/toast.nim` on that basis. The module is deleted and the window uses upstream's
+widget. It was not merely redundant: it **collided** with upstream's, so the tree would not
+compile at all against the revision this report audits —
+`Error: ambiguous identifier: 'ToastOverlay'`.
 
-* `ToolbarView` — `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}`. Invisible without
-  `-d:adwminor=4`, which is §2's finding, not an absence.
-* `ToastOverlay` — `adw.nim:1374`, ungated. Its answer to *a toast is an event and a
-  `renderable` property is a state* is better than the `serial` counter written against it:
-  `ToastQueue` is a `ref` the widget **drains** on each update, so a message raises exactly one
-  toast and the same text twice raises two, by construction rather than by comparison.
-* A toast **can** carry a button. `newToast` takes `buttonLabel` and `clickedHandler`, and
-  `connectSignal` (`adw.nim:1314`) puts the closure in its own shared cell and disconnects on
-  fire — it is not the per-update `EventObj` that ARC frees underneath a live toast, so the
-  `DraftView.submit` hazard does not apply here. **P-B1 stays open on different grounds**:
-  a message you have to act on must not time out, and it needs the server's own detail. Errors
-  keep the inline row.
+**The trap is that two different trees both answer to "owlkettle 3.0.0."** `main` has never
+bumped its own nimble file, so it still declares `version = "3.0.0"` thirty-four commits past the
+tag of that name — and `requires "owlkettle >= 3.0.0"` was satisfied by either. The two are not
+the same toolkit:
+
+| | `v3.0.0` tag (`861092d`) | `ac61ecf` (`main`, +34) |
+|---|---|---|
+| `renderable` count in `adw.nim` | **21** | **23** |
+| `ToastOverlay`, `Toast`, `ToastQueue` | absent | present, `adw.nim:1374` |
+| `ToolbarView` | absent | present, `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}` |
+| `adw_toast_*` in `bindings/adw.nim` | **0 symbols** | **23 symbols** |
+
+This report's header names `ac61ecf`, and that is the column its census and §2 come from. A later
+pass recounted against the tag, found 21 and no toasts, and "corrected" a correct report; a pass
+after that restored it and attributed the widgets to `v3.0.0`, which is the same conflation
+running the other way. **`jenova_core.nimble` now pins the commit**, so the question cannot be
+answered two ways again, and `tests/gui_build.sh` refuses a tag checkout by name rather than
+letting it surface as `undeclared identifier` inside a `gui:` block.
+
+**Upstream's `ToastOverlay` also answers the design question better than the hand-binding did.**
+*A toast is an event and a `renderable` property is state*: the hand-binding reconciled them with
+a serial the window bumped per message and the widget compared against the last one raised.
+`ToastQueue` is a `ref` the widget **drains** on each update, so a message raises exactly one
+toast and the same text twice raises two — by construction, with no counter to keep anywhere.
+
+**And a toast can carry a button.** `newToast` takes `buttonLabel` and `clickedHandler`, and
+`connectSignal` (`adw.nim:1314`) puts the closure in its own shared cell and disconnects it on
+fire, so it is not the per-update `EventObj` that ARC frees under a live toast — the
+`DraftView.submit` hazard does not apply, and the hand-binding's note claiming it did was wrong.
+**P-B1 stays open on different grounds:** a message you have to act on must not time out, and it
+needs the server's own detail rather than one line. Errors keep the inline row.
+
+**One item genuinely is missing, and it gates a planned one:**
+
 * `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
   folds itself on a narrow window through `FlapFoldAuto`, which is what
   `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that
   something must drive, and the something libadwaita intends is a breakpoint on the window.
   **Swapping the two without binding it trades a deprecated widget for a sidebar that no longer
   adapts** — so that item is larger than "replacing `Flap`" suggests, and should be planned as
-  the pair.
+  the pair. Binding it also needs the split view's own `GtkWidget`, which owlkettle does not
+  expose from a `gui:` block, so the pair is really a triple.
 
 ---
 

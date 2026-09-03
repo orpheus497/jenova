@@ -10,7 +10,18 @@ bin           = @["jenova_core", "jenova_gui"]
 namedBin      = {"jenova_core": "jenova-core", "jenova_gui": "jenova"}.toTable
 
 requires "nim >= 2.2.10"
-requires "owlkettle >= 3.0.0"
+# **Pinned to a commit, and `>= 3.0.0` could not do this job.** owlkettle's
+# `main` still declares `version = "3.0.0"` in its own nimble file, so the tag
+# and everything after it satisfy the same constraint while offering different
+# widgets — `ToastOverlay`, `Toast`/`ToastQueue` and `ToolbarView` exist only
+# after the tag. Which of the two a machine happened to have decided whether
+# this window compiled, silently.
+#
+# `ac61ecf` is the revision report 06 audited and the one this window is written
+# against: `gui.nim` uses `ToastOverlay` for its confirmations, and report 05's
+# Phase 3 plans `ToolbarView` for the header/content/footer. Raise the pin
+# deliberately, having read what moved; do not relax it back to a range.
+requires "https://github.com/can-lehmann/owlkettle#ac61ecf"
 
 # Which GTK4 API level owlkettle may compile against. The installed toolkit is
 # 4.20.4 (D-AK); 10 is a deliberate floor rather than a match, unlocking what the
