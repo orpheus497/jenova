@@ -136,8 +136,9 @@ repository.
 └── thinking/   # optional — switch target for `models switch`
 ```
 
-Only `agent/`, `draft/` and `embed/` are scanned automatically. `instruct/` and `thinking/` exist
-solely as sources for `jenova-core models switch`.
+Only `agent/`, `draft/` and `embed/` are scanned automatically, plus the flat `models/` root
+itself as the last fallback for the agent model. `instruct/` and `thinking/` exist solely as
+sources for `jenova-core models switch`.
 
 ### Discovery
 

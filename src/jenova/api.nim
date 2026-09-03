@@ -416,6 +416,46 @@ proc dbSoftDelete(e: Entity, id: string) =
     db.rollback()
     raise
 
+## Function purpose: a cascade flags a container's descendants in one statement
+## per table, so none of them ever passes through `softDelete` and nothing on
+## that path unfiles them from the index. Deleting a workspace left every note,
+## uploaded file and conversation under it still answering retrieval — the one
+## place a deletion was invisible.
+##
+## Action purpose: the ids are derived from the cascade statements themselves,
+## for the reason `cascadeCount` gives — two hand-written lists of what a delete
+## reaches drift, and the drift here is silent. They are read *before* the
+## transaction because afterwards the rows no longer match the cascade's own
+## `is_deleted=0` predicate, which is the same ordering `deleteConversation`
+## uses.
+proc cascadeIndexTargets(entity, id: string): seq[(string, string)] =
+  if not Cascades.hasKey(entity): return
+  for sql in Cascades[entity]:
+    let setAt = sql.find(" SET ")
+    let whereAt = sql.find(" WHERE ")
+    if setAt < 0 or whereAt < 0: continue
+    let table = sql["UPDATE ".len ..< setAt]
+    # `messages` is absent deliberately: no container cascade reaches it, and a
+    # conversation's turns are unfiled by `rag.forgetConversation` reading the
+    # index rather than the message table.
+    if table notin ["notes", "fileAssets", "conversations"]: continue
+    let pred = sql[whereAt + " WHERE ".len .. ^1]
+    for row in db.query("SELECT id FROM " & table & " WHERE " & pred &
+                        " AND is_deleted=0", id):
+      if row.len > 0 and row[0].len > 0: result.add((table, row[0]))
+
+## Function purpose: run only after the transaction commits — unfiling inside it
+## would strip the index for a delete that then rolled back, leaving rows the
+## interface still shows and retrieval no longer knows.
+proc forgetIndexed(targets: seq[(string, string)]) =
+  for (table, rowId) in targets:
+    indexing:
+      case table
+      of "notes": rag.forgetNote(rowId)
+      of "fileAssets": rag.forgetFileAsset(rowId)
+      of "conversations": rag.forgetConversation(rowId)
+      else: discard
+
 ## Action purpose: the order differs by entity and is deliberate. For a
 ## container the filesystem move happens first, so a failure leaves the row
 ## alone and the database never claims a deletion the disk did not perform;
@@ -438,12 +478,15 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
   of "workspaces":
     if not fssync.trashWorkspace(id, prior.field "name"):
       return err(500, "filesystem trash failed for workspace")
+    let cascaded = cascadeIndexTargets(e.name, id)
     dbSoftDelete(e, id)
+    forgetIndexed(cascaded)
 
   of "projects":
     let r = fssync.trashProject(id, prior.field "workspaceId", prior.field "name")
     if not r.ok:
       return err(500, "filesystem trash failed for project")
+    let cascaded = cascadeIndexTargets(e.name, id)
     try:
       dbSoftDelete(e, id)
     except CatchableError:
@@ -451,11 +494,13 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
         try: moveDir(r.path, r.original)
         except OSError: discard
       return err(500, "delete failed: " & getCurrentExceptionMsg())
+    forgetIndexed(cascaded)
 
   of "folders":
     let r = fssync.trashFolder(id, prior.field "projectId", prior.field "name")
     if not r.ok:
       return err(500, "filesystem trash failed for folder")
+    let cascaded = cascadeIndexTargets(e.name, id)
     try:
       dbSoftDelete(e, id)
     except CatchableError:
@@ -463,6 +508,7 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
         try: moveDir(r.path, r.original)
         except OSError: discard
       return err(500, "delete failed: " & getCurrentExceptionMsg())
+    forgetIndexed(cascaded)
 
   of "notes":
     dbSoftDelete(e, id)

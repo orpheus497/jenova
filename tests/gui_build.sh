@@ -90,11 +90,17 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
+# `SCRATCH` is what the trap is allowed to delete, and it is set only where a
+# directory was actually created here. On FreeBSD `SRC` is the working tree
+# itself, so `SRC` must never reach an `rm -rf` — the two are kept as separate
+# variables for exactly that reason and not merged back.
+SCRATCH=
 if [ "$(uname -s)" = "FreeBSD" ]; then
   SRC=$ROOT
 else
   SRC=$(mktemp -d)
-  trap 'rm -rf "$SRC"' EXIT
+  SCRATCH=$SRC
+  trap 'rm -rf "$SCRATCH"' EXIT
   cp -r "$ROOT/src" "$SRC/"
   # As in `gui_check.sh`: the guards refuse to compile off FreeBSD by design,
   # and off FreeBSD is exactly where this script earns its keep. They are
@@ -105,7 +111,7 @@ else
 fi
 
 OUT=$(mktemp -d)
-trap 'rm -rf "$SRC" "$OUT"' EXIT
+trap 'rm -rf $SCRATCH "$OUT"' EXIT
 
 echo "gui_build: compiling jenova-core"
 cd "$SRC"
@@ -502,7 +508,10 @@ if [ -z "${DISPLAY:-}" ]; then
   export DISPLAY
   Xvfb "$DISPLAY" -screen 0 "${W}x${H}x24" >/dev/null 2>&1 &
   XPID=$!
-  trap 'kill $XPID 2>/dev/null; rm -rf "$SRC" "$OUT"' EXIT
+  # `$SCRATCH` and never `$SRC`, for the reason given where it is set: on
+  # FreeBSD `SRC` is the working tree, and this trap would have deleted the
+  # repository. Empty there, so this reduces to removing the output directory.
+  trap 'kill $XPID 2>/dev/null; rm -rf $SCRATCH "$OUT"' EXIT
   # Xvfb answers before it is listening; a short settle is cheaper and more
   # reliable than racing the first connection.
   sleep 2
@@ -598,13 +607,20 @@ fi
 
 if [ "$rc" -ne 0 ]; then
   if [ "${KEEP:-}" = "1" ]; then
-    # The two photographs are the whole evidence for the failure, and a trap
-    # that deletes them leaves the reader with nothing to look at.
+    # The photographs are the whole evidence for the failure, and a trap that
+    # deletes them leaves the reader with nothing to look at. Which ones exist
+    # depends on how far the run got: a `transcript_renders` failure produces
+    # `transcript.png` and never reaches the before/after pair, so copying only
+    # that pair left the earliest failure with no picture at all. Everything the
+    # run captured is copied, and the message names what actually landed rather
+    # than a fixed pair.
     EV=${TMPDIR:-/tmp}/gui_build-evidence.$$
     mkdir -p "$EV"
-    cp "$OUT/before.png" "$OUT/after.png" "$EV/" 2>/dev/null || true
-    cp "$OUT/run.log" "$EV/" 2>/dev/null || true
-    echo "gui_build: before/after photographs written to $EV"
+    for f in "$OUT"/*.png "$OUT/run.log"; do
+      if [ -f "$f" ]; then cp "$f" "$EV/"; fi
+    done
+    echo "gui_build: evidence written to $EV:"
+    ls -1 "$EV"
   fi
   echo "gui_build: FAIL"
   exit 1

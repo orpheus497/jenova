@@ -148,10 +148,17 @@ proc queryStr*(r: Request, key: string): string =
 
 ## Function purpose: presence without value, for the flag-style parameters
 ## where `?debug` and `?debug=` mean the same thing.
+##
+## Action purpose: the valueless form is the whole point of this proc and was
+## the one form it missed. `find('=')` answers -1 for a bare `?debug`, and a
+## test of `e > 0` reads that as absent — so the flag documented above as
+## equivalent to `?debug=` was the only spelling that did not work. A pair with
+## no `=` is the key itself; one with an `=` is the text before it.
 proc hasParam*(r: Request, key: string): bool =
   for pair in r.query.split('&'):
     let e = pair.find('=')
-    if e > 0 and pair[0 ..< e] == key:
+    let name = if e >= 0: pair[0 ..< e] else: pair
+    if name == key:
       return true
   false
 

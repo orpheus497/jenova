@@ -12,6 +12,7 @@ cd jenova
 # 2. Install the dependencies below, then build
 nimble llama     # llama.cpp with Vulkan, into external/ext_bin/
 nimble web       # the Web UI, into public/
+nimble core      # bin/jenova-core, the headless server
 nimble gui       # bin/jenova, the desktop application
 
 # 3. Detect hardware and deploy the matching profile

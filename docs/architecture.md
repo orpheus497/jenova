@@ -89,9 +89,12 @@ under blocking database load, and that saturating one class leaves health and st
 ### The response cache
 
 A completion whose rewritten body hashes to a stored key is answered from `llm_cache` in the
-workspace database rather than from the model, and the stored bytes are replayed **verbatim** —
-head included — so a hit is byte-identical to a live reply and SSE framing survives. A hit carries
-`X-Cache: HIT`.
+workspace database rather than from the model. What was stored is the upstream response as it went
+down the wire, head included, and it is replayed rather than re-framed: **the body — every SSE
+`data:` record — goes back byte for byte**, so chunked and event-stream framing survive and no
+reader has to know the difference. The response as a whole is not identical to a live one: a single
+`X-Cache: HIT` line is inserted straight after the status line, which is how a hit is recognisable
+at all.
 
 Bounded at 256 entries and 1 MiB per entry, evicted oldest-first. A reply over the cap is simply
 not stored, and only a complete relay that actually contains `data:` lines is stored at all: a

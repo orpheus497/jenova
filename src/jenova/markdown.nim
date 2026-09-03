@@ -429,6 +429,15 @@ proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
 proc invalidate*(memo: var BlockMemo, id: string) =
   memo.blocks.del(id)
   memo.stamps.del(id)
+  # Action purpose: the queue entry goes too, because `blocksFor` appends an id
+  # only when `blocks` does not already hold it. Leaving the entry behind means
+  # the next render of the same note appends a second one, and a note edited
+  # repeatedly fills the queue with copies of itself — `evict` then drops live
+  # entries while `blocks` sits well under the cap. The search is O(n) and that
+  # is affordable here and nowhere near `view`: this is called where the text is
+  # re-baselined, not per frame.
+  let at = memo.order.find(id)
+  if at >= 0: memo.order.delete(at)
 
 ## Function purpose: the transcript draws one branch of one conversation, so
 ## switching conversation makes every entry here dead at once — cheaper to empty
