@@ -28,10 +28,14 @@ requires "https://github.com/can-lehmann/owlkettle#ac61ecf"
 # GUI actually uses — `contentFit` on Picture (4.8) and `placeholderText` on
 # SearchEntry (4.10) — without opting into every newer path owlkettle guards.
 #
-# **`-d:gtk48` is required alongside it and is not redundant.** owlkettle 3.0.0
-# gates the *widget* on `GtkMinor >= 8` but its *binding* on `defined(gtk48)`
-# (`bindings/gtk.nim:836`), so raising only `gtkminor` fails to compile with an
-# undeclared `gtk_picture_set_content_fit`. Both switches, or neither.
+# No `-d:gtk48` beside it, and that is a property of the pin rather than an
+# omission. At `ac61ecf` the Picture binding is gated on `when GtkMinor >= 8`
+# (`bindings/gtk.nim:864-867`) and `defined(gtk48)` is read nowhere in the
+# dependency, so `-d:gtkminor=10` reaches `gtk_picture_set_content_fit` on its
+# own. The `v3.0.0` tag gates the widget on `GtkMinor` but its binding on
+# `defined(gtk48)`, where raising only `gtkminor` fails to compile with that
+# call undeclared — so relaxing the pin back to the tag means putting
+# `-d:gtk48` back with it.
 #
 # `-d:adwminor` gates libadwaita the same way, and owlkettle defaults it to 0
 # (`bindings/adw.nim:29`) — which compiled `OverlaySplitView`, `ToolbarView`,
@@ -39,7 +43,7 @@ requires "https://github.com/can-lehmann/owlkettle#ac61ecf"
 # the binary entirely, along with 13 widget properties. The window used the
 # deprecated `Flap` because its replacement was not built. 4 is the level the
 # planned widgets need; the host's libadwaita must be at least 1.4.
-const NimFlags = "-d:release -d:gtkminor=10 -d:gtk48 -d:adwminor=4 " &
+const NimFlags = "-d:release -d:gtkminor=10 -d:adwminor=4 " &
                  "--hints:off --path:src"
 
 task core, "Build the headless server (bin/jenova-core)":

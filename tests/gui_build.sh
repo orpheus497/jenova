@@ -56,7 +56,7 @@ NIM=${NIM:-nim}
 # The same switches `jenova_core.nimble` compiles with. Kept in step with it by
 # hand: a build harness that builds something other than the shipped
 # configuration proves nothing about the shipped configuration.
-FLAGS="-d:release -d:gtkminor=10 -d:gtk48 -d:adwminor=4 --hints:off"
+FLAGS="-d:release -d:gtkminor=10 -d:adwminor=4 --hints:off"
 
 case $("$NIM" --version | head -1) in
   *"Version 2."*) ;;
