@@ -19,7 +19,7 @@
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
-import std/[os, sequtils, strformat, strutils, json]
+import std/[os, posix, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
@@ -705,6 +705,40 @@ proc main() =
         check("so an imported audio attachment is still sent",
               audio.kind == JArray and ($audio).contains("input_audio"), $audio)
 
+        # M-01. **The memo was unbounded and nothing ever cleared it.** It is a
+        # module-level `var` in `gui.nim` keyed by message id, and no
+        # conversation switch, no message delete and no reload dropped an
+        # entry — so every message ever rendered kept its parsed `extra` for
+        # the life of the process, with each image's base64 held twice over.
+        # Asserted by overrunning the cap rather than by reading the constant:
+        # checking that the number is 128 would pass even if nothing ever
+        # compared anything to it.
+        block memoIsBounded:
+          var bounded: pipeline.ParseMemo
+          let one = """[{"type":"TEXT","name":"n.txt","content":"x"}]"""
+          for i in 0 .. pipeline.ParseMemoCap * 2:
+            discard bounded.attachmentsFor("bound-" & $i, one)
+          check("the attachment memo stays inside its cap",
+                bounded.len <= pipeline.ParseMemoCap,
+                "held " & $bounded.len & " of a cap of " &
+                $pipeline.ParseMemoCap)
+          check("and it is still holding something useful",
+                bounded.len > 0)
+
+          # Eviction is oldest-first, so the most recent id must survive a
+          # long run. A cap that dropped the newest would be a cache that
+          # never hits.
+          let lastId = "bound-" & $(pipeline.ParseMemoCap * 2)
+          let before = bounded.parses
+          discard bounded.attachmentsFor(lastId, one)
+          check("the most recently used id survives eviction",
+                bounded.parses == before,
+                "the newest entry was evicted; parses went " & $before &
+                " -> " & $bounded.parses)
+
+          bounded.clear()
+          check("clear empties the memo", bounded.len == 0)
+
         # D-BQ: refused, never truncated. Asserted against a real oversized file
         # rather than against the constant — checking that the number is 25
         # would pass even if nothing ever compared anything to it.
@@ -1120,6 +1154,23 @@ proc main() =
         discard memo.blocksFor("note-2", a)
         check("invalidating one id leaves every other id cached",
               memo.parses == parsesBefore)
+
+        # M-01. Same defect, same shape: unbounded, never cleared, keyed by
+        # message id in a module-level `var`.
+        var bounded: markdown.BlockMemo
+        for i in 0 .. markdown.BlockMemoCap * 2:
+          discard bounded.blocksFor("cap-" & $i, "hello")
+        check("the block memo stays inside its cap",
+              bounded.len <= markdown.BlockMemoCap,
+              "held " & $bounded.len & " of a cap of " &
+              $markdown.BlockMemoCap)
+        let lastId = "cap-" & $(markdown.BlockMemoCap * 2)
+        let parsesAtCap = bounded.parses
+        discard bounded.blocksFor(lastId, "hello")
+        check("the most recently used id survives eviction",
+              bounded.parses == parsesAtCap)
+        bounded.clear()
+        check("clear empties the block memo", bounded.len == 0)
 
       block linksAndImages:
         # A-48. Links and images were not rendered at all — a model's citation
@@ -2220,6 +2271,97 @@ proc main() =
         quit(0)
       echo ""
       echo "hardware-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "lifecycle-selftest":
+      # Action purpose: **this asserts defect E-01, which no other check could
+      # see.** Nothing in this program ever waited on the backends `start`
+      # forks, so an exited `llama-server` stayed a zombie — and `kill(pid, 0)`
+      # succeeds for a zombie, so `isAlive` answered `true` for a dead backend
+      # for ever. Downstream: `stop` burned its whole grace period and returned
+      # false, `start` returned the corpse's pid without starting anything, and
+      # `watchOnce` logged `"restarted (pid N)"` on every tick while the port
+      # stayed dead.
+      #
+      # It compiles, it passes every other suite, and it renders correctly. The
+      # only thing that can catch it is waiting for a real child to exit and
+      # asking. That is what this does.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "lifecycle-selftest"
+
+      block reaping:
+        # A child that exits immediately. `exitnow` rather than `quit`: the
+        # child of a fork in a threaded process must not run exit handlers.
+        let pid = posix.fork()
+        if pid == 0:
+          exitnow(0)
+        if pid < 0:
+          echo "  FAIL could not fork"
+          inc bad
+        else:
+          # Give it time to die. A tenth of a second is generous for a process
+          # whose entire life is one syscall.
+          os.sleep(100)
+          check("a child that has exited does not read as alive",
+                not lifecycle.isAlive(pid.int),
+                "isAlive said true for an exited child — it is a zombie and " &
+                "nothing reaped it (E-01)")
+          # Idempotent: the second call has nothing left to reap and must still
+          # answer false rather than raising or blocking.
+          check("asking twice is stable", not lifecycle.isAlive(pid.int))
+
+      block notOurChild:
+        # A pid this process never forked. `waitpid` fails with ECHILD and
+        # changes nothing, so `kill(pid, 0)` stays the authority — which is the
+        # case a pidfile written by a previous run produces.
+        check("pid 0 is never alive", not lifecycle.isAlive(0))
+        check("a negative pid is never alive", not lifecycle.isAlive(-1))
+        check("this process is alive", lifecycle.isAlive(getCurrentProcessId()))
+
+      block rotation:
+        # M-04. The log was appended to for ever and nothing anywhere deleted
+        # from `var/log`.
+        let dir = getTempDir() / "jenova-rot-" & $getCurrentProcessId()
+        createDir(dir)
+        defer: removeDir(dir)
+        let log = dir / "backend.log"
+
+        writeFile(log, "small")
+        lifecycle.rotateLog(log)
+        check("a log under the cap is left alone",
+              fileExists(log) and not fileExists(log & ".1") and
+              readFile(log) == "small")
+
+        writeFile(log, repeat('x', lifecycle.MaxLogBytes + 1))
+        lifecycle.rotateLog(log)
+        check("a log over the cap is rotated to .1",
+              not fileExists(log) and fileExists(log & ".1"))
+
+        # A second rotation must replace the previous generation rather than
+        # accumulating .2, .3, .4 — the bound is two files, not a series.
+        writeFile(log, repeat('y', lifecycle.MaxLogBytes + 1))
+        lifecycle.rotateLog(log)
+        check("rotating again keeps exactly one previous generation",
+              fileExists(log & ".1") and not fileExists(log & ".2") and
+              readFile(log & ".1")[0] == 'y')
+
+        # A path that does not exist is not an error: `start` calls this before
+        # every launch, including the first, when there is no log yet.
+        lifecycle.rotateLog(dir / "absent.log")
+        check("rotating a missing log is a no-op",
+              not fileExists(dir / "absent.log.1"))
+
+      if bad == 0:
+        echo ""
+        echo "lifecycle-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "lifecycle-selftest: FAIL (", bad, ")"
       quit(1)
     of "sha256-selftest":
       # The cache key is a SHA-256 of the rewritten request body, and a wrong
@@ -3465,6 +3607,52 @@ proc main() =
         db.exec("DELETE FROM messages WHERE id LIKE 'ragtest-%'", [])
         rag.forgetConversation(ConvA)
         rag.forgetConversation(ConvB)
+
+      block packedDotProduct:
+        # M-03. `query` scored every candidate as `dot(qv, unpackVec(blob))`,
+        # allocating a fresh seq per row; it now reads the packed bytes in
+        # place. **A disagreement here would not fail anything** — it would
+        # quietly re-rank retrieval, which is only ever noticed as "the answers
+        # got worse", so the two are asserted equal rather than assumed.
+        proc same(label: string, q, v: seq[float32]) =
+          let r = rag.blobDotMatchesUnpacked(q, v)
+          if abs(r.blob - r.unpacked) < 1e-9:
+            echo "  ok   ", label
+          else:
+            echo "  FAIL ", label, "\n       packed ", r.blob,
+                 " unpacked ", r.unpacked
+            inc failures
+
+        same("packed and unpacked dot products agree",
+             @[0.5'f32, -0.25'f32, 0.75'f32], @[0.1'f32, 0.2'f32, -0.3'f32])
+        same("...on a zero vector",
+             @[0.0'f32, 0.0'f32, 0.0'f32], @[1.0'f32, 1.0'f32, 1.0'f32])
+        # A realistic width, so the loop is exercised over more than three
+        # lanes and any stride error shows up.
+        var qv, cv: seq[float32]
+        for i in 0 ..< 768:
+          qv.add (i.float32 / 768.0'f32)
+          cv.add (1.0'f32 - i.float32 / 768.0'f32)
+        same("...over a 768-dimension vector", qv, cv)
+
+        # A blob of the wrong width is a vector from a different embedding
+        # model, which is what an index built before a model change holds. It
+        # must score 0, not read past the end of the shorter one.
+        let mismatched = rag.blobDotMatchesUnpacked(
+          @[1.0'f32, 2.0'f32, 3.0'f32], @[1.0'f32, 2.0'f32])
+        if mismatched.blob == 0.0 and mismatched.unpacked == 0.0:
+          echo "  ok   a vector of the wrong width scores zero, not garbage"
+        else:
+          echo "  FAIL a mismatched vector width did not score zero"
+          inc failures
+
+        # The scan ceiling must stay well above an ordinary install's index or
+        # it silently costs recall. See the constant's own note.
+        if rag.MaxVectorScan >= 10_000:
+          echo "  ok   the vector-scan ceiling is generous (", rag.MaxVectorScan, ")"
+        else:
+          echo "  FAIL the vector-scan ceiling is too low: ", rag.MaxVectorScan
+          inc failures
 
       if failures == 0:
         echo ""

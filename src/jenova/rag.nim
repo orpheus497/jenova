@@ -33,7 +33,8 @@
 ## file, and it is what made the difference between a proven module and a used
 ## one — until 2026-09-01 `indexContent` had no caller outside the self-test.
 
-import std/[os, json, sets, strutils, strformat, algorithm, math, times, httpclient]
+import std/[os, json, sets, strutils, strformat, algorithm, math, tables, times,
+            httpclient]
 import ./db
 
 const
@@ -44,6 +45,36 @@ const
   SemanticWeight* = 0.6  ## `search.lua:44`
   SemanticFloor* = 0.3   ## `search.lua:775` — a chunk below this is not a hit
   SnippetChars* = 1000   ## `proxy.lua:1273` truncates snippets at this
+
+const MaxVectorScan* = 50_000
+  ## M-03. The ceiling on how many chunk vectors one query may score.
+  ##
+  ## **Before this the semantic half read the whole table on every completion.**
+  ## The statement was `SELECT path, start_line, vec FROM rag_chunks WHERE vec
+  ## IS NOT NULL` with no `LIMIT` and no filter — while the keyword half four
+  ## lines above it is correctly capped at `LIMIT 200`. Two things made that
+  ## expensive rather than merely linear: `db.queryBlob` accumulates **every**
+  ## row into a `seq` before returning, so the entire vector table was resident
+  ## at once; and the index is fed by every message on both surfaces plus
+  ## `backfillChats`, so it grows with the user's whole history and never
+  ## shrinks. At 768 dimensions a chunk vector is about 3 KB, so a hundred
+  ## thousand chunks is a ~300 MB read and allocation in front of every single
+  ## token generated.
+  ##
+  ## Action purpose: **`ORDER BY rowid DESC`, and the ordering is the honest
+  ## part of this change.** A cap has to drop something, and there is no index
+  ## that can pre-select "most similar" — that is what the scan was computing.
+  ## `rowid` is insertion order, so newest-first keeps the most recently indexed
+  ## chunks, which for a personal assistant whose index is its own conversation
+  ## history is the right prior: a question is far more often about last week
+  ## than about the first thing ever said to it.
+  ##
+  ## The number is deliberately generous. At 300-word chunks this is on the
+  ## order of a hundred thousand messages, so an ordinary install never reaches
+  ## it and loses no recall at all; it engages only where the alternative was
+  ## already unusable. **The keyword half is unaffected and has no such
+  ## horizon** — FTS5 still searches the whole corpus — so a document past the
+  ## cap remains findable by its words.
 
 const RagSchema = """
 CREATE TABLE IF NOT EXISTS rag_documents (
@@ -128,6 +159,24 @@ proc dot(a, b: seq[float32]): float =
   if a.len == 0 or a.len != b.len: return 0.0
   for i in 0 ..< a.len:
     result += a[i].float * b[i].float
+
+## Function purpose: the same dot product, taken straight off a packed vector's
+## bytes without materialising it (M-03).
+##
+## Action purpose: `query` scored every candidate as `dot(qv, unpackVec(blob))`,
+## and `unpackVec` allocates a fresh `seq[float32]` per row — one allocation and
+## one copy of every vector in the table, per query, purely to read it once. The
+## bytes are already in hand and their layout is this module's own
+## (`packVec`), so the multiply-add can read them where they are.
+##
+## The length guard is `dot`'s, restated in bytes: a blob that is not exactly
+## four bytes per query dimension is a vector of a different width — a model
+## change mid-index — and scores 0 rather than reading past its end.
+proc dotBlob(q: seq[float32], blob: string): float =
+  if q.len == 0 or blob.len != q.len * 4: return 0.0
+  let p = cast[ptr UncheckedArray[float32]](unsafeAddr blob[0])
+  for i in 0 ..< q.len:
+    result += q[i].float * p[i].float
 
 # ---------------------------------------------------------------------------
 # Embeddings — the server on :8082 (D-E, D-AF)
@@ -473,23 +522,29 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
   if qvecs.len > 0:
     let qv = qvecs[0]
     var best: seq[tuple[path: string, score: float, startLine: int]]
+    # M-03. **The path index is not an optimisation, it is a complexity fix.**
+    # Keeping only the best chunk per document was a linear search of `best` for
+    # every scored row, so the loop was O(rows x documents) — and `best` grows
+    # with the number of *distinct matching documents*, which on a large index
+    # is most of them. A hash lookup makes it O(rows). `best` is kept as a `seq`
+    # alongside it so the result order stays insertion order and a run of this
+    # query is reproducible; a bare `Table` would hand the caller an
+    # unspecified order and make two identical queries disagree on ties.
+    var at = initTable[string, int]()
     for (cols, blob) in db.queryBlob(
-        "SELECT path, start_line, vec FROM rag_chunks WHERE vec IS NOT NULL"):
+        "SELECT path, start_line, vec FROM rag_chunks WHERE vec IS NOT NULL " &
+        "ORDER BY rowid DESC LIMIT ?", $MaxVectorScan):
       if cols.len < 2 or blob.len == 0: continue
-      let v = unpackVec(blob)
-      let s = dot(qv, v)
+      let s = dotBlob(qv, blob)
       if s <= SemanticFloor: continue
       let line = try: parseInt(cols[1]) except ValueError: 1
-      var found = false
-      for i in 0 ..< best.len:
-        if best[i].path == cols[0]:
-          found = true
-          if s > best[i].score:
-            best[i].score = s
-            best[i].startLine = line
-          break
-      if not found:
+      let idx = at.getOrDefault(cols[0], -1)
+      if idx < 0:
+        at[cols[0]] = best.len
         best.add (cols[0], s, line)
+      elif s > best[idx].score:
+        best[idx].score = s
+        best[idx].startLine = line
     sem = best
 
   proc passesFilter(p: string): bool =
@@ -499,20 +554,24 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
   var maxBm = 0.0
   var maxSem = 0.0
 
+  # The same index, for the same reason, over the merge: this was a linear
+  # search of `merged` per semantic hit.
+  var mergedAt = initTable[string, int]()
+
   for e in bm:
     if not passesFilter(e.path): continue
-    merged.add Hit(path: e.path, bm25: e.score)
+    if not mergedAt.hasKey(e.path):
+      mergedAt[e.path] = merged.len
+      merged.add Hit(path: e.path, bm25: e.score)
     if e.score > maxBm: maxBm = e.score
   for e in sem:
     if not passesFilter(e.path): continue
-    var found = false
-    for i in 0 ..< merged.len:
-      if merged[i].path == e.path:
-        merged[i].semantic = e.score
-        merged[i].startLine = e.startLine
-        found = true
-        break
-    if not found:
+    let idx = mergedAt.getOrDefault(e.path, -1)
+    if idx >= 0:
+      merged[idx].semantic = e.score
+      merged[idx].startLine = e.startLine
+    else:
+      mergedAt[e.path] = merged.len
       merged.add Hit(path: e.path, semantic: e.score, startLine: e.startLine)
     if e.score > maxSem: maxSem = e.score
 
@@ -566,6 +625,18 @@ proc similarity*(a, b: seq[float32]): float =
 
 proc vectorRoundTrip*(v: seq[float32]): seq[float32] =
   unpackVec(packVec(v))
+
+## Function purpose: expose the packed-blob dot product against the unpacked
+## one, so a test can assert they agree (M-03).
+##
+## Exported for the assertion and nothing else, the same way `similarity` above
+## and `pipeline.cacheCount` are. `dotBlob` replaced `dot(qv, unpackVec(blob))`
+## on the hot path of every completion; a disagreement between the two would not
+## fail anything — it would silently re-rank retrieval, which is the class of
+## defect that is only ever found by someone noticing the answers got worse.
+proc blobDotMatchesUnpacked*(q, v: seq[float32]): tuple[blob, unpacked: float] =
+  let packed = packVec(v)
+  (dotBlob(q, packed), dot(q, unpackVec(packed)))
 
 ## Function purpose: the `--- REPOSITORY CONTEXT ---` block `proxy.lua:1270`
 ## injects into a system prompt. Kept here rather than in the pipeline so the

@@ -294,7 +294,44 @@ type
     ## self-test and to a screenshot, right up until the window stops responding.
     blocks: Table[string, seq[Block]]
     stamps: Table[string, int]
+    ## M-01. Insertion order of the ids currently held, so the oldest can be
+    ## dropped when the memo is over its cap. **Only a *new* id is appended** —
+    ## a re-parse under an existing id (Continue extending a reply) replaces the
+    ## entry without moving it, so one message cannot occupy two slots.
+    order: seq[string]
     parses*: int
+
+const BlockMemoCap* = 512
+  ## M-01. How many messages' parsed blocks the memo may hold.
+  ##
+  ## **This memo was unbounded and was never cleared.** It is a module-level
+  ## `var` in `gui.nim` keyed by message id, and neither `loadConversation` nor
+  ## `selectConversation` nor `deleteMessage` touched it — so every message ever
+  ## rendered kept its parsed block list for the life of the process, including
+  ## the blocks of conversations closed hours ago and of messages since deleted.
+  ##
+  ## 512 is far more than one branch of one conversation, which is all the
+  ## transcript ever draws, so the cap never engages during normal reading and
+  ## the per-frame guarantee `blocksFor` exists to provide is untouched. It is a
+  ## ceiling on a leak, not a working-set size.
+
+## Function purpose: drop the oldest entries once the memo is over its cap.
+##
+## Action purpose: **a batch, not one entry per insert.** Removing a single
+## oldest id means `order.delete(0)`, which shifts the whole sequence — an O(n)
+## cost on every insert once the cap is reached, paid on a path whose entire
+## reason for existing is that `view` must do no work proportional to anything
+## (G-40). Dropping a quarter at a time amortises that shift to O(1) per insert.
+##
+## An id already removed by `invalidate` is simply absent from the tables;
+## `Table.del` on a missing key is a no-op, so the queue needs no tombstones.
+proc evict(memo: var BlockMemo) =
+  if memo.order.len <= BlockMemoCap: return
+  let drop = max(1, BlockMemoCap div 4)
+  for i in 0 ..< drop:
+    memo.blocks.del(memo.order[i])
+    memo.stamps.del(memo.order[i])
+  memo.order = memo.order[drop .. ^1]
 
 ## Function purpose: the blocks of one message, parsed at most once.
 ##
@@ -311,6 +348,9 @@ proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
     return memo.blocks[id]
   inc memo.parses
   result = parse(text)
+  if not memo.blocks.hasKey(id):
+    memo.order.add id
+    memo.evict()
   memo.blocks[id] = result
   memo.stamps[id] = text.len
 
@@ -331,3 +371,16 @@ proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
 proc invalidate*(memo: var BlockMemo, id: string) =
   memo.blocks.del(id)
   memo.stamps.del(id)
+
+## Function purpose: drop everything (M-01). The transcript draws one branch of
+## one conversation, so switching conversation makes every entry here dead —
+## and nothing dropped them, which is the leak `BlockMemoCap` caps and this
+## empties outright.
+proc clear*(memo: var BlockMemo) =
+  memo.blocks.clear()
+  memo.stamps.clear()
+  memo.order.setLen(0)
+
+## Function purpose: how many entries are held. For the assertion, so a cap that
+## stops working is a failing test rather than a slow leak.
+proc len*(memo: BlockMemo): int = memo.blocks.len

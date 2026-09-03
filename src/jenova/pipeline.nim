@@ -993,7 +993,43 @@ type
     nodes: Table[string, JsonNode]
     atts: Table[string, seq[Attachment]]
     stamps: Table[string, int]
+    ## M-01. Insertion order of the ids held, so the oldest can be dropped when
+    ## the memo is over its cap. Only a *new* id is appended; a re-parse under
+    ## an existing id replaces its entry without moving it.
+    order: seq[string]
     parses*: int
+
+const ParseMemoCap* = 128
+  ## M-01. How many messages' parsed `extra` the memo may hold.
+  ##
+  ## **This memo was unbounded, was never cleared, and is the expensive one.**
+  ## `nodes` retains the whole `extra` array — *including every image's full
+  ## base64 data URL* — and `atts` retains a **second** copy of the same bytes
+  ## in `Attachment.payload`. It is a module-level `var` in `gui.nim` keyed by
+  ## message id, and neither `loadConversation` nor `selectConversation` nor
+  ## `deleteMessage` touched it, so a session that read ten conversations with a
+  ## few megabytes of images each held all of it until the process exited —
+  ## twice over, plus a decoded `Pixbuf` in the window's thumbnail cache and a
+  ## file under `var/cache`.
+  ##
+  ## The cap is lower than `markdown.BlockMemoCap` because an entry here is
+  ## unboundedly larger: parsed markdown is proportional to the message text,
+  ## while this is proportional to whatever was attached to it. 128 is still far
+  ## more than one branch of one conversation, so the per-frame guarantee
+  ## `entryFor` exists to provide is untouched.
+
+## Function purpose: drop the oldest entries once the memo is over its cap. A
+## batch rather than one per insert, for the reason `markdown.evict` gives: a
+## per-insert `delete(0)` is an O(n) shift on a path that must do no work
+## proportional to anything.
+proc evict(memo: var ParseMemo) =
+  if memo.order.len <= ParseMemoCap: return
+  let drop = max(1, ParseMemoCap div 4)
+  for i in 0 ..< drop:
+    memo.nodes.del(memo.order[i])
+    memo.atts.del(memo.order[i])
+    memo.stamps.del(memo.order[i])
+  memo.order = memo.order[drop .. ^1]
 
 ## Function purpose: parse one message's `extra` at most once, returning both the
 ## original node for the request path and the renderable list for the transcript.
@@ -1015,6 +1051,9 @@ proc entryFor*(memo: var ParseMemo, id, extra: string):
     try: node = parseJson(extra) except CatchableError: node = nil
   let atts = attachmentsOfNode(node)
   if id.len > 0:
+    if not memo.atts.hasKey(id):
+      memo.order.add id
+      memo.evict()
     memo.nodes[id] = node
     memo.atts[id] = atts
     memo.stamps[id] = extra.len
@@ -1031,3 +1070,15 @@ proc forget*(memo: var ParseMemo, id: string) =
   memo.nodes.del(id)
   memo.atts.del(id)
   memo.stamps.del(id)
+
+## Function purpose: drop everything (M-01). Switching conversation makes every
+## entry here dead — the transcript draws one branch — and nothing dropped them.
+proc clear*(memo: var ParseMemo) =
+  memo.nodes.clear()
+  memo.atts.clear()
+  memo.stamps.clear()
+  memo.order.setLen(0)
+
+## Function purpose: how many entries are held. For the assertion, so a cap that
+## stops working fails a test rather than leaking quietly.
+proc len*(memo: ParseMemo): int = memo.atts.len

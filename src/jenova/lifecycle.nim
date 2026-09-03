@@ -142,11 +142,54 @@ proc readPid(path: string): int =
   if not fileExists(path): return 0
   try: parseInt(readFile(path).strip()) except CatchableError: 0
 
+## Function purpose: collect a child that has already exited, so it stops being
+## a zombie. **This is the whole of defect E-01 and it has four symptoms, not
+## one.**
+##
+## `start` forks (below) and nothing ever waited on the result, so an exited
+## `llama-server` stayed in the process table as a zombie — `setsid` detaches
+## the controlling terminal, it does not reparent, so the backend remains this
+## process's child. `kill(pid, 0)` **succeeds for a zombie**, which is what made
+## the four symptoms follow mechanically from `isAlive` below:
+##
+## 1. `state` reported a dead backend as `running`.
+## 2. `stop` spun the full 2 s grace period on an `isAlive` that never went
+##    false, SIGKILLed a corpse, and returned `false` — so `stopAll` reported a
+##    failed shutdown on every clean exit.
+## 3. `start` saw `existing.running` and returned the zombie's pid **without
+##    starting anything**.
+## 4. `watchOnce` therefore logged `"restarted (pid N)"` and reset its failure
+##    counter, for ever, while the port stayed dead. The watchdog reported
+##    restarts it had never performed.
+##
+## Action purpose: **`waitpid` here rather than `SIGCHLD` set to `SIG_IGN`.**
+## Ignoring SIGCHLD would auto-reap process-wide and is one line, but it also
+## makes every `osproc.waitForExit` in this program unable to collect its own
+## child — `gui.runCapture`, `fssync.gitRun`, `hardware.detect` and
+## `websearch.search` all depend on that return value. A targeted, non-blocking
+## `waitpid` collects only the pid asked about and changes nothing else.
+##
+## `WNOHANG` means this never blocks: a child that is still running is left
+## alone and `waitpid` returns 0. A pid that is *not* this process's child —
+## which is what a pidfile written by a previous run holds — fails with
+## `ECHILD` and changes nothing, so the `kill` test below remains the authority
+## for that case.
+proc reapIfExited(pid: int) =
+  if pid <= 0: return
+  var status: cint = 0
+  discard waitpid(Pid(pid), status, WNOHANG)
+
 ## Function purpose: is this pid alive? `kill(pid, 0)` tests for existence and
 ## permission without sending a signal — the same check `jenova-ca:404` makes
 ## with `kill -0`.
+##
+## The reap runs first, and it must: `kill(pid, 0)` cannot distinguish a running
+## process from a zombie, so without it this answers `true` for a backend that
+## has already exited. See `reapIfExited`.
 proc isAlive*(pid: int): bool =
-  pid > 0 and kill(pid.Pid, 0) == 0
+  if pid <= 0: return false
+  reapIfExited(pid)
+  kill(pid.Pid, 0) == 0
 
 proc state*(l: Lifecycle, be: Backend): ProcState =
   let pid = readPid(pidFileFor(l, be))
@@ -184,6 +227,39 @@ proc portInUse*(port: int): bool =
       if not s.isNil: s.close()
     except CatchableError: discard
 
+## The ceiling on one backend log before it is rotated. `llama-server` prints
+## device enumeration and per-layer offload progress on every load — the note at
+## `start` below puts that at comfortably more than 64 KB per start — and the
+## watchdog restarts a failing backend every 60 s, so an unrotated log grows
+## without bound inside the USER's own home directory. Nothing anywhere in this
+## program deleted from `var/log` before this (defect M-04).
+const MaxLogBytes* = 8 * 1024 * 1024
+
+## Function purpose: keep one backend log and one previous generation, so the
+## pair is bounded at roughly `2 * MaxLogBytes` plus whatever the current run
+## adds.
+##
+## Action purpose: **rotation happens at start, not while running.** A mid-run
+## rotation would have to move a file two `dup2`'d descriptors are still writing
+## to, which on a log opened `O_APPEND` means the child keeps writing to the
+## renamed inode and the new file stays empty — a rotation that loses exactly
+## the output it was meant to preserve. Rotating before the fork is the only
+## point at which no descriptor is open on it. The bound is therefore "per
+## start" rather than absolute, which is honest and is the same discipline
+## `lastBackendError` already assumes when it reads only the tail.
+##
+## Failure is deliberately silent: a log that cannot be rotated is not a reason
+## to refuse to start a backend.
+proc rotateLog*(path: string) =
+  try:
+    if not fileExists(path): return
+    if getFileSize(path) <= MaxLogBytes: return
+    let prev = path & ".1"
+    discard tryRemoveFile(prev)
+    moveFile(path, prev)
+  except CatchableError:
+    discard
+
 proc start*(l: Lifecycle, be: Backend): int =
   let existing = l.state(be)
   if existing.running:
@@ -217,6 +293,7 @@ proc start*(l: Lifecycle, be: Backend): int =
   createDir(l.paths.state)
 
   let logPath = logFileFor(l, be)
+  rotateLog(logPath)
 
   # Action purpose: fork/dup2/exec rather than `startProcess`, and the reason is
   # a defect this replaced rather than a preference.
@@ -233,12 +310,56 @@ proc start*(l: Lifecycle, be: Backend): int =
   var argv: seq[string] = @[binary]
   argv.add args
 
+  # Action purpose: **E-02. Every allocation happens here, in the parent, before
+  # the fork — and the child calls nothing that allocates.**
+  #
+  # POSIX permits only async-signal-safe calls between `fork` and `exec` in a
+  # multithreaded process, and this process is multithreaded: `start` is reached
+  # from the GUI's control worker (`gui.ctlWorker`) while the GTK thread and the
+  # stream thread are running, and from `serve`'s watchdog thread while fourteen
+  # handler threads are. The previous child called `getEnv`, `putEnv` twice,
+  # `dirExists` and `allocCStringArray` — `getenv`/`setenv` allocate through the
+  # **process-wide libc malloc**, so a fork taken while any other thread held
+  # that lock left the child deadlocked before `execv`, presenting as "the
+  # backend never starts" with nothing in the log to say why.
+  #
+  # The environment is therefore materialised as an explicit `envp` here and
+  # handed to `execve`, rather than being mutated in the child with `putEnv`.
+  # The child is left with `setsid`, `open`, `dup2`, `close` and `execve` — all
+  # async-signal-safe.
+  var envSeq: seq[string] = @[]
+  block:
+    let libDir = l.paths.llamaLibDir
+    var ldPath = ""
+    if dirExists(libDir):
+      let existingPath = getEnv("LD_LIBRARY_PATH")
+      ldPath = if existingPath.len > 0: libDir & ":" & existingPath else: libDir
+    for key, val in envPairs():
+      # The two this loop is about to set are dropped here so the child cannot
+      # inherit a stale copy alongside the new one; `execve` takes the array
+      # verbatim and would keep both.
+      if ldPath.len > 0 and key == "LD_LIBRARY_PATH": continue
+      if be == beEmbed and key == "GGML_VULKAN_DISABLE": continue
+      envSeq.add key & "=" & val
+    if ldPath.len > 0:
+      envSeq.add "LD_LIBRARY_PATH=" & ldPath
+    if be == beEmbed:
+      # CPU-only by design: the embedding model must not compete for VRAM with
+      # the agent model.
+      envSeq.add "GGML_VULKAN_DISABLE=1"
+
+  var cargs = allocCStringArray(argv)
+  var cenv = allocCStringArray(envSeq)
+
   let pid = fork()
   if pid < 0:
+    deallocCStringArray(cargs)
+    deallocCStringArray(cenv)
     return 0
   if pid == 0:
-    # Child. Detach from the controlling terminal so the backend survives this
-    # process exiting, then point stdout and stderr at the log before exec.
+    # Child. Nothing below allocates. Detach from the controlling terminal so
+    # the backend survives this process exiting, then point stdout and stderr at
+    # the log before exec.
     discard setsid()
     let fd = posix.open(logPath.cstring,
                         O_WRONLY or O_CREAT or O_APPEND, 0o644.Mode)
@@ -248,21 +369,15 @@ proc start*(l: Lifecycle, be: Backend): int =
       if fd > 2: discard posix.close(fd)
     discard posix.close(0)
 
-    let libDir = l.paths.llamaLibDir
-    if dirExists(libDir):
-      let existingPath = getEnv("LD_LIBRARY_PATH")
-      putEnv("LD_LIBRARY_PATH",
-             if existingPath.len > 0: libDir & ":" & existingPath else: libDir)
-    if be == beEmbed:
-      # CPU-only by design: the embedding model must not compete for VRAM with
-      # the agent model.
-      putEnv("GGML_VULKAN_DISABLE", "1")
-
-    var cargs = allocCStringArray(argv)
-    discard execv(binary.cstring, cargs)
-    # Only reached if execv failed; the parent already has the pid, so exiting
+    discard execve(binary.cstring, cargs, cenv)
+    # Only reached if execve failed; the parent already has the pid, so exiting
     # non-zero is what makes the failure visible to the next status check.
     quit(127)
+
+  # Parent only. The child either replaced its image or exited, so neither array
+  # is reachable from it any more.
+  deallocCStringArray(cargs)
+  deallocCStringArray(cenv)
 
   try:
     writeFile(pidFileFor(l, be), $pid)
