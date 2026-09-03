@@ -372,7 +372,17 @@ proc start*(l: Lifecycle, be: Backend): int =
     discard execve(binary.cstring, cargs, cenv)
     # Only reached if execve failed; the parent already has the pid, so exiting
     # non-zero is what makes the failure visible to the next status check.
-    quit(127)
+    #
+    # Action purpose: **`exitnow`, not `quit`, and this is the same defect as
+    # the one the block above exists to fix.** `quit` runs the procedures
+    # registered with `addExitProc` in LIFO order and flushes the C streams;
+    # in a forked child of a multithreaded process those handlers run against
+    # state inherited mid-mutation from threads that do not exist here, which
+    # is a deadlock in exactly the situation this path already represents — a
+    # failure. `exitnow` is Nim's binding for `_exit(2)`: immediate
+    # termination, no handlers, no flush. E-02 hoisted every allocation out of
+    # the child and then left the one call that undoes the point of it.
+    posix.exitnow(127)
 
   # Parent only. The child either replaced its image or exited, so neither array
   # is reachable from it any more.

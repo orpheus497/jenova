@@ -92,11 +92,16 @@ Both are bounded, and neither was before — see `.devdocs/03-error-memory-wirin
 | Path | Holds | Bound |
 |---|---|---|
 | `~/Jenova/var/log/llama-server.log`, `llama-embed.log` | Each backend's stdout and stderr | Rotated to `.log.1` when it passes 8 MB, at the next backend start. One previous generation is kept |
-| `~/Jenova/var/cache/attach-*` | Images decoded for thumbnails and previews, named for the digest of their own bytes | Swept oldest-first to 256 MB when the desktop application starts. **Only files named `attach-*` are ever removed** |
+| `~/Jenova/var/cache/attachments/` | Images decoded for thumbnails and previews (`attach-<sha256>`) and images taken off the clipboard (`pasted-<time>.png`) | Swept oldest-first to 256 MB when the desktop application starts |
 
 Neither is rotated or swept while running: a log is rotated only at a start, because that is the
 one moment no descriptor is open on it, and the cache is swept only at startup, because statting a
 directory on the path that decodes a thumbnail would put filesystem work inside a redraw.
+
+The sweep deletes only from the `attachments/` subdirectory, which Jenova creates for itself, and
+only files carrying one of its own two name prefixes. `CACHE_DIR` is yours to point wherever you
+like, and a filename is not ownership — so nothing outside that subdirectory is ever a candidate,
+whatever it is called.
 
 ### Self-tests
 

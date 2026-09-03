@@ -99,14 +99,27 @@ proc resolve*(root = ""): Paths =
     result.llamaLibDir = r / "external" / "ext_bin" / "bin"
 
 const
-  CachePrefix* = "attach-"
-    ## The prefix `gui.attachmentPixbuf` gives every file it decodes into the
-    ## cache directory. **The sweep matches on it and nothing else**, which is
-    ## the whole safety property here: `cacheDir` is a path derived from an
-    ## environment variable, and a sweep that deleted whatever it found would be
-    ## `scripts/cleanup.sh` deleting `/var/cache` again — the defect (B-07) this
-    ## module exists to make impossible. A file this program did not write is
-    ## never a candidate.
+  AttachCacheDir* = "attachments"
+    ## The subdirectory of `cacheDir` that Jenova writes decoded attachments and
+    ## pasted images into, and the only directory the sweep will ever delete
+    ## from.
+    ##
+    ## **The prefix allowlist below is not sufficient on its own, and this is
+    ## the fix for that.** `CACHE_DIR` is operator-configurable, so a sweep that
+    ## matched only on a filename could delete an unrelated file that happened
+    ## to be called `attach-…` in whatever directory the operator pointed it at.
+    ## A name is not ownership. A directory this program creates for itself is.
+    ##
+    ## Both are kept: the subdirectory establishes ownership, the prefixes are
+    ## defence in depth. The failure this guards against is `scripts/cleanup.sh`
+    ## deleting `/var/cache` (B-07), which is the defect this module exists to
+    ## make impossible.
+  CachePrefixes* = ["attach-", "pasted-"]
+    ## `gui.attachmentPixbuf` writes `attach-<sha256>` for every image it
+    ## decodes; `gui.onPasted` writes `pasted-<epoch>.png` for every image taken
+    ## off the clipboard. **The second was accumulating with nothing sweeping
+    ## it** — the first sweep matched only `attach-`, so pasted images grew
+    ## without bound in the same directory the sweep was walking.
   MaxCacheBytes* = 256 * 1024 * 1024
     ## M-02. The ceiling on the decoded-attachment cache.
     ##
@@ -121,9 +134,18 @@ const
     ## later view is a hit. This bounds the growth without throwing away the
     ## working set.
 
+## Function purpose: the directory Jenova owns for decoded attachments and
+## pasted images. Derived here rather than in the window, so the writer and the
+## sweeper cannot disagree about where it is.
+proc attachCacheDir*(p: Paths): string = p.cacheDir / AttachCacheDir
+
 ## Function purpose: keep the decoded-attachment cache under `maxBytes`, oldest
 ## first (M-02). Returns how many files were removed and how many bytes that
 ## reclaimed.
+##
+## **`dir` must be the directory from `attachCacheDir`, never `cacheDir`
+## itself.** See `AttachCacheDir`: the subdirectory is what establishes that
+## these files are Jenova's to delete.
 ##
 ## Action purpose: **oldest by modification time, and the ordering is the
 ## point.** The cache is content-addressed, so a file that is still being looked
@@ -145,7 +167,12 @@ proc sweepCache*(dir: string, maxBytes: int64 = MaxCacheBytes):
   var total = 0'i64
   for kind, path in walkDir(dir):
     if kind != pcFile: continue
-    if not path.extractFilename.startsWith(CachePrefix): continue
+    var owned = false
+    for prefix in CachePrefixes:
+      if path.extractFilename.startsWith(prefix):
+        owned = true
+        break
+    if not owned: continue
     var size = 0'i64
     var mtime: Time
     try:

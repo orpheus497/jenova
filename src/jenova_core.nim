@@ -58,7 +58,7 @@ proc usage() =
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
   echo "              models-selftest, fs-selftest, composer-selftest,"
-  echo "              convmd-selftest"
+  echo "              convmd-selftest, lifecycle-selftest, relay-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -2440,9 +2440,10 @@ proc main() =
         # `cacheDir` comes from an environment variable, and a sweep that took
         # whatever it found is B-07 — `scripts/cleanup.sh` deleting
         # `/var/cache` — reintroduced.
-        let cdir = getTempDir() / "jenova-sweep-" & $getCurrentProcessId()
+        let root = getTempDir() / "jenova-sweep-" & $getCurrentProcessId()
+        let cdir = root / paths.AttachCacheDir
         createDir(cdir)
-        defer: removeDir(cdir)
+        defer: removeDir(root)
 
         proc put(name: string, bytes: int, ageSeconds: int) =
           let f = cdir / name
@@ -2451,16 +2452,20 @@ proc main() =
           # whatever order the directory happens to be walked in.
           setLastModificationTime(f, getTime() - initDuration(seconds = ageSeconds))
 
-        put(paths.CachePrefix & "oldest", 4000, 300)
-        put(paths.CachePrefix & "middle", 4000, 200)
-        put(paths.CachePrefix & "newest", 4000, 100)
+        put("attach-oldest", 4000, 300)
+        put("pasted-middle.png", 4000, 200)
+        put("attach-newest", 4000, 100)
         # Two files this program did not write. Neither may ever be touched.
         writeFile(cdir / "notes.md", "a document that happens to live here")
         writeFile(cdir / "jenova.db", "not ours to delete")
+        # A file with an owned *name* but outside the owned directory. `CACHE_DIR`
+        # is operator-configurable, so a sweep that trusted the filename alone
+        # could reach this — which is why the sweep takes the subdirectory.
+        writeFile(root / "attach-not-ours", "in the parent, not Jenova's")
 
         let under = paths.sweepCache(cdir, 1_000_000)
         check("a cache under its cap is left entirely alone",
-              under.removed == 0 and fileExists(cdir / paths.CachePrefix & "oldest"))
+              under.removed == 0 and fileExists(cdir / "attach-oldest"))
 
         let swept = paths.sweepCache(cdir, 9000)
         check("a cache over its cap is pruned", swept.removed >= 1,
@@ -2468,16 +2473,25 @@ proc main() =
         check("and it reports what it reclaimed", swept.freed >= 4000'i64,
               "freed " & $swept.freed)
         check("the oldest file goes first",
-              not fileExists(cdir / paths.CachePrefix & "oldest"))
+              not fileExists(cdir / "attach-oldest"))
         check("the newest file survives",
-              fileExists(cdir / paths.CachePrefix & "newest"))
+              fileExists(cdir / "attach-newest"))
 
-        # The assertion that matters most in this block.
+        # The two assertions that matter most in this block.
         check("a file this program did not write is never removed",
               fileExists(cdir / "notes.md") and fileExists(cdir / "jenova.db"))
+        check("an owned name outside the owned directory is never removed",
+              fileExists(root / "attach-not-ours"))
+
+        # A pasted image is swept too. It was not before: the first version of
+        # this sweep matched only `attach-`, so clipboard pastes accumulated in
+        # the very directory it was walking.
+        check("pasted images are swept as well as decoded attachments",
+              paths.CachePrefixes.len == 2 and
+              paths.CachePrefixes[1] == "pasted-")
 
         check("sweeping a directory that does not exist is a no-op",
-              paths.sweepCache(cdir / "absent", 1).removed == 0)
+              paths.sweepCache(root / "absent", 1).removed == 0)
 
       block rotation:
         # M-04. The log was appended to for ever and nothing anywhere deleted
@@ -3870,6 +3884,69 @@ proc main() =
         db.exec("DELETE FROM messages WHERE id LIKE 'ragtest-%'", [])
         rag.forgetConversation(ConvA)
         rag.forgetConversation(ConvB)
+
+      block pathFilterInSql:
+        # This suite counts `failures` directly rather than through a `check`
+        # helper; a local one keeps the assertions below readable.
+        proc check(label: string, cond: bool, detail = "") =
+          if cond: echo "  ok   ", label
+          else:
+            echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+            inc failures
+
+        # The scoped-search predicate now runs **in SQL, before** the
+        # `MaxVectorScan` ceiling. With it applied only in Nim afterwards, the
+        # LIMIT took the newest rows globally and the filter then discarded
+        # them — so a scoped search whose documents were older than the ceiling
+        # found nothing while its vectors sat in the table.
+        #
+        # Asserted against the database rather than through `rag.query`,
+        # because the semantic branch needs a live embedding server and this
+        # predicate is the part that can be wrong without one.
+        rag.forgetFile("proj/a.nim")
+        rag.forgetFile("proj/sub/b.nim")
+        rag.forgetFile("projector/c.nim")
+        rag.forgetFile("other/d.nim")
+        rag.forgetFile("100%/e.nim")
+        for path in ["proj/a.nim", "proj/sub/b.nim", "projector/c.nim",
+                     "other/d.nim", "100%/e.nim"]:
+          discard rag.indexContent(path, "shared body text for the filter test")
+
+        proc scoped(filter: string): seq[string] =
+          for row in db.query(
+              "SELECT DISTINCT path FROM rag_chunks WHERE " &
+              "(? = '' OR path = ? OR substr(path, 1, length(?) + 1) = ? || '/')" &
+              " ORDER BY path", filter, filter, filter, filter):
+            if row.len > 0: result.add row[0]
+
+        let all = scoped("")
+        check("an empty filter matches every path", all.len >= 5,
+              $all.len & ": " & all.join(", "))
+
+        let underProj = scoped("proj")
+        check("a directory filter matches its own subtree",
+              "proj/a.nim" in underProj and "proj/sub/b.nim" in underProj,
+              underProj.join(", "))
+        # The reason the predicate is a boundary test and not a bare prefix.
+        check("and does NOT match a sibling whose name merely starts the same",
+              "projector/c.nim" notin underProj, underProj.join(", "))
+        check("and does not match an unrelated tree",
+              "other/d.nim" notin underProj, underProj.join(", "))
+
+        let exact = scoped("proj/a.nim")
+        check("an exact path filter matches that file",
+              exact == @["proj/a.nim"], exact.join(", "))
+
+        # The reason it is `substr` and not `LIKE`: `%` and `_` are ordinary
+        # characters in a path and wildcards to LIKE, so a LIKE-based filter
+        # would silently widen the scope.
+        let pct = scoped("100%")
+        check("a path containing a LIKE wildcard is matched literally",
+              pct == @["100%/e.nim"], pct.join(", "))
+
+        for path in ["proj/a.nim", "proj/sub/b.nim", "projector/c.nim",
+                     "other/d.nim", "100%/e.nim"]:
+          rag.forgetFile(path)
 
       block packedDotProduct:
         # M-03. `query` scored every candidate as `dot(qv, unpackVec(blob))`,

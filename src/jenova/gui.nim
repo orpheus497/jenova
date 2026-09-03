@@ -1621,6 +1621,11 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
     db.exec("UPDATE conversations SET workspaceId=?, projectId=?, folderId=? WHERE id=?",
             [wsId, projId, folderId, id])
   app.reloadTree()
+  # M-01: the other point at which a rendered conversation is replaced.
+  # `newChat` does not go through `selectConversation`, so without this the
+  # memos keep every message of the conversation just left until the caps
+  # eventually push them out — which is a bound, not a release.
+  clearRenderMemos()
   app.convId = id
   app.messages = @[]
   app.allMessages = @[]
@@ -1962,9 +1967,13 @@ proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
   except CatchableError: return nil
   # The digest here is on the miss path only — once per attachment per size, not
   # once per frame — and names the file so identical images share one.
-  let file = app.p.cacheDir / "attach-" & sha256.sha256(bytes)
+  # A subdirectory Jenova owns, not `cacheDir` itself: `CACHE_DIR` is
+  # operator-configurable, and `paths.sweepCache` deletes from here. A filename
+  # prefix is not ownership — see `paths.AttachCacheDir`.
+  let dir = app.p.attachCacheDir
+  let file = dir / "attach-" & sha256.sha256(bytes)
   try:
-    createDir(app.p.cacheDir)
+    createDir(dir)
     if not fileExists(file): writeFile(file, bytes)
     result = loadPixbuf(file, size, size, preserveAspectRatio = true)
     if not thumbCache.hasKey(key):
@@ -3165,6 +3174,15 @@ proc messageStats(app: AppState, idx: int, m: Message): Widget =
 ## Opened rather than merely listed: a fork is made in order to carry on in it,
 ## and leaving the user on the original is the opposite of what they asked for.
 proc forkFrom(app: AppState, sourceId, atMessageId: string) =
+  # Action purpose: **the guard is here and not on the buttons, because one of
+  # the two callers had no guard at all.** The per-message fork is drawn
+  # `sensitive = not app.streaming`; the sidebar's fork row is not, so mid-
+  # generation it reached this proc, created the fork in the database, and then
+  # `selectConversation` refused to open it — leaving a conversation the user
+  # never sees and a "forked" notice for something that did not appear to
+  # happen. Refusing at the one place both callers pass through cannot drift
+  # the way two `sensitive` expressions can.
+  if app.streaming: return
   let (ok, newId, msg) = api.forkConversation(sourceId, atMessageId, "")
   if not ok:
     app.notice = "fork failed: " & msg
@@ -5184,7 +5202,7 @@ proc run*(withTray = true, checkOnly = false) =
   #
   # Deliberately silent. A cache that cannot be pruned is not a reason to refuse
   # to open the window, and there is no window yet to say it in.
-  discard paths.sweepCache(p.cacheDir)
+  discard paths.sweepCache(p.attachCacheDir)
   rag.initSchema()
   rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
   # `Editor:` reads whatever is open in the editor listening here. Configured
@@ -5213,7 +5231,9 @@ proc run*(withTray = true, checkOnly = false) =
   sourceview.installScheme(p.state / "styles")
   # G-30: the clipboard callback is a bare C function and cannot be handed the
   # paths object, so where a pasted image is written is set once, here.
-  pasteDir = p.cacheDir
+  # The same owned subdirectory the decoder writes to, so pasted images are
+  # swept too — they were accumulating with nothing removing them.
+  pasteDir = p.attachCacheDir
   # Action purpose: `--check` stops short of everything that touches the
   # machine. It still builds the **whole** widget tree under a real GTK, which
   # is the half a compile cannot see — see the note above `brew` below.

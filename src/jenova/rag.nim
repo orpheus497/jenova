@@ -531,9 +531,28 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
     # query is reproducible; a bare `Table` would hand the caller an
     # unspecified order and make two identical queries disagree on ties.
     var at = initTable[string, int]()
+    # Action purpose: **the path filter belongs in the SQL, before the ceiling,
+    # not after it.** `passesFilter` below runs on the rows this query already
+    # returned, so with the filter applied only in Nim the `LIMIT` selects the
+    # newest `MaxVectorScan` rows *globally* and the filter then discards most
+    # of them — a scoped search whose documents happen to be older than 50,000
+    # other chunks would find nothing at all while its vectors sat in the table.
+    # Pushing the predicate down makes the ceiling a bound on the *candidate*
+    # rows rather than on the whole index.
+    #
+    # `substr` rather than `LIKE`: a path containing `%` or `_` is an ordinary
+    # path and a wildcard to `LIKE`, which would silently widen the scope. The
+    # empty-filter case is tested first so an unscoped query still scans
+    # normally. `passesFilter` is kept below as the final check — this is a
+    # narrowing of what is read, not a replacement for it.
+    let pf = pathFilter
     for (cols, blob) in db.queryBlob(
         "SELECT path, start_line, vec FROM rag_chunks WHERE vec IS NOT NULL " &
-        "ORDER BY rowid DESC LIMIT ?", $MaxVectorScan):
+        "AND (? = '' OR path = ? OR substr(path, 1, length(?) + 1) = ? || '/') " &
+        # The ceiling is a compile-time constant, not input, so it is written
+        # into the statement rather than bound: SQLite's LIMIT wants an integer
+        # and this driver binds every parameter as text.
+        "ORDER BY rowid DESC LIMIT " & $MaxVectorScan, pf, pf, pf, pf):
       if cols.len < 2 or blob.len == 0: continue
       let s = dotBlob(qv, blob)
       if s <= SemanticFloor: continue
