@@ -444,22 +444,46 @@ proc start*(l: Lifecycle, be: Backend): int =
   deallocCStringArray(cargs)
   deallocCStringArray(cenv)
 
-  var execErr: cint = 0
+  var
+    execErr: cint = 0
+    handshakeLost = false
   discard posix.close(efd[1])
-  # Blocks only until `execve` resolves either way: on success the close-on-exec
-  # descriptor is closed for us and this reads zero.
-  if posix.read(efd[0], addr execErr, sizeof(cint)) <= 0: execErr = 0
+  # Only three answers are meaningful: a whole `errno` means `execve` failed, an
+  # end of file means the close-on-exec descriptor went with a successful one,
+  # and `EINTR` means neither yet. Anything else — a short read, a real error —
+  # says the handshake itself broke, and a broken handshake is not evidence the
+  # backend started. Treating it as success is the defect this exists to close,
+  # pointed the other way.
+  while true:
+    let n = posix.read(efd[0], addr execErr, sizeof(cint))
+    if n == sizeof(cint): break
+    if n == 0:
+      execErr = 0
+      break
+    if n < 0 and errno == EINTR: continue
+    execErr = 0
+    handshakeLost = true
+    break
   discard posix.close(efd[0])
 
-  if execErr != 0:
-    # No pid file: the process is gone, and a file naming it would send `stop`
-    # and the watchdog after a pid the system is free to reissue.
+  if execErr != 0 or handshakeLost:
+    # No pid file: the process is gone, or is one this call cannot vouch for,
+    # and a file naming it would send `stop` and the watchdog after a pid the
+    # system is free to reissue.
+    #
+    # The kill is for the lost-handshake case only. A child that reported its
+    # `errno` has already called `_exit`, so the wait returns at once; one whose
+    # handshake broke may be running perfectly well, and waiting on it without
+    # ending it would block this worker for the life of the backend.
+    if handshakeLost:
+      discard kill(Pid(pid), SIGKILL)
     var status: cint = 0
     discard waitpid(Pid(pid), status, 0)
     try:
       let f = open(logPath, fmAppend)
       f.write(&"[{now()}] jenova-core could not exec {binary}: " &
-              $strerror(execErr) & "\n")
+              (if handshakeLost: "start handshake failed"
+               else: $strerror(execErr)) & "\n")
       f.close()
     except IOError, OSError:
       discard

@@ -20,14 +20,14 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NIM=${NIM:-nim}
-FLAGS="-d:gtkminor=10 -d:gtk48 -d:adwminor=4 --mm:arc --hints:off"
+set -- -d:gtkminor=10 -d:gtk48 -d:adwminor=4 --mm:arc --hints:off
 
 case $("$NIM" --version | head -1) in
   *"Version 2."*) ;;
   *) echo "gui_check: needs Nim 2 (owlkettle's =destroy signatures)"; exit 1 ;;
 esac
 
-[ -n "${OWLKETTLE:-}" ] && FLAGS="$FLAGS --path:$OWLKETTLE"
+[ -n "${OWLKETTLE:-}" ] && set -- "$@" "--path:$OWLKETTLE"
 
 if [ "$(uname -s)" = "FreeBSD" ]; then
   SRC=$ROOT
@@ -44,7 +44,7 @@ else
 fi
 
 cd "$SRC"
-out=$("$NIM" check $FLAGS --path:src src/jenova_gui.nim 2>&1) || true
+out=$("$NIM" check "$@" --path:src src/jenova_gui.nim 2>&1) || true
 echo "$out" | grep -vE "^Hint|UnusedImport" || true
 
 if echo "$out" | grep -q "Error:"; then
