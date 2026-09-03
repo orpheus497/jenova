@@ -3318,6 +3318,7 @@ proc main() =
         badj["custom"] = "{not json"
         check("malformed custom JSON is refused before it is stored",
               not settings.validate(badj).ok)
+
         check("a well-formed set validates", settings.validate(cst).ok)
 
         # A scratch file, never `p.state / "settings.json"` — a self-test that
@@ -3327,12 +3328,53 @@ proc main() =
               settings.loadFrom(sf).get("temperature") == "0.35")
         removeFile(sf)
 
+      # Action purpose: the whole risk in this setting is that it becomes a
+      # switch wired to nothing. `llama-server` has no thinking parameter, so a
+      # JSON key of that name would be accepted, ignored and indistinguishable
+      # from a working control — which is why what is asserted here is that the
+      # instruction reaches the system message and that no field reaches the wire.
+      block thinkingIsADirectiveAndNotAWireField:
+        let turn = %*[{"role": "user", "content": "hi"}]
+        var think = settings.initSettings()
+        think["useThinking"] = "1"
+        let on = parseJson(pipeline.chatBody(turn, opts = think))
+        check("the directive reaches the system message",
+              on["messages"][0]["role"].getStr == "system" and
+              "<think>" in on["messages"][0]["content"].getStr,
+              $on["messages"][0])
+        check("and no request field of that name is sent",
+              not on.hasKey("useThinking") and not on.hasKey("thinking"))
+        check("the user's own turn is untouched and still last",
+              on["messages"][^1]["content"].getStr == "hi")
+
+        let off = parseJson(pipeline.chatBody(
+          %*[{"role": "user", "content": "hi"}]))
+        check("off, nothing is added at all",
+              off["messages"].len == 1 and
+              off["messages"][0]["role"].getStr == "user")
+
+        # An existing system message is extended, never replaced: the standing
+        # instruction is the user's and the directive is this program's.
+        let kept = parseJson(pipeline.chatBody(
+          %*[{"role": "system", "content": "KEEP ME"},
+             {"role": "user", "content": "q"}], opts = think))
+        check("an existing system message survives the directive",
+              kept["messages"].len == 2 and
+              "KEEP ME" in kept["messages"][0]["content"].getStr and
+              "<think>" in kept["messages"][0]["content"].getStr)
+
       # Action purpose: the parity claim itself, asserted rather than stated.
       # "1:1 with the Web UI" is the kind of thing that is true on the day it is
       # written and quietly false a month later. The list below is
       # `jca_web`'s `ChatSettings.svelte` `settingSections`, in its order, minus
       # the three `settings.OmittedFields` records — so if a field is dropped,
       # renamed or silently added, this goes red and names it.
+      #
+      # Action purpose: `showSystemMessage` and `useThinking` are on the list
+      # even though that component does not draw them. They are keys of
+      # `settings-config.ts` all the same, drawn by `ChatSettingsFields.svelte`
+      # instead, and taking one component for the whole surface is what let two
+      # Web UI settings read as absent from it.
       block settingsParityWithTheWebUi:
         let turn2 = %*[{"role": "user", "content": "hi"}]
         var themed = settings.initSettings()
@@ -3341,9 +3383,10 @@ proc main() =
           # General
           "theme", "systemMessage", "pasteLongTextToFileLen",
           "copyTextAttachmentsAsPlainText", "enableContinueGeneration",
-          "pdfAsImage", "askForTitleConfirmation",
+          "pdfAsImage", "askForTitleConfirmation", "useThinking",
           # Display
-          "showMessageStats", "showThoughtInProgress", "keepStatsVisible",
+          "showMessageStats", "showThoughtInProgress", "showSystemMessage",
+          "keepStatsVisible",
           "autoMicOnEmpty", "renderUserContentAsMarkdown",
           "fullHeightCodeBlocks", "disableAutoScroll",
           "alwaysShowSidebarOnDesktop", "autoShowSidebarOnNewChat",

@@ -80,6 +80,16 @@ const
                      "It is placed beneath Jenova's own persona rather than " &
                      "replacing it, so it adds to the behaviour instead of " &
                      "fighting it. Leave empty for no standing instruction."),
+    # Action purpose: `inRequest` stays false because `llama-server` has no
+    # thinking parameter. It is carried as a directive appended to the system
+    # message by `pipeline.chatBody`, which is the only place it can have an
+    # effect; a JSON key of this name would be a switch wired to nothing.
+    SettingDef(key: "useThinking", label: "Ask the model to reason first",
+               section: ssGeneral, kind: skBool, boolDefault: false,
+               help: "Adds a standing instruction to think the answer through " &
+                     "inside <think> tags before giving it. Useful on a model " &
+                     "that does not reason by default; on one that already " &
+                     "does it changes nothing but the length of the prompt."),
     SettingDef(key: "pasteLongTextToFileLen",
                label: "Paste long text to file length",
                section: ssGeneral, kind: skInt, appDefault: "2500",
@@ -133,6 +143,13 @@ const
                help: "Keep a reasoning model's Reasoning box open by default. " &
                      "It already opens while a turn is streaming and whenever " &
                      "the answer itself is empty; this makes it open always."),
+    SettingDef(key: "showSystemMessage",
+               label: "Show the system message", section: ssDisplay,
+               kind: skBool, boolDefault: true,
+               help: "Draw system turns in the transcript. On, because a " &
+                     "standing instruction you cannot see is a standing " &
+                     "instruction you cannot debug. Off hides the row only — " &
+                     "the message is still sent."),
     SettingDef(key: "keepStatsVisible",
                label: "Keep stats visible after generation",
                section: ssDisplay, kind: skBool, boolDefault: false,

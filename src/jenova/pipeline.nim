@@ -450,6 +450,28 @@ proc cacheCount*(): int =
   except CatchableError:
     0
 
+const ThinkingDirective* =
+  "\n\n[THINKING LOGIC]: You must provide a deep reasoning process before " &
+  "answering. Wrap your reasoning strictly inside <think> and </think> tags. " &
+  "Then provide the final answer."
+  ## Worded identically to the Web UI's, so the same setting asks the model for
+  ## the same thing on both surfaces rather than for two similar things.
+
+## Function purpose: the one way a standing block joins the outbound turn, so a
+## second block cannot be added by a path that inserts its own system message
+## and leaves the first one buried mid-conversation.
+##
+## Action purpose: stripped only when it opens a fresh system message. Appended
+## to an existing one the leading blank line is the separator, and removing it
+## would run the block onto the end of the user's own instruction.
+proc appendToSystem*(messages: JsonNode, text: string) =
+  if text.len == 0 or messages.kind != JArray: return
+  if messages.len > 0 and messages[0].kind == JObject and
+     messages[0]{"role"}.getStr == "system":
+    messages[0]["content"] = %(messages[0]{"content"}.getStr & text)
+  else:
+    messages.elems.insert(%*{"role": "system", "content": text.strip}, 0)
+
 ## Function purpose: the request body the window posts for one chat turn, built
 ## below the widget layer so a self-test can read it. A body that is subtly wrong
 ## does not fail to compile and does not fail a suite — it fails at the server,
@@ -474,13 +496,13 @@ proc chatBody*(messages: JsonNode, continuing = false,
   # Action purpose: the workspace's notes and files go into the system message
   # here rather than in `prepare`, because that is handed a body and never
   # learns which conversation it belongs to.
-  if wsContext.len > 0 and messages.kind == JArray:
-    let block1 = "\n\n" & workspace.ContextHeading & "\n" & wsContext
-    if messages.len > 0 and messages[0].kind == JObject and
-       messages[0]{"role"}.getStr == "system":
-      messages[0]["content"] = %(messages[0]{"content"}.getStr & block1)
-    else:
-      messages.elems.insert(%*{"role": "system", "content": block1.strip}, 0)
+  if wsContext.len > 0:
+    appendToSystem(messages, "\n\n" & workspace.ContextHeading & "\n" & wsContext)
+  # Action purpose: a directive and not a request field, because no backend
+  # parameter turns reasoning on. The Web UI reaches the same behaviour the same
+  # way, so a turn asks for thinking in identical words on either surface.
+  if opts.getBool("useThinking"):
+    appendToSystem(messages, ThinkingDirective)
   var req = %*{"messages": messages, "stream": true,
                "timings_per_token": true,
                "reasoning_format": settings.reasoningFormat(opts)}

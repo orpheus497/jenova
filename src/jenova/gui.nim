@@ -4272,8 +4272,16 @@ proc mainArea(app: AppState): Widget =
               # a shorter conversation asks for a row that no longer exists.
               # This runs inside a `cdecl` callback, where an `IndexDefect`
               # has no useful place to go.
+              # Action purpose: a hidden system turn is an empty row here and
+              # never a shorter `app.messages`. The list is indexed straight
+              # into that seq and `deleteMessage`, `saveEdit` and `forkFrom` all
+              # take the same index, so filtering the seq would silently retarget
+              # every one of them at the wrong message. A Box with no children
+              # requests no size, so the row it leaves behind takes none.
               proc viewItem(index: int): Widget =
-                if index >= 0 and index < app.messages.len:
+                if index >= 0 and index < app.messages.len and
+                   (app.messages[index].role != rSystem or
+                    app.opts.getBool("showSystemMessage")):
                   app.messageCard(index, app.messages[index])
                 else:
                   gui: Box()
