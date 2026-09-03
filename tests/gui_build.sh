@@ -569,10 +569,31 @@ have import && have convert && have xwininfo && have xdotool && have xclip && ha
 run_check || { echo "gui_build: FAIL (--check)"; exit 1; }
 
 echo "gui_build: running the window"
-# A port of its own, so the run cannot collide with a server the developer has
-# up. `--no-tray` because a StatusNotifierWatcher is a desktop service and its
+# `JENOVA_PORT` and not `PORT`, which is the name the configuration file
+# *writes*: `etc/jenova.conf:39` is `PORT="${JENOVA_PORT:-8080}"`, so a bare
+# `PORT` in the environment is unconditionally replaced by 8080 the moment the
+# conf is read. A run set that way bound the developer's real port while a
+# comment here claimed it had one of its own — and two gates run at once, or a
+# gate run beside a live `jenova`, then fought over 8080. The seeding server
+# above already uses the working name; this is the same spelling.
+RUN_PORT=18787
+# Asserted rather than assumed, because the failure above was silent: the window
+# came up, bound the wrong port and passed. `jenova-core config` resolves the
+# same file the window does, so a future divergence between the conf's variable
+# names and this script's fails here instead of in the developer's live server.
+CONF_PORT=$(JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_PORT="$RUN_PORT" \
+  "$OUT/jenova-core" config 2>/dev/null | sed -n 's/^PORT=//p')
+if [ "$CONF_PORT" != "$RUN_PORT" ]; then
+  echo "gui_build: asked for port $RUN_PORT and the configuration resolves" \
+       "$CONF_PORT — the window would bind a port this run does not own."
+  echo "gui_build: check etc/jenova.conf against the variables set here."
+  echo "gui_build: FAIL"
+  exit 1
+fi
+# `--no-tray` because a StatusNotifierWatcher is a desktop service and its
 # absence is not this script's subject.
-JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 CANVAS=0 PORT=18787 \
+JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 CANVAS=0 \
+  JENOVA_PORT="$RUN_PORT" \
   "$OUT/jenova" --no-tray >"$OUT/run.log" 2>&1 &
 GPID=$!
 # Long enough for the window to map and paint its first frame. The three worker
