@@ -2762,6 +2762,70 @@ proc main() =
       check("an attachment is refused mid-stream too",
             not composer.canSend("", 1, true))
 
+      block longPaste:
+        # W-01. `pasteLongTextToFileLen` was drawn, validated, saved and read by
+        # **nothing**, and the reason it named — "attachments, PLANS.md Step 7b"
+        # — had shipped long before. What it actually waited on was somewhere to
+        # put the decision: GTK pastes into the composer's `GtkTextView`
+        # directly, so the window never sees a paste, only a large single
+        # insertion in a `changed` on the buffer.
+        const T = 100
+        let long = repeat('x', 250)
+
+        block divertsAPaste:
+          let r = composer.classifyInsertion("before after", "before " & long & "after", T)
+          check("a long paste is diverted", r.divert)
+          check("the pasted run is recovered exactly", r.inserted == long,
+                $r.inserted.len & " chars")
+          check("and the draft keeps what was already typed",
+                r.remaining == "before after", "[" & r.remaining & "]")
+
+        block leavesTypingAlone:
+          let r = composer.classifyInsertion("hell", "hello", T)
+          check("a keystroke is not a paste", not r.divert)
+          check("and the draft is unchanged", r.remaining == "hello")
+
+        block shortPaste:
+          let r = composer.classifyInsertion("", "a short paste", T)
+          check("a paste under the threshold stays in the box", not r.divert)
+
+        block disabled:
+          let r = composer.classifyInsertion("", long, 0)
+          check("0 disables the rule, which is the Web UI's own convention",
+                not r.divert)
+          check("and the text stays in the draft", r.remaining == long)
+
+        block deletion:
+          let r = composer.classifyInsertion(long, "", T)
+          check("deleting a long run is not a paste", not r.divert)
+
+        block replacement:
+          let prev = repeat('y', 300)
+          let r = composer.classifyInsertion(prev, "short", T)
+          check("replacing a selection with something shorter is not a paste",
+                not r.divert)
+          # A replacement that still grows past the threshold IS a paste: the
+          # user pasted a long run over a selection, and the run is what should
+          # be attached rather than the net difference.
+          let over = composer.classifyInsertion("keep " & repeat('y', 50) & " end",
+                                                "keep " & long & " end", T)
+          check("pasting over a selection diverts the pasted run, not the delta",
+                over.divert and over.inserted == long,
+                $over.inserted.len & " chars")
+          check("and the surviving text is what was outside the selection",
+                over.remaining == "keep  end", "[" & over.remaining & "]")
+
+        block emptyDraft:
+          let r = composer.classifyInsertion("", long, T)
+          check("a paste into an empty draft is diverted", r.divert)
+          check("and leaves the draft empty", r.remaining == "")
+
+        block naming:
+          let a = composer.pastedFileName(1)
+          let b = composer.pastedFileName(2)
+          check("two pastes cannot collide on a name", a != b)
+          check("and the name says it is text", a.endsWith(".txt"))
+
       if bad == 0:
         echo ""
         echo "composer-selftest: PASS"

@@ -114,11 +114,6 @@ The self-tests are this project's assertion base. Each exits 0 on PASS and 1 on 
 `nimble suites` runs is declared in `jenova_core.nimble` — a self-test that is not in that list is
 one nothing runs.
 
-> `db-selftest` measures how much of a reader's run overlapped a concurrent writer and fails below
-> 25%. That is a wall-clock measurement, so it can fail on a heavily loaded or single-core machine
-> without anything being wrong with the database layer. Re-run it before treating a failure there
-> as real.
-
 ---
 
 ## Models

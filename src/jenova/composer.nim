@@ -57,3 +57,67 @@ proc actionFor*(keyval, modifiers: uint32): ComposerAction =
 ## put a second one.
 proc canSend*(text: string, attachments: int, streaming: bool): bool =
   not streaming and (text.len > 0 or attachments > 0)
+
+# ---------------------------------------------------------------------------
+# Long paste (W-01)
+# ---------------------------------------------------------------------------
+
+type
+  Insertion* = object
+    ## What one `changed` event on the composer's buffer did, as far as the
+    ## long-paste rule cares.
+    divert*: bool       ## the inserted run is long enough to become a file
+    inserted*: string   ## the run that appeared
+    remaining*: string  ## what the draft should be left holding
+
+## Function purpose: decide whether a change to the composer was a paste big
+## enough to become an attachment, and split it if so (W-01,
+## `pasteLongTextToFileLen`).
+##
+## **The setting was drawn, validated, saved and read by nothing.** Its stated
+## blocker — "attachments, PLANS.md Step 7b" — had shipped in full long before;
+## what it actually waited on was somewhere to put the decision, because
+## `DraftView` owns a `GtkTextView` and GTK pastes into it directly, so the
+## window never sees a "paste" event at all. It sees a `changed` on the buffer.
+##
+## Action purpose: **so the paste is recovered by diffing, not by intercepting.**
+## A paste is a single contiguous insertion, which means `next` is `prev` with
+## one run spliced in — recoverable exactly from the longest common prefix and
+## the longest common suffix around it. That is O(n) on the draft, which is a
+## message box rather than a document, and it needs no GTK signal that does not
+## exist.
+##
+## Everything that is not a big single insertion is left alone, and each guard
+## below is one way that can happen: typing (too short), deleting or replacing a
+## selection (`next` no longer than `prev`), and the setting switched off (`0`,
+## which is the Web UI's own way of disabling it).
+proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
+  result.remaining = next
+  if threshold <= 0: return
+  if next.len <= prev.len: return
+  if next.len - prev.len < threshold: return
+
+  var p = 0
+  while p < prev.len and p < next.len and prev[p] == next[p]: inc p
+  var sfx = 0
+  while sfx < prev.len - p and sfx < next.len - p and
+        prev[prev.len - 1 - sfx] == next[next.len - 1 - sfx]: inc sfx
+
+  let inserted = next[p ..< next.len - sfx]
+  # The run is measured again rather than inferred from the totals. It cannot
+  # currently fail — with `prev = P + D + S` and `next = P + I + S`, the growth
+  # is `I.len - D.len`, so `I.len` is always at least the growth already
+  # tested — but the divert below promises "the run is at least `threshold`
+  # long", and a promise is worth stating where it is relied on rather than
+  # deriving it from two lines above. It is one integer compare.
+  if inserted.len < threshold: return
+
+  result.divert = true
+  result.inserted = inserted
+  result.remaining = next[0 ..< p] & next[next.len - sfx .. ^1]
+
+## Function purpose: the name a diverted paste is filed under. A timestamp
+## rather than a counter, so two pastes in one draft cannot collide and the
+## name says when it happened rather than how many came before it.
+proc pastedFileName*(stamp: int64): string =
+  "pasted-" & $stamp & ".txt"

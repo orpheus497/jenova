@@ -34,12 +34,13 @@
 ## * The "Open Web UI" action runs `xdg-open`, which is the documented way to
 ##   hand a URL to the desktop and is a declared dependency.
 ##
-## `lanAddress` is called on the **GTK thread**, which is a defect of its own
-## (E-06 in `.devdocs/03`): a wedged routing lookup blocks the window for as
-## long as it takes. The fix is `hwWorker`'s shape — do it on a worker and
-## deliver the result over `uiChan` — and it is deliberately not taken in the
-## same pass as this correction, because it moves state across a thread boundary
-## in the one file this project cannot type-check outside FreeBSD.
+## Neither runs on the GTK thread. `lanAddress` did, which was a defect of its
+## own (E-06): a wedged routing lookup blocked the window for as long as it
+## took, holding the very frame that was meant to show the address. It is now a
+## `lan_addr` job on the control worker answering with `umLanAddr`, which is
+## `hwWorker`'s shape for `--list-devices` applied to a smaller probe. The one
+## remaining synchronous call is at startup in `run`, before the window exists —
+## there is no frame to block and nothing to deliver a message to yet.
 ##
 ## ## Why chat goes over HTTP to the local server
 ##
@@ -202,7 +203,11 @@ type
     umHardware,
     ## 12d-3: this turn was answered from the response cache. Sent once, on the
     ## response head, before any token.
-    umCacheHit
+    umCacheHit,
+    ## E-06: the address LAN mode publishes. Reading it shells out to `route`
+    ## and `ifconfig`, so it is computed on the control worker and arrives here
+    ## — the same shape `umHardware` uses for `--list-devices`.
+    umLanAddr
 
   UiMsg = object
     kind: UiMsgKind
@@ -836,6 +841,17 @@ proc ctlWorker() {.thread.} =
         uiChan.send(UiMsg(kind: umNotice, text: "switch failed: " & e.msg))
     of "web":
       discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
+    of "lan_addr":
+      # E-06. **This is three `sh -c` invocations and it used to run on the GTK
+      # thread**, straight from the LAN toggle and from the three-second poll
+      # that notices the flag changed underneath it. `route -n get default` is
+      # usually instant and is not always: on a host whose routing lookup is
+      # slow or wedged, the window froze for as long as it took, holding the
+      # frame that was meant to show the address.
+      #
+      # It goes here rather than to `hwWorker` because it is short and bounded,
+      # which is exactly what that worker exists to keep off this queue.
+      uiChan.send(UiMsg(kind: umLanAddr, text: lanAddress()))
     of "poll":
       let up = j.lc.healthy(beLlama, timeoutMs = 300)
       # Action purpose: **`running`, not `pid > 0`.** `state` already resolves
@@ -1147,7 +1163,11 @@ viewable App:
         let newLan = isLanEnabled(st.p)
         if newLan != st.lanEnabled:
           st.lanEnabled = newLan
-          st.lanAddr = if newLan: lanAddress() else: ""
+          # E-06: asked for, not computed here. The title bar shows the mode
+          # immediately and gains the address when the worker answers.
+          st.lanAddr = ""
+          if newLan:
+            ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
           discard st.redraw()
         true
       )
@@ -1214,7 +1234,8 @@ viewable App:
             let next = not st.lanEnabled
             setLanState(st.p, next)
             st.lanEnabled = next
-            st.lanAddr = if next: lanAddress() else: ""
+            st.lanAddr = ""
+            if next: ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
             tray.setItems(trayMenu(next))
             st.notice = if next: "LAN enabled - restart to bind 0.0.0.0"
                         else: "LAN disabled - restart to bind 127.0.0.1"
@@ -1303,6 +1324,11 @@ viewable App:
           of umNotice:
             st.notice = m.text
             st.noticeRetryable = false
+          of umLanAddr:
+            # E-06. Only kept while LAN is on: a reply that arrives after the
+            # user switched it back off would put an address in the title bar
+            # for a mode the window is no longer in.
+            if st.lanEnabled: st.lanAddr = m.text
           of umHardware:
             st.hw = m.hw
             st.hwScores = m.scores
@@ -1909,6 +1935,28 @@ proc attachFile(app: AppState, path: string) =
     app.notice = "attached " & r.att.name
   else:
     app.notice = r.err
+
+## Function purpose: file a long paste as a text attachment (W-01).
+##
+## Action purpose: it goes through `pipeline.Attachment` directly rather than
+## through `readAttachment`, because there is no file to read — the bytes are
+## already in hand. The cap is still honoured: a paste past
+## `MaxAttachmentBytes` is refused with the same message a file gets, because
+## the reason is the same and a paste that silently vanished would be worse than
+## one that stayed in the box.
+proc attachPastedText(app: AppState, text: string) =
+  if text.len > pipeline.MaxAttachmentBytes:
+    app.notice = "that paste is too large to attach — " &
+                 $((text.len + 1024 * 1024 - 1) div (1024 * 1024)) & " MB " &
+                 "against a limit of " &
+                 $(pipeline.MaxAttachmentBytes div (1024 * 1024)) & " MB"
+    return
+  let name = composer.pastedFileName(epochTime().int64)
+  app.pending.add pipeline.Attachment(
+    kind: "TEXT", name: name, payload: text, bytes: text.len,
+    key: name & ":" & $text.len)
+  app.notice = "long paste attached as " & name &
+               " — it goes to the model as a file rather than as your message"
 
 proc attachDialog(app: AppState) =
   let (res, state) = app.open: gui:
@@ -5138,7 +5186,28 @@ method view(app: AppState): Widget =
                       # The two events that put the draft back into ordinary
                       # state — which is what the `Entry` did and what the first
                       # version of this composer dropped.
-                      proc changed(text: string) = app.draft = text
+                      #
+                      # W-01: and the one place `pasteLongTextToFileLen` can be
+                      # honoured. GTK pastes into the `GtkTextView` directly, so
+                      # there is no paste signal to intercept — a paste reaches
+                      # this window only as a large single insertion in a
+                      # `changed`. `composer.classifyInsertion` recovers it by
+                      # diff; the rule lives there so it can be asserted without
+                      # a window.
+                      #
+                      # Writing the shortened draft back is sound because
+                      # `DraftView`'s `text` property hook compares against the
+                      # buffer and rewrites it when they differ — the same
+                      # mechanism that keeps the caret still while typing.
+                      proc changed(text: string) =
+                        let ins = composer.classifyInsertion(
+                          app.draft, text,
+                          app.opts.getInt("pasteLongTextToFileLen"))
+                        if ins.divert:
+                          app.attachPastedText(ins.inserted)
+                          app.draft = ins.remaining
+                        else:
+                          app.draft = text
                       proc submit() = app.send()
                   # Directive 3: a `TextView` has no placeholder and the `Entry`
                   # this replaces had one, so it is drawn rather than dropped.

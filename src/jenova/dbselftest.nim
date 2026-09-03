@@ -21,8 +21,20 @@ const
   ## The measurement this whole self-test exists for. It was printed and never
   ## checked, so a fully serialized layer — every reader running strictly before
   ## or after the writer, which is 0% overlap — still reported PASS. A serialized
-  ## run cannot clear this; a genuinely concurrent one clears it comfortably,
-  ## since the readers and the writer start within microseconds of each other.
+  ## run cannot clear this; a genuinely concurrent one clears it comfortably.
+  ##
+  ## Action purpose: **the percentage is of the overlap that was *possible*, not
+  ## of the reader's own run, and that correction is what makes this assertion
+  ## trustworthy (D-12).** Measured against its own span, a reader is penalised
+  ## for outliving the writer: on a loaded or single-core host the writer
+  ## finishes early, a reader drags on, and a reader that overlapped the writer
+  ## for *every microsecond the writer existed* still scored ~30% and failed —
+  ## with nothing wrong with the database layer. Observed at 23.3% and 23.6% on
+  ## a busy container, passing on re-runs of the same binary.
+  ##
+  ## Two intervals of length `a` and `b` can overlap by at most `min(a, b)`, so
+  ## that is the denominator. Full concurrency now scores 100% whatever the
+  ## relative durations, and a serialized run still scores 0.
   MinOverlapPct = 25.0
 
 type
@@ -103,10 +115,18 @@ proc run*(dbPath: string): int =
     if r.connAddr == w.connAddr: distinct_ok = false
     let ov = overlapNs(r, w).float / 1_000_000.0
     let span = (r.endNs - r.startNs).float / 1_000_000.0
-    let pct = if span > 0: ov / span * 100.0 else: 0.0
-    if pct < worstOverlapPct: worstOverlapPct = pct
+    let writerSpan = (w.endNs - w.startNs).float / 1_000_000.0
+    # The most these two intervals could possibly overlap. See `MinOverlapPct`.
+    let possible = min(span, writerSpan)
+    let pct = if possible > 0: ov / possible * 100.0 else: 0.0
+    # A writer or reader that took no measurable time cannot be judged — there
+    # is no window to have overlapped. Reported rather than scored, so a
+    # degenerate timing does not read as a serialized layer.
+    if possible > 0 and pct < worstOverlapPct: worstOverlapPct = pct
     echo &"  reader {i} ops={r.done:<5} conn=0x{toHex(r.connAddr.int64, 12)}" &
-         &"  ran {span:6.1f} ms, {pct:5.1f}% of it concurrent with the writer"
+         &"  ran {span:6.1f} ms, overlapped the writer for {ov:5.1f} ms" &
+         (if possible > 0: &" ({pct:5.1f}% of the {possible:.1f} ms possible)"
+          else: " (too short to judge)")
 
   echo ""
   echo &"  {totalOps} operations across {total} threads in {elapsedMs:.1f} ms"
@@ -120,7 +140,8 @@ proc run*(dbPath: string): int =
     result = 1
   if worstOverlapPct < MinOverlapPct:
     echo &"  FAIL: a reader overlapped the writer for only {worstOverlapPct:.1f}% " &
-         &"of its run, below the {MinOverlapPct:.1f}% floor — the layer serialized"
+         &"of the time the two could have overlapped, below the " &
+         &"{MinOverlapPct:.1f}% floor — the layer serialized"
     result = 1
   if result == 0:
     echo "  PASS: distinct handles per thread, readers overlapped the writer"

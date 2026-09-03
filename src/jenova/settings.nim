@@ -424,6 +424,15 @@ proc get*(s: Settings, key: string): string =
 proc getBool*(s: Settings, key: string): bool =
   s.get(key) == "1"
 
+## Function purpose: read a numeric setting, falling back to `def` when it is
+## unset or unparseable. Empty is the ordinary case, not an error — see the
+## header: an unset field means the server's own value is authoritative, and for
+## a window-only setting like `pasteLongTextToFileLen` it means the default.
+proc getInt*(s: Settings, key: string, def = 0): int =
+  let raw = s.get(key).strip
+  if raw.len == 0: return def
+  try: parseInt(raw) except ValueError: def
+
 proc `[]=`*(s: var Settings, key, value: string) =
   s.values[key] = value
 
