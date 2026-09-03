@@ -32,7 +32,7 @@ import ./paths
 let
   FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
   FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
-  LockWait {.importc: "F_LOCK", header: "<unistd.h>".}: cint
+  LockTry {.importc: "F_TLOCK", header: "<unistd.h>".}: cint
   LockRelease {.importc: "F_ULOCK", header: "<unistd.h>".}: cint
 
 type
@@ -292,6 +292,19 @@ proc lockFileFor(l: Lifecycle, be: Backend): string =
 ## Failing to take the lock is not a reason to refuse to start — a state
 ## directory that cannot be written is already reported by everything else here
 ## — so the descriptor is optional and the caller proceeds without it.
+##
+## That fallback is why the wait is `F_TLOCK` in a bounded retry rather than a
+## blocking `F_LOCK`. The section below covers `portInUse`, a fork and the exec
+## handshake, all short — but a holder stopped or wedged partway through would
+## make a blocking wait indefinite, and the caller here is the serial control
+## worker or the watchdog. Losing the race is worth a second of waiting and then
+## proceeding unlocked; it is not worth hanging backend control.
+##
+## The bound is a retry count rather than a clock so it cannot be moved by one.
+const
+  LockTries = 100
+  LockRetryMs = 10
+
 proc lockStart(l: Lifecycle, be: Backend): cint =
   result = -1
   try:
@@ -302,10 +315,12 @@ proc lockStart(l: Lifecycle, be: Backend): cint =
     # and nothing closes it before `execve` — so it is marked close-on-exec
     # rather than left open in `llama-server` for its lifetime.
     discard fcntl(fd, FdSetFd, FdCloexec)
-    if lockf(fd, LockWait, 0) != 0:
-      discard posix.close(fd)
-      return -1
-    result = fd
+    for _ in 0 ..< LockTries:
+      if lockf(fd, LockTry, 0) == 0:
+        return fd
+      os.sleep(LockRetryMs)
+    discard posix.close(fd)
+    result = -1
   except CatchableError:
     result = -1
 

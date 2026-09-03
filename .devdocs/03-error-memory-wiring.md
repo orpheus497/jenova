@@ -631,6 +631,27 @@ with an empty body fails "and files its body, not just its identity", which is w
 could plausibly have broken. R-15's own assertions state the declined position as a test — the
 cleared body is gone from the index, and the note is still findable by its title.
 
+### A fifth pass: the lock I added could hang, and one of my assertions was decorative
+
+| # | Finding | Verdict |
+|---|---|---|
+| R-16 | `lockStart` used blocking `F_LOCK` | **Valid, and an irony.** The lock was added to close a race and introduced a new way to hang the very worker `runCapture` had just been unblocked in: `start` holds it through `portInUse`, a fork and the handshake read, so a holder stopped or wedged partway through makes another caller's wait indefinite |
+| R-17 | "the failed child is reaped, not left a zombie" asserted nothing | **Valid.** `start` returns 0 on that path, the line above already asserts `pid == 0`, and `isAlive` returns false for every pid `<= 0` — so the check was true whatever the code did |
+
+R-16 is fixed with `F_TLOCK` in a bounded retry — 100 attempts, 10 ms apart — falling back to the
+unlocked path the function already documented. Losing the race is worth a second of waiting and then
+proceeding; it is not worth hanging backend control. The bound is a retry count rather than a clock
+so it cannot be moved by one.
+
+R-17 is the defect this branch exists to find, in the branch's own work: an assertion that states a
+property it does not test. `start` does not hand back the child's pid, so the observable property is
+that the fork left nothing behind — `waitpid(-1, WNOHANG)` answers with a pid only if a zombie is
+waiting. Outstanding children are drained before the call so an earlier block's fork cannot answer
+for this one.
+
+**Both were proven by running.** Removing the reap makes the new assertion fail — and leaves the old
+one passing, which is the finding demonstrated rather than conceded.
+
 ---
 
 ## How session 2's changes were verified

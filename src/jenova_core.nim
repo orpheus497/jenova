@@ -2468,6 +2468,11 @@ proc main() =
         # the path under test.
         let l = lifecycle.Lifecycle(paths: lp, cfg: cfg, llamaPort: 28081,
                                     embedPort: 28082, bindHost: "127.0.0.1")
+        # Nothing collectable may be outstanding before the call, or the check
+        # after it would be answered by some earlier block's child.
+        var drain: cint = 0
+        while posix.waitpid(Pid(-1), drain, WNOHANG) > 0: discard
+
         let pid = l.start(lifecycle.beLlama)
         check("a binary that cannot be executed is reported as a failure",
               pid == 0, "start returned " & $pid & " for a non-executable file")
@@ -2476,8 +2481,13 @@ proc main() =
         check("the log says why rather than staying silent",
               fileExists(lp.logDir / "llama-server.log") and
               readFile(lp.logDir / "llama-server.log").contains("could not exec"))
+        # `start` returns 0 on this path and `isAlive` is false for every pid
+        # <= 0, so asking it about the return value would assert nothing. The
+        # observable property is that the fork left nothing behind: `waitpid`
+        # on any child answers with a pid only if a zombie is waiting.
+        var leftover: cint = 0
         check("and the failed child is reaped, not left a zombie",
-              not lifecycle.isAlive(pid))
+              posix.waitpid(Pid(-1), leftover, WNOHANG) <= 0)
 
         # The start lock is per backend and must not be mistaken for state: a
         # second call takes it, finds nothing running, and fails the same way.
