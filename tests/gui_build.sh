@@ -346,7 +346,8 @@ transcript_renders() {
     # Cleared before every click, so a value left by an earlier one cannot be
     # mistaken for this one's.
     printf '' | xclip -i -selection clipboard >/dev/null 2>&1 || true
-    xdotool mousemove "$cx" "$y" click 1
+    xdotool mousemove "$cx" "$y" click 1 ||
+      { TRANSCRIPT_FAILED=measure; return 1; }
     sleep 0.4
     got=$(xclip -o -selection clipboard 2>/dev/null || true)
     if [ -n "$got" ]; then
@@ -403,21 +404,35 @@ composer_reachable() {
   band_y=$((wy + wh - band_h - 8))          # 8px inside the rounded bottom edge
   crop="${ww}x${band_h}+${wx}+${band_y}"
 
-  import -window root "$OUT/before.png"
+  # **Every capture and conversion is guarded, and that is not decoration.**
+  # This runs under `set -e`, so a bare `import` or `convert` that failed — no
+  # X server left, ImageMagick's policy refusing the format, a full disk — aborted
+  # the whole script at that line. `PROBE_FAILED=measure` was then never set, the
+  # harness-versus-GUI distinction below never printed, and `kill "$GPID"` never
+  # ran, so the window was left behind. A failure here has to `return 1` like any
+  # other, which is what puts it back on the reporting and cleanup path.
+  import -window root "$OUT/before.png" || { PROBE_FAILED=measure; return 1; }
   # The left third of the composer row: the draft area. Deliberately not the
   # centre — the Send button is there, and a probe that sends a message would be
   # testing the backend rather than the layout.
-  xdotool mousemove $((wx + ww / 6)) $((wy + wh - 40)) click 1
+  xdotool mousemove $((wx + ww / 6)) $((wy + wh - 40)) click 1 ||
+    { PROBE_FAILED=measure; return 1; }
   sleep 1
-  xdotool type --delay 40 "gui_build probe"
+  xdotool type --delay 40 "gui_build probe" ||
+    { PROBE_FAILED=measure; return 1; }
   sleep 2
-  import -window root "$OUT/after.png"
+  import -window root "$OUT/after.png" || { PROBE_FAILED=measure; return 1; }
 
-  convert "$OUT/before.png" -crop "$crop" +repage "$OUT/before-band.png"
-  convert "$OUT/after.png"  -crop "$crop" +repage "$OUT/after-band.png"
+  convert "$OUT/before.png" -crop "$crop" +repage "$OUT/before-band.png" ||
+    { PROBE_FAILED=measure; return 1; }
+  convert "$OUT/after.png"  -crop "$crop" +repage "$OUT/after-band.png" ||
+    { PROBE_FAILED=measure; return 1; }
+  # `|| true` on the substitution and the emptiness test right after it: a
+  # failing `$(...)` on the right of an assignment is itself a failing command
+  # under `set -e`, so without this the guard below could never be reached.
   d=$(convert "$OUT/before-band.png" "$OUT/after-band.png" \
       -compose difference -composite -colorspace Gray \
-      -format "%[fx:maxima]" info: 2>/dev/null)
+      -format "%[fx:maxima]" info: 2>/dev/null || true)
   [ -n "$d" ] || { PROBE_FAILED=measure; return 1; }
   echo "gui_build: largest pixel change in the composer row = $d"
   awk -v v="$d" 'BEGIN { exit !(v > 0.05) }' || { PROBE_FAILED=typing; return 1; }
@@ -436,13 +451,14 @@ composer_reachable() {
   # line by that measure. So the noise is measured rather than assumed — two
   # shots with nothing happening between them — and the shortcut has to beat it.
   sleep 2
-  import -window root "$OUT/idle.png"
-  convert "$OUT/idle.png" -crop "$crop" +repage "$OUT/idle-band.png"
+  import -window root "$OUT/idle.png" || { PROBE_FAILED=measure; return 1; }
+  convert "$OUT/idle.png" -crop "$crop" +repage "$OUT/idle-band.png" ||
+    { PROBE_FAILED=measure; return 1; }
   noise=$(convert "$OUT/after-band.png" "$OUT/idle-band.png" \
           -compose difference -composite -colorspace Gray \
-          -format "%[fx:mean]" info: 2>/dev/null)
+          -format "%[fx:mean]" info: 2>/dev/null || true)
 
-  xdotool key ctrl+n
+  xdotool key ctrl+n || { PROBE_FAILED=measure; return 1; }
   # **Sampled over time, not photographed once after a fixed sleep.** A single
   # `sleep 2` was enough while the transcript was a plain list of widgets and
   # became marginal when it became a `ListView` over a `Clamp` — the software
@@ -461,11 +477,12 @@ composer_reachable() {
   i=0
   while [ "$i" -lt 8 ]; do
     sleep 1
-    import -window root "$OUT/newchat.png"
-    convert "$OUT/newchat.png" -crop "$crop" +repage "$OUT/newchat-band.png"
+    import -window root "$OUT/newchat.png" || { PROBE_FAILED=measure; return 1; }
+    convert "$OUT/newchat.png" -crop "$crop" +repage "$OUT/newchat-band.png" ||
+      { PROBE_FAILED=measure; return 1; }
     d=$(convert "$OUT/idle-band.png" "$OUT/newchat-band.png" \
         -compose difference -composite -colorspace Gray \
-        -format "%[fx:mean]" info: 2>/dev/null)
+        -format "%[fx:mean]" info: 2>/dev/null || true)
     # A `convert` that produced nothing measured nothing. Breaking here would
     # leave `n` at 0, which is non-empty, passes the emptiness check below and
     # then fails the threshold — reporting a broken ImageMagick as a missing

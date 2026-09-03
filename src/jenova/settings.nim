@@ -384,10 +384,30 @@ proc settingsFile(p: Paths): string = p.state / SettingsFile
 proc get*(s: Settings, key: string): string =
   s.values.getOrDefault(key, "")
 
+## Function purpose: lets the window ask about one field without walking `Defs`
+## itself, which would put the field list in two places.
+proc defFor*(key: string): SettingDef =
+  for d in Defs:
+    if d.key == key: return d
+
 ## Function purpose: an unset boolean falls back to the field's declared
 ## default rather than to false, since half of them default to on.
+##
+## Action purpose: this is what the comment always promised and the code did
+## not. `initSettings` writes every boolean, so a `Settings` built through it or
+## through `loadFrom` always holds one and the fallback never runs — but a
+## default-constructed `Settings`, whose `values` table is empty, read every
+## `boolDefault: true` field as off. `showMessageStats` and
+## `autoShowSidebarOnNewChat` are both declared on, so that is a silently
+## different window. `appInt` already resolves its own declared default the same
+## way; this is the boolean half of the same rule.
+##
+## An explicitly stored value still wins in both directions — "0" is off even
+## where the field defaults to on, which is what makes turning one off stick.
 proc getBool*(s: Settings, key: string): bool =
-  s.get(key) == "1"
+  let raw = s.get(key)
+  if raw.len == 0: return defFor(key).boolDefault
+  raw == "1"
 
 ## Function purpose: empty is the ordinary case here rather than an error, so an
 ## unparseable value falls back the same way an unset one does.
@@ -400,12 +420,6 @@ proc getInt*(s: Settings, key: string, def = 0): int =
 ## merge time, so a value being edited is never rejected mid-keystroke.
 proc `[]=`*(s: var Settings, key, value: string) =
   s.values[key] = value
-
-## Function purpose: lets the window ask about one field without walking `Defs`
-## itself, which would put the field list in two places.
-proc defFor*(key: string): SettingDef =
-  for d in Defs:
-    if d.key == key: return d
 
 ## Function purpose: a window-only setting has no server value behind it, so an
 ## unset field means its declared `appDefault` — the number shown as ghost text

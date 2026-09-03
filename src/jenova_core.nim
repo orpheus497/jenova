@@ -3454,6 +3454,46 @@ proc main() =
               settings.loadFrom(sf).get("temperature") == "0.35")
         removeFile(sf)
 
+        # Action purpose: `getBool`'s own doc comment promises the field's
+        # declared default for an unset value, and the code answered plain
+        # `false`. `initSettings` writes every boolean, so through that path the
+        # fallback never ran and the gap was invisible — but a
+        # default-constructed `Settings`, whose table is empty, read every
+        # `boolDefault: true` field as OFF. Two ship on: the statistics line and
+        # the sidebar on a new chat. Asserted against a bare `Settings()`,
+        # because that is the only value that reaches the fallback at all.
+        block boolDefaults:
+          let bare = settings.Settings()
+          check("a field declared on reads as on when nothing is stored",
+                bare.getBool("showMessageStats"))
+          check("and so does the other one that ships on",
+                bare.getBool("autoShowSidebarOnNewChat"))
+          check("a field declared off still reads as off",
+                not bare.getBool("pdfAsImage"))
+          check("an unknown key is off rather than an error",
+                not bare.getBool("noSuchSetting"))
+          # The stored value has to win in BOTH directions, or the fallback has
+          # simply replaced one wrong answer with another: turning a
+          # default-on field off must stick.
+          var off = settings.initSettings()
+          off["showMessageStats"] = "0"
+          check("an explicit 0 beats a default of on",
+                not off.getBool("showMessageStats"))
+          var on = settings.initSettings()
+          on["pdfAsImage"] = "1"
+          check("an explicit 1 beats a default of off", on.getBool("pdfAsImage"))
+          # The declared defaults are what `initSettings` writes, so the two
+          # paths must agree — otherwise a fresh install and a bare object are
+          # two different programs.
+          let fresh = settings.initSettings()
+          var disagreed: seq[string]
+          for d in settings.Defs:
+            if d.kind == settings.skBool and
+               fresh.getBool(d.key) != bare.getBool(d.key):
+              disagreed.add d.key
+          check("a fresh install and an unwritten one agree on every boolean",
+                disagreed.len == 0, $disagreed)
+
       # Action purpose: the parity claim itself, asserted rather than stated.
       # "1:1 with the Web UI" is the kind of thing that is true on the day it is
       # written and quietly false a month later. The list below is

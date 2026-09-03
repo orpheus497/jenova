@@ -17,11 +17,12 @@ No usage data, crash reports or analytics are collected. There is no analytics c
 
 ## What does leave your machine
 
-Three things reach the network, all deliberate.
+Four things can reach the network, all deliberate and none of them on by itself.
 
 | What | Where it goes | When |
 |---|---|---|
-| **Web search** | `api.duckduckgo.com`, `html.duckduckgo.com` | Only when a model invokes the web-search tool. Your query text is sent |
+| **Web search** | `api.duckduckgo.com`, `html.duckduckgo.com`, and wherever either redirects | Only when a model invokes the web-search tool. Your query text is sent |
+| **MCP servers** | whichever servers you configure | Web UI only, off by default, and only once you add one. See below |
 | **Model downloads** | `huggingface.co` | Only when you fetch a model yourself |
 | **Package and source updates** | FreeBSD `pkg` mirrors, `github.com`, the `nimble` registry | Only during `pkg install`, `git clone` and `nimble` builds |
 
@@ -32,11 +33,18 @@ exposing your IP address and the fact that you are running Jenova. That import w
 locally gets them, and everyone else falls through to the platform's own UI and monospace faces.
 Nothing is downloaded either way.
 
-**MCP is not implemented.** The Settings screen has no MCP section and neither binary contains an
-MCP client, so a configured remote MCP server is not an outbound path here — it is not a path at
-all. The `mcpServerOverrides` column exists in the database only because the schema is shared with
-the frozen Web UI. If MCP is ever added, a remote server would receive whatever the model sends it,
-and this page will have to say so.
+**MCP: not in either binary, but present in the Web UI.** Neither `bin/jenova` nor
+`bin/jenova-core` contains an MCP client — there is none under `src/`, the desktop Settings screen
+has no MCP section, and `settings.OmittedFields` records the whole section as deliberately
+deferred. The `mcpServerOverrides` column exists in the database for the Web UI's sake.
+
+**The Web UI does have one**, in `jca_web/src/lib/services/mcp.service.ts` with its stores and
+types, and it is compiled into the `public/bundle.js` this server serves. So if you configure an
+MCP server in the browser client, **that server is a real outbound path**: it receives whatever the
+model sends it, and the request goes from your browser rather than from Jenova's own process, which
+is why it does not appear in the `src/` grep below. It is **off by default and configures nothing
+on its own** — the outbound path exists only once you add a server yourself. Nothing in the desktop
+window can reach it.
 
 ## No authentication
 
@@ -84,7 +92,14 @@ Two habits matter anyway:
 ## Auditing this yourself
 
 Every claim above is checkable. The two DuckDuckGo hosts are the only ones the runtime itself ever
-contacts — model downloads and package updates are commands you run, not things it does:
+*addresses* — model downloads and package updates are commands you run, not things it does.
+
+**Redirects are followed, so a request can end at a third host.** `websearch.fetchUrl` runs
+`curl -sL` (`-L` follows redirects) or base `fetch(1)`, which follows them too. DuckDuckGo can
+therefore hand either client a `Location:` pointing somewhere else and the client will go there,
+carrying your query in the URL. Neither is given a host allowlist. In practice the two endpoints
+answer directly, but the guarantee this page can honestly make is about the hosts Jenova asks for,
+not the hosts a redirect can send it to:
 
 ```sh
 grep -rn 'https\?://' src/                        # both binaries
