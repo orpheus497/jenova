@@ -24,6 +24,7 @@
 #   compile + link  ->  the C-level errors `nim check` is blind to
 #   --check         ->  GTK init, the stylesheet, and every widget's build hook
 #   run + type      ->  the layout, which only exists once a window is mapped
+#   seed + copy     ->  the transcript, which drew nothing in any earlier run
 #
 # The last step asserts the property defect (2) broke, in the form a user would
 # check it: **the composer is at the bottom of the window and accepts typing.**
@@ -44,9 +45,10 @@
 #
 # Requirements beyond `gui_check.sh`: the GTK4, libadwaita, GtkSourceView, VTE
 # and D-Bus **development** packages, because this one really does compile C.
-# The mapped-window step additionally needs an X server (`Xvfb` is enough) and
-# ImageMagick's `import`; without them it reports what is missing and stops
-# short rather than passing silently.
+# The mapped-window step additionally needs an X server (`Xvfb` is enough),
+# ImageMagick's `import`, `xdotool`, `nc` to seed the conversation and `xclip`
+# to read back what the transcript's Copy button wrote; without them it reports
+# what is missing and stops short rather than passing silently.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -136,6 +138,51 @@ cp -R "$ROOT/png" "$RT/" 2>/dev/null || true
 JH="$OUT/jcahome"
 mkdir -p "$JH/.system" "$JH/Workspaces"
 
+# ---------------------------------------------------------------------------
+# A conversation to look at
+# ---------------------------------------------------------------------------
+# Until this existed, nothing in the repository had ever displayed a chat
+# message. The window starts on `latestConversation()`, which on an empty
+# database is a new empty one — so every check here passed against a transcript
+# that was drawing nothing, and a change that broke message rendering entirely
+# would have gone through green.
+#
+# Seeded over the same `/api/db/*` routes `test_api_db.sh` uses, rather than by
+# writing SQL, so the schema has one owner and this cannot drift from it.
+SEED_PORT=18788
+SEED_MSGS=6
+seed_text() { printf 'Seeded message %s: the transcript has to render this line.' "$1"; }
+
+seed_post() { # path body
+  printf 'POST %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
+    "$1" "${#2}" "$2" | nc 127.0.0.1 "$SEED_PORT" >/dev/null
+}
+
+echo "gui_build: seeding a conversation"
+JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 JENOVA_PORT="$SEED_PORT" \
+  "$OUT/jenova-core" serve >"$OUT/seed.log" 2>&1 &
+SEEDPID=$!
+sleep 2
+seed_post /api/db/workspaces '{"id":"w1","name":"Work"}'
+seed_post /api/db/conversations \
+  '{"id":"seeded","name":"Seeded chat","lastModified":1730000000,"workspaceId":"w1"}'
+# `parent` and not `parentId`: the window does not show every row of a
+# conversation, it shows one path through the reply tree (`pathOf`), so messages
+# with no parent chain are not a short transcript — they are one message.
+i=1
+prev=""
+while [ "$i" -le "$SEED_MSGS" ]; do
+  # An `&&` chain here and not an `if` would be fatal: this runs at the top
+  # level under `set -e`, and the chain evaluates to 1 on every odd `i`.
+  if [ $((i % 2)) -eq 0 ]; then role=assistant; else role=user; fi
+  seed_post /api/db/messages \
+    "{\"id\":\"m$i\",\"convId\":\"seeded\",\"role\":\"$role\",\"content\":\"$(seed_text "$i")\",\"timestamp\":$((1730000000 + i)),\"parent\":\"$prev\"}"
+  prev="m$i"
+  i=$((i + 1))
+done
+kill $SEEDPID 2>/dev/null || true
+wait $SEEDPID 2>/dev/null || true
+
 echo "gui_build: jenova --check"
 # `--check` initialises GTK, installs the stylesheet and builds the whole widget
 # tree without showing a window — so every `beforeBuild`, `afterBuild` and
@@ -193,6 +240,80 @@ window_geometry() {
   xwininfo -root -children 2>/dev/null |
     sed -n 's/.*  \([0-9][0-9]*\)x\([0-9][0-9]*\)+\([0-9-][0-9]*\)+\([0-9-][0-9]*\)  .*/\1 \2 \3 \4/p' |
     sort -k1 -n -r | head -1
+}
+
+## Prove the transcript rendered the seeded conversation.
+##
+## **The assertion is the message's own text, not a picture of it.** Every pixel
+## measure tried first failed to separate the two states: the empty transcript
+## draws a large icon and a bold heading over the same canvas artwork the cards
+## sit on, so its greyscale mean (0.971) and deviation (0.130) bracket the
+## seeded one (0.982 / 0.103) from the wrong side. A threshold there would have
+## been a number picked after seeing both answers, which is the defect this file
+## already records for the composer test.
+##
+## So it clicks Copy on the first card and reads the clipboard back. The text
+## either is message 1's or it is not, and no blank card, missing card or
+## transposed order can produce a match.
+##
+## **Nothing here is a measured screen coordinate.** The first version pinned
+## the button at 50,195 and was broken within the hour by a `Clamp` and an
+## `Avatar` — ordinary work on the very widget being tested. Instead the card's
+## left edge is found from the image (it is the only strongly saturated column
+## in the transcript: the role-coloured accent border), and the row is found by
+## clicking down the column until something lands on the clipboard.
+##
+## `CARD_COPY_DX` is the one offset left, and it is measured from the card's own
+## edge rather than the window's, so it survives anything that moves the card.
+## It is deliberately small: the action row runs copy, fork, edit, delete at
+## roughly +29, +67, +105 and +143 from that edge, so **staying near the left
+## keeps the scan away from Delete**, which a search for a button must never
+## reach.
+CARD_COPY_DX=29
+SCAN_STEP=10
+
+## The screen x of the leftmost card edge, or nothing if no card is drawn.
+card_accent_x() { # image wx wy ww wh
+  convert "$1" -crop "$(($4 - 40))x$(($5 / 2))+$(($2 + 20))+$(($3 + $5 / 8))" +repage \
+    -colorspace HSL -channel G -separate -resize "$(($4 - 40))x1!" -depth 8 txt:- 2>/dev/null |
+    sed -n 's/^\([0-9]*\),0: .*gray(\([0-9]*\)).*/\1 \2/p' |
+    awk -v ox=$(($2 + 20)) '$2 > 40 { print $1 + ox; exit }'
+}
+
+transcript_renders() {
+  set -- $(window_geometry)
+  [ $# -eq 4 ] || { echo "gui_build: no window to read the transcript from"; return 1; }
+  ww=$1; wh=$2; wx=$3; wy=$4
+
+  import -window root "$OUT/transcript.png" 2>/dev/null || return 1
+  ax=$(card_accent_x "$OUT/transcript.png" "$wx" "$wy" "$ww" "$wh")
+  if [ -z "$ax" ]; then
+    TRANSCRIPT_FAILED=nocards
+    return 1
+  fi
+
+  cx=$((ax + CARD_COPY_DX))
+  want=$(seed_text 1)
+  y=$((wy + wh / 7))
+  ylast=$((wy + wh / 2))
+  while [ "$y" -le "$ylast" ]; do
+    # Cleared before every click, so a value left by an earlier one cannot be
+    # mistaken for this one's.
+    printf '' | xclip -i -selection clipboard >/dev/null 2>&1 || true
+    xdotool mousemove "$cx" "$y" click 1
+    sleep 0.4
+    got=$(xclip -o -selection clipboard 2>/dev/null || true)
+    if [ -n "$got" ]; then
+      [ "$got" = "$want" ] && return 0
+      TRANSCRIPT_FAILED=wrongtext
+      echo "gui_build:   wanted: $want"
+      echo "gui_build:   got:    $got"
+      return 1
+    fi
+    y=$((y + SCAN_STEP))
+  done
+  TRANSCRIPT_FAILED=nobutton
+  return 1
 }
 
 ## Type into the bottom of the window and prove the characters landed there.
@@ -320,8 +441,11 @@ if [ -z "${DISPLAY:-}" ]; then
   sleep 2
 fi
 
-have import && have convert && have xwininfo && have xdotool || {
-  echo "gui_build: ImageMagick's import/convert, xwininfo and xdotool are needed to prove the window works"
+have import && have convert && have xwininfo && have xdotool && have xclip && have nc || {
+  echo "gui_build: ImageMagick's import/convert, xwininfo, xdotool, xclip and nc"
+  echo "gui_build: are needed to prove the window works. xclip reads back what the"
+  echo "gui_build: transcript's Copy button put on the clipboard; nc seeds the"
+  echo "gui_build: conversation it copies from."
   echo "gui_build: FAIL"
   exit 1
 }
@@ -345,7 +469,24 @@ if ! kill -0 "$GPID" 2>/dev/null; then
   echo "gui_build: the window exited before it could be photographed:"
   cat "$OUT/run.log"
   rc=1
+elif ! transcript_renders; then
+  case "${TRANSCRIPT_FAILED:-}" in
+    wrongtext)
+      echo "gui_build: a Copy button answered, but with something other than the"
+      echo "gui_build: seeded conversation's first message." ;;
+    nocards)
+      echo "gui_build: no card edge in the transcript — the accent border every"
+      echo "gui_build: message card carries is not there, so no message drew." ;;
+    *)
+      echo "gui_build: cards are drawn but no Copy button answered anywhere down"
+      echo "gui_build: the column. Either the action row is gone or CARD_COPY_DX"
+      echo "gui_build: no longer lands on it." ;;
+  esac
+  echo "gui_build: $OUT is kept for inspection."
+  KEEP=1
+  rc=1
 elif composer_reachable; then
+  echo "gui_build: the transcript renders the seeded conversation"
   echo "gui_build: the composer is at the bottom of the window and takes typing"
 elif [ "${PROBE_FAILED:-}" = "shortcut" ]; then
   echo "gui_build: <Ctrl>n did not reach the window. The composer takes typing,"

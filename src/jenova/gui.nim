@@ -3193,14 +3193,30 @@ renderable SourceCode of BaseWidget:
     property:
       setSourceLanguage(state.buffer, state.language)
 
-## Function purpose: shells to the desktop's own clipboard tool, because GTK's
-## clipboard is asynchronous and this is called from a click handler.
+# owlkettle binds this with a third `length` argument that GDK does not take
+# (`gdkclipboard.h:113` is two parameters). Declared here with the real
+# signature rather than imported, and header-less for the reason `shortcuts.nim`
+# records: a `header:` pragma pulls the real GTK headers into a translation unit
+# that also carries owlkettle's header-less prototypes.
+proc gdk_clipboard_set_text(c: GdkClipboard, text: cstring)
+  {.importc: "gdk_clipboard_set_text", cdecl.}
+
+## Function purpose: put text on the desktop's clipboard, through the toolkit.
+##
+## It shelled out to `wl-copy` before, on the stated ground that "GTK's
+## clipboard is asynchronous and this is called from a click handler". Only
+## *reading* is asynchronous — which is why the paste path above needs a
+## callback and this does not. `wl-copy` is a Wayland tool, so on X11 the
+## `startProcess` raised, the bare `except` swallowed it, and **Copy silently
+## did nothing**. It also blocked the GTK thread on `waitForExit`, and passed
+## the message as an argv entry, where anything reading the process table could
+## see it.
 proc copyToClipboard(text: string) =
-  try:
-    let p = startProcess("wl-copy", args = [text], options = {poUsePath})
-    discard p.waitForExit()
-    p.close()
-  except CatchableError: discard
+  let display = gdk_display_get_default()
+  if pointer(display).isNil: return
+  let clip = gdk_display_get_clipboard(display)
+  if pointer(clip).isNil: return
+  gdk_clipboard_set_text(clip, text.cstring)
 
 const
   ## Above this many lines a code block is capped and scrolls inside itself, so

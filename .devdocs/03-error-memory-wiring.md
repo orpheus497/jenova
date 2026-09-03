@@ -809,6 +809,39 @@ Proven by running the built binary both ways: without `JCA_HOME` it creates
 scratch instead. This is the defect class `test_api_db.sh` records in its own header as having
 destroyed a real conversation database, and the fix is the one that suite already uses.
 
+### R-24 · Copy did nothing on X11, and nothing said so · session 8
+
+Found by trying to write the transcript test, not by reading the file.
+
+`copyToClipboard` shelled out to `wl-copy`:
+
+```nim
+try:
+  let p = startProcess("wl-copy", args = [text], options = {poUsePath})
+  discard p.waitForExit()
+  p.close()
+except CatchableError: discard
+```
+
+`wl-copy` is a Wayland tool. On X11 the `startProcess` raises, the bare `except`
+swallows it, and **the Copy button on every message and every code block does nothing at all** —
+no error, no toast, no log line. Three further faults in five lines: `waitForExit` blocks the GTK
+thread on a subprocess; the message is passed as an argv entry, where anything reading the process
+table can see it, which is a poor property for a product whose case is that nothing leaves the
+machine; and the docstring's justification — "GTK's clipboard is asynchronous" — is false. Only
+*reading* is asynchronous, which is exactly why the paste path fifty lines above needs a callback
+and this does not.
+
+Fixed with the toolkit's own clipboard, which works on X11 and Wayland alike, spawns nothing and
+blocks nothing. `gdk_display_get_clipboard` was already imported in this file for the paste path;
+only the setter had to be declared, **with the correct signature**: owlkettle's binding takes a
+third `length` argument that GDK does not have (`gdkclipboard.h:113` is two parameters), and while
+the spurious argument is harmless on the ABIs this targets, relying on the callee ignoring a
+register is not a reason.
+
+Verified by clicking the button under Xvfb: before the fix the clipboard stayed empty; after it,
+card 1's button yields message 1's text and card 3's yields message 3's.
+
 ---
 
 ## How session 2's changes were verified
