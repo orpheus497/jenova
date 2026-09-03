@@ -2,205 +2,200 @@
 
 <img src="png/splash_top.png" width="100%" alt="Jenova Cognitive Architecture banner">
 
-The Jenova Cognitive Architecture (JCA) is a Human Cognition Enhancement Project. It is designed to help a single user think more clearly, explore ideas more deeply, and do more with their own creativity and knowledge. Jenova does not replace the user's thinking — it amplifies it.
+Jenova is a personal AI system that runs entirely on your own FreeBSD machine. No cloud account,
+no subscription, no telemetry. Inference, retrieval, and your workspace all live on your hardware.
 
-JCA runs entirely on your laptop. It requires no cloud account, no subscription, and no background telemetry. Core inference, retrieval, and workspace features work fully offline; optional web search requires network access. Everything happens on your hardware, under your control.
-
----
-
-## What Jenova Is For
-
-Jenova is for the person who wants a capable AI assistant that works *with* them, not instead of them.
-
-Whether you are a writer working through a difficult idea, a researcher organising your thinking, a student trying to understand a complex topic, a designer exploring possibilities, or simply someone who wants to think better — Jenova gives you a private, persistent, intelligent companion that lives on your own machine.
-
-The AI in Jenova is there to ask better questions, surface connections you might have missed, help you articulate what you already know, and keep context across long working sessions. The work, the judgment, the creativity — those remain yours.
-
----
-
-## Designed for Consumer Laptops
-
-Jenova is purpose-built for the hardware most people actually own. The architecture is specifically optimised around the model sizes and GPU configurations typical of consumer and prosumer laptops:
-
-- **3B to 4B parameter models** — responsive, low resource cost, suited to integrated and entry-level discrete GPUs
-- **7B to 9B parameter models** — higher capability, suited to laptops with a discrete GPU (4GB+ VRAM) or a dual iGPU/dGPU configuration
-
-Hardware auto-detection selects the right model size, quantisation, and GPU offload strategy for your specific machine at install time. You do not need to understand the technical details to get started.
-
-Rule of thumb for VRAM: approximately **0.75 GB per 1B parameters** at Q4_K_M quantisation.
-
----
-
-## The Ecosystem
-
-Jenova is one cohesive system, not a collection of separate tools. Every component is designed to work together seamlessly.
-
-### Core Backend (`jenova-ca`)
-
-The foundation. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading — automatically adapting to single-GPU, dual-GPU, or CPU-only configurations via auto-detected Vulkan and CUDA backends. It manages the `llama-server` inference engine and the Lua-based intelligence proxy as a single supervised unit.
-
-Port assignments:
-
-| Port | Service | Purpose |
-|------|---------|---------|
-| `8080` | Intelligence Proxy | WebUI, RAG, web search, filesystem API |
-| `8081` | llama-server | OpenAI-compatible inference API |
-| `8082` | Embedding server | Semantic search and RAG indexing |
-
-### Jenova Workspaces (WebUI)
-
-A browser-based workspace and chat interface built with SvelteKit. Served directly by the intelligence proxy at port 8080. Workspace, project, and folder metadata is stored in a local SQLite database managed by the intelligence proxy. Conversations and notes are additionally synced to `~/JCA/Workspaces` as plain Markdown files, readable and editable with any text editor. Physical file assets are stored separately on the local filesystem.
-
-Features include persistent multi-workspace organisation, branching conversation history, real-time token streaming, deep reasoning chain-of-thought support, and a full markdown and LaTeX rendering pipeline.
-
-### Desktop Manager (`jenova-ui`)
-
-A lightweight native application written in C with GTK3, ncurses, and Lua, providing two complementary management interfaces:
-
-- **System Tray Icon** — The primary convenience interface for desktop environments. Provides real-time health polling and quick-access server control via a context menu.
-- **ncurses TUI** — A secondary management interface. Works without a graphical environment, ideal for FreeBSD, headless servers, and terminal-centric workflows. Offers component-level control, real-time health status, and LAN/LOCAL switching.
-
-### Remote Access (LAN Mode)
-
-Toggle LAN Mode via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network — a phone, a tablet, or a secondary machine — without any additional configuration.
+It is built for the person who wants an assistant that works *with* them — one that keeps context
+across long sessions, surfaces connections, and helps articulate what you already know. The work
+and the judgment stay yours.
 
 ---
 
 ## Quick Start
 
 ```sh
-git clone https://github.com/orpheus497/jenova
+git clone --recurse-submodules https://github.com/orpheus497/jenova
 cd jenova
 
-# Automated installation to ~/JCA:
-./install-jenova.sh
+nimble llama     # build the llama.cpp backend into external/ext_bin
+nimble web       # build the Web UI into public/
+nimble gui       # build bin/jenova, the desktop application
+./bin/jenova
 ```
 
-The installer detects your hardware, selects the appropriate profile, and deploys a fully self-contained system to `~/JCA`. The installation is completely independent from the source repository — all binaries, libraries, and configurations live within that directory.
+Then open <http://localhost:8080>, or just use the window.
 
-### Manual Build
+The build system is **nimble**; the tasks are declared in `jenova_core.nimble`. There is no
+Makefile, and no build or runtime step shells out to a project script.
 
-```sh
-make              # Build all components in-tree
-make install      # Deploy to ~/JCA
-make verify       # Verify installation succeeded
-```
-
-Individual components: `make llama`, `make web`, `make jenova-ui`.
+Individual tasks: `nimble core` (the headless binary), `nimble gui`, `nimble llama`, `nimble web`,
+`nimble suites` (build both binaries and run the test suites).
 
 ---
 
-## Command Line Interface
+## What Runs
 
-Jenova installs launchers to `~/.local/bin` pointing to the standalone installation in `~/JCA`.
+One process owns all three ports: the application starts the HTTP server on `:8080` and supervises
+both `llama-server` backends in-process.
+
+| Port | Service | Bind | Purpose |
+|---|---|---|---|
+| **8080** | Jenova HTTP server | `127.0.0.1`, or `0.0.0.0` under `--lan` | The only client-facing port. Serves the Web UI, the workspace database API, retrieval, web search, and forwards inference |
+| 8081 | `llama-server` | loopback always | OpenAI-compatible inference |
+| 8082 | `llama-server` (embedding mode) | loopback always | Embeddings for semantic search |
+
+**`:8080` is the only port to open in a firewall.** 8081 and 8082 bind loopback unconditionally —
+including under `--lan` — because nothing outside the host addresses them. They are
+unauthenticated; exposing them would publish open inference endpoints.
+
+### Web UI
+
+A SvelteKit static SPA served at `:8080`, and the LAN client. Persistent workspaces, branching
+conversation history, token streaming with TPS/TTFT metrics, `<think>` reasoning blocks, GFM
+markdown, KaTeX math, syntax highlighting, in-browser PDF viewing, and MCP client support.
+
+Workspaces, projects, folders, conversations, messages and notes are stored in SQLite at
+`~/Jenova/.system/jenova.db`, managed by the server. Notes and chats are additionally mirrored to
+`~/Jenova/Workspaces` as plain Markdown, readable and editable with any text editor.
+
+### Desktop application
+
+`jenova` is a native Nim application built with [owlkettle](https://github.com/can-lehmann/owlkettle)
+on GTK4/libadwaita, compiled from `src/jenova_gui.nim`. It offers two surfaces over the same
+in-process code:
+
+- **The window** — chat, the workspace tree, notes, a canvas, and backend control: start, stop and
+  restart, live per-service health, the LAN toggle, model switching, and the Web UI opener.
+- **A system tray item** — the same control surface from a context menu, published over D-Bus as a
+  `org.kde.StatusNotifierItem` (`src/jenova/tray.nim`). `--no-tray` runs the window without it.
+
+There is no separate supervisor to start: `jenova` *is* the server. It brings up the HTTP port and
+both backends itself and supervises them in-process. `jenova-core` is the same program without the
+GTK dependency, for a headless or LAN-server host.
+
+### LAN mode
+
+`jenova-core serve --lan` moves the client-facing port to `0.0.0.0`, making your workspace
+reachable from a phone, tablet or second machine at `http://<host-ip>:8080`. The window and the
+tray menu toggle the same thing.
+
+---
+
+## Commands
+
+`nimble` builds two binaries into `bin/`:
 
 | Command | Description |
-|---------|-------------|
-| `jenova` | Start the Jenova Desktop Manager or TUI |
-| `jenova-ca` | Backend daemon (inference, RAG, embedding, tool execution) |
-| `jenova-tui` | Kanagawa-themed terminal manager |
-| `jenova-ui` | Desktop Manager (tray icon and TUI) |
-| `jenova-swap-mount` | Helper to mount Optane/NVMe swap for extended model storage |
-| `build-llama-jenova` | Build script for auto-detected backend (Vulkan/CUDA/Metal) |
+|---|---|
+| `jenova` | The desktop application. Starts the server and both backends itself. `--no-tray` suppresses the tray item |
+| `jenova-core` | The same program without GTK, for a headless or LAN-server host — see [docs/usage.md](docs/usage.md) |
+
+`jenova-core` carries the operational subcommands: `serve`, `backends`, `models`, `paths`,
+`config`, `db-init`, `db-capabilities`, and the self-tests. The desktop application performs the
+same operations in-process — backend control, model switching and the LAN toggle are all in its
+window and tray menu — and spawns no shell to do any of it.
 
 ---
 
-## Updating
+## Hardware
 
-```sh
-# Update everything — pulls repo, rebuilds changed components, redeploys to ~/JCA
-./install-jenova.sh update
-```
+Jenova targets consumer and prosumer laptops. Detection runs at install time and deploys a
+matching profile that sets GPU offload, context size, batch sizes and thread counts.
 
----
+| Profile | Devices | Layers | Context | Drafter |
+|---|---|---|---|---|
+| `Vulkan/dgpu-i5-1135g7` | `Vulkan0` | 16 | 8K | no |
+| `Vulkan/dgpu-igpu-i5-1135g7` | `Vulkan0,Vulkan1` | all | 32K | yes |
+| `Vulkan/apu-ryzen7-5700u` | `Vulkan0` | 24 | 16K | yes |
+| `Vulkan/dgpu-generic-12gb` | `Vulkan0` | all | 32K | yes |
+| `CPU/generic` | `CPU` | 0 | 16K | no |
+| `CUDA/dgpu-generic` | `CUDA0` | all | 16K | yes |
 
-## Recommended Models
+**Profiles do not choose your model.** `src/jenova/models.nim` discovers whatever `.gguf` files are
+in `~/Jenova/models/` — `models.discover`, called from `config.load`, fills only the model paths the
+configuration left empty. Point `JENOVA_MODEL`, `JENOVA_DRAFT_MODEL` or `JENOVA_EMBED_MODEL` at
+anything else you like; an explicit path always wins over discovery.
 
-Jenova is optimised for the Qwen3 model family. The system defaults to Qwen3 derivatives quantised into GGUF format. Hardware profiles select the appropriate size automatically:
+Rough VRAM guide: about **0.75 GB per 1B parameters** at Q4_K_M.
 
-| Hardware Tier | Recommended Model | Quantisation |
-|---------------|-------------------|--------------|
-| Integrated GPU / CPU-only | Qwen3-4B | Q6_K |
-| Entry discrete GPU (4GB VRAM) | Qwen3-4B | Q8_0 |
-| Dual iGPU + dGPU | Qwen3-4B | Q8_0 |
-| Discrete GPU (4GB + Optane swap) | Qwen3-9B | Q4_K_M |
-| Discrete GPU (12GB+ VRAM) | Qwen3-9B | Q8_0 |
-
-Model paths and sizes are soft defaults. Override any setting via environment variables (`JENOVA_MODEL`, `JENOVA_DEVICES`, `JENOVA_NGL_AGENT`, etc.) without touching configuration files.
+Full detail — scoring, the priority ladder, every setting, and how to add a profile — is in
+[hardware-profiles/README.md](hardware-profiles/README.md).
 
 ---
 
 ## Platform Support
 
-Jenova is designed with a FreeBSD-first philosophy and fully supports Linux. macOS support is experimental.
+**Jenova is a FreeBSD program**, not a portable program that runs on FreeBSD. The source contains
+no other platform: one kernel ABI, one package manager, one hardware-profile tree.
 
-| Platform | Status |
-|----------|--------|
-| FreeBSD 14/15 | Primary — ZFS, Vulkan, Optane swap |
-| Linux | Full support — Vulkan and CUDA backends |
-| macOS | Experimental — Metal backend |
+| | |
+|---|---|
+| **Target** | FreeBSD 15+ (amd64, aarch64) |
+| **Storage** | ZFS or UFS; ZFS ARC tuning shipped per profile |
+| **GPU** | Vulkan by default. CUDA is opt-in and never auto-selected |
+| **Swap** | Swap-backed model store via `mdmfs`, tuned for NVMe/Optane |
+| **Not supported** | Linux, macOS, Windows |
+
+Both binaries carry a `when not defined(freebsd)` guard and will not compile anywhere else.
+Hardware detection reads `kern.ostype` rather than `uname -s`, which answers `Linux` under the
+FreeBSD Linuxulator.
 
 ---
 
 ## Documentation
 
-Detailed documentation lives in `docs/`:
-
 | Topic | Path |
-|-------|------|
-| Architecture Overview | [docs/architecture/overview.md](docs/architecture/overview.md) |
-| System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
-| Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
-| Web UI Architecture | [docs/architecture/webui.md](docs/architecture/webui.md) |
-| Launchers and Scripts | [docs/usage/cli.md](docs/usage/cli.md) |
-| Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
-| FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
-| Linux Notes | [docs/installation/linux.md](docs/installation/linux.md) |
-| macOS Notes | [docs/installation/macos.md](docs/installation/macos.md) |
-| Hardware Profiles | [hardware-profiles/README.md](hardware-profiles/README.md) |
+|---|---|
+| Installation and dependencies | [docs/install.md](docs/install.md) |
+| Commands, models, HTTP API | [docs/usage.md](docs/usage.md) |
+| Architecture | [docs/architecture.md](docs/architecture.md) |
+| How content reaches the model | [docs/context-and-retrieval.md](docs/context-and-retrieval.md) |
+| Hardware profiles | [hardware-profiles/README.md](hardware-profiles/README.md) |
 | Privacy | [docs/privacy.md](docs/privacy.md) |
+| Web UI development | [jca_web/README.md](jca_web/README.md) |
 
 ---
 
-## Repository Structure
+## Repository Layout
 
 ```
 jenova/
-├── bin/                    # Launcher wrappers and tool scripts
-├── docs/                   # Documentation
-├── etc/                    # Configuration templates
-├── external/               # Third-party submodules and compiled binaries
-│   ├── ext_bin/            # Compiled backend binaries (llama-server, etc.)
-│   └── llama.cpp/          # Inference engine (git submodule)
-├── hardware-profiles/      # OS/GPU-specific tuning profiles and auto-detection
-├── jca_web/                # WebUI source (SvelteKit)
-├── jenova-ui/              # Desktop Manager source (C/GTK3)
-├── lib/                    # Core Lua modules and shell libraries
-├── models/                 # Model storage (gitignored — user data)
-├── png/                    # Icons and branding assets
-├── public/                 # Compiled WebUI bundle (served by proxy)
-├── scripts/                # Build, install, update, and management scripts
-├── tests/                  # Test scripts
-└── var/                    # Runtime logs and cache (gitignored)
+├── bin/                # Built binaries: jenova, jenova-core
+├── docs/               # This documentation
+├── etc/                # Active configuration (jenova.conf, jenova.local.conf)
+├── external/
+│   ├── ext_bin/        # Compiled backend binaries (llama-server and libraries)
+│   └── llama.cpp/      # Inference engine (git submodule)
+├── hardware-profiles/  # Per-hardware tuning profiles and auto-detection
+├── jca_web/            # Web UI source (SvelteKit)
+├── png/                # Icons and branding
+├── public/             # Built Web UI, served at :8080 (build output)
+├── src/
+│   ├── jenova/         # The modules both binaries link
+│   ├── jenova_core.nim # Headless server entry point
+│   └── jenova_gui.nim  # Desktop application entry point
+└── tests/              # Test suites, run by `nimble suites`
 ```
+
+Your models, database, logs and workspaces live under `~/Jenova`, not in this repository.
 
 ---
 
-## Privacy and Security
+## Privacy
 
-Jenova is a local-first system. Your data, models, and conversation history never leave your machine.
+- **Local inference** — every token is generated on your own GPU or CPU.
+- **No telemetry** — nothing is reported anywhere.
+- **Your data is yours** — SQLite and Markdown in your home directory, not a vendor's database.
+- **One outbound exception** — the web-search tool queries DuckDuckGo when a model invokes it.
 
-- **Local inference** — all AI processing happens on your local GPU or CPU
-- **Zero telemetry** — no usage data, no tracking, no external calls
-- **Data ownership** — conversations and workspace files are plain Markdown in your home directory, not locked in a browser database
+Details, including exactly what leaves the machine and when, in [docs/privacy.md](docs/privacy.md).
 
 ---
 
 ## Acknowledgements and License
 
-Jenova is built on the foundations of [llama.cpp](https://github.com/ggml-org/llama.cpp).
-
-Licensed under AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Built on [llama.cpp](https://github.com/ggml-org/llama.cpp). Licensed under AGPL-3.0 — see
+[LICENSE](LICENSE), [NOTICE](NOTICE) and [UPSTREAM-COPYRIGHT](UPSTREAM-COPYRIGHT).
 
 ---
 

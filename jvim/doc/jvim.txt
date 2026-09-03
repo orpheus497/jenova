@@ -1,0 +1,214 @@
+*jvim.txt*	For Neovim 0.10+	Last change: 2026 July 23
+
+		   JENOVA VIM (JVIM) REFERENCE MANUAL~
+
+
+==============================================================================
+CONTENTS						*jvim-contents* *jvim*
+
+    1. Overview & Philosophy ......................... |jvim-overview|
+    2. Quickstart & Installation .................... |jvim-quickstart|
+    3. Keymap Reference ............................. |jvim-keymaps|
+    4. User Commands Reference ...................... |jvim-commands|
+    5. Native UI Modules & Finder .................. |jvim-modules|
+    6. Jenova AI Integration ........................ |jvim-ai|
+    7. Environment Variables ........................ |jvim-environment|
+    8. Health Checks & Troubleshooting .............. |jvim-troubleshooting|
+
+==============================================================================
+1. OVERVIEW & PHILOSOPHY				*jvim-overview*
+
+jvim is a lightweight, self-contained Neovim distribution optimized for
+systems programming and AI-assisted development.
+
+Core Principles:
+- 100% First-Party Native UI Architecture: Replaces third-party Lua plugins
+  (Telescope, Nvim-Tree, Lualine, Bufferline, Which-Key, Trouble, etc.) with
+  fast native Lua modules in |jvim-modules|.
+- Vendored Plugin Ecosystem: Core backend plugins (LSP config, Treesitter, Git
+  tools, Conform formatting, CMP engine) are pre-packaged under `pack/` and
+  loaded without package managers.
+- Deep Jenova AI Stack: Native FIM inline completion, multi-turn chat,
+  autonomous agent tool execution, and LAN backend discovery.
+
+==============================================================================
+2. QUICKSTART & INSTALLATION				*jvim-quickstart*
+
+To install jvim using the deploy script: >
+    ./install.sh
+<
+This symlinks the repository to `~/.config/jvim` and appends the `jvi` alias to
+`~/.bashrc` and `~/.zshrc`: >
+    alias jvi='NVIM_APPNAME=jvim nvim'
+<
+To launch jvim: >
+    jvi
+<
+Or with file parameters: >
+    jvi src/main.rs
+
+==============================================================================
+3. KEYMAP REFERENCE					*jvim-keymaps*
+
+The leader key is set to `<Space>`.
+
+3.1 CORE & NAVIGATION ~
+    <leader>w         Save current buffer (:w)
+    <leader>q         Quit current window (:q)
+    <Esc>             Clear search highlight (:nohlsearch)
+    <leader>/         Toggle comment on line or visual selection
+    <C-h/j/k/l>       Jump to Left/Lower/Upper/Right window split
+    <S-h> / <S-l>     Switch to Previous / Next listed buffer
+    <leader>bd        Delete current buffer (preserve split layout)
+    <leader>bD        Delete current buffer forcefully
+
+3.2 FILE EXPLORER & FUZZY FINDER ~
+    <leader>e         Toggle file explorer sidebar (|jvim.tree|)
+    <leader>ff        Fuzzy find files (|:JvimFindFiles|)
+    <leader>fg        Live grep workspace (|:JvimFindGrep|, requires `rg`)
+    <leader>fb        Switch active listed buffers (|:JvimFindBuffers|)
+    <leader>fh        Search Vim help documentation tags (|:JvimFindHelp|)
+    <leader>fo        Browse recent files history (|:JvimFindOldfiles|)
+    <leader>fd        Search workspace LSP diagnostics (|:JvimFindDiagnostics|)
+
+3.3 LSP & CODE FORMATTING ~
+    gd                Go to symbol definition
+    K                 Show hover documentation popup
+    <leader>ca        Trigger LSP code action
+    <leader>rn        Rename symbol under cursor
+    <leader>cd        Open floating diagnostic window for line
+    <leader>cf        Format current buffer (Conform with LSP fallback)
+    [d / ]d           Jump to Previous / Next diagnostic item
+
+3.4 GIT INTEGRATION ~
+    [h / ]h           Move to Previous / Next Git hunk
+    <leader>gs        Stage hunk under cursor or visual selection
+    <leader>gS        Stage entire buffer
+    <leader>gu        Undo last staged hunk
+    <leader>gR        Reset buffer changes
+    <leader>gr        Reset selected hunk in visual mode
+    <leader>gp        Preview hunk diff float
+    <leader>gb        Detailed line blame float
+    <leader>gB        Toggle inline line blame
+    <leader>gd        Diff current buffer against git index
+    <leader>gD        Diff current buffer against HEAD~
+    <leader>gg        Open Neogit interactive status window
+    <leader>gv        Open Diffview side-by-side view
+    <leader>gh        View file Git history
+    <leader>gH        View repository Git history
+    <leader>gc        Close Diffview panel
+    <leader>gf        Open Fugitive Git status (:Git)
+
+3.5 DIAGNOSTICS LIST & IDE LAYOUT ~
+    <leader>xx        Toggle workspace diagnostics panel
+    <leader>xb        Toggle buffer diagnostics panel
+    <leader>xq        Open Quickfix window (:copen)
+    <leader>xl        Open Location List window (:lopen)
+    <leader>ti        Toggle complete IDE split panel layout (|:IDE|)
+
+3.6 TERMINAL ~
+    <leader>tt        Toggle bottom shell terminal
+    <leader>tn        Spawn new shell terminal instance
+    <leader>atj       Toggle dedicated Jenova AI terminal
+
+3.7 JENOVA AI INTEGRATION ~
+    <leader>aa        Toggle Jenova AI Chat window
+    <leader>ac        Open AI Chat pre-loaded with current buffer context
+    <leader>an        Open new AI Chat session
+    <leader>ar        Send prompt response in chat buffer
+    <leader>ae        Visual Chat: Send selected text to AI
+    <leader>aw        Visual Rewrite: Ask AI to refactor selected code
+    <leader>ai        Trigger inline code rewrite prompt
+    <leader>as        Perform Web Search query via AI agent
+    <leader>ax        Stop active AI generation
+    <leader>af        Toggle Llama.vim FIM (Fill-in-the-middle) completion
+    <leader>atd       Send current buffer LSP errors to AI for auto-fix
+    <leader>amm       Toggle Agent Mode vs. Conversation Mode
+    <leader>amr       Reset AI Agent working memory & context
+    <leader>amf       Clear chat history & start fresh session
+    <leader>amd       Delete active chat file
+    <leader>atm       Open Jenova CA telemetry monitor (|:JenovaMonitor|)
+    <leader>ath       Run Jenova health checks (|:checkhealth jenova|)
+    <leader>atl       Scan local network (LAN) for Jenova CA servers
+    <leader>h         Open JVim start dashboard (|:JvimDashboard|)
+
+==============================================================================
+4. USER COMMANDS REFERENCE				*jvim-commands*
+
+    Command		Module		Description ~
+    :IDE		jvim.layout	Toggle unified IDE panel layout
+    :JvimDashboard	jvim.dashboard	Open jvim home dashboard
+    :JvimFindFiles	jvim.finder	Launch fuzzy file finder
+    :JvimFindBuffers	jvim.finder	Launch buffer selector
+    :JvimFindGrep	jvim.finder	Launch live ripgrep picker
+    :JvimFindHelp	jvim.finder	Search Neovim help tags
+    :JvimFindOldfiles	jvim.finder	Browse recent files history
+    :JvimFindDiagnostics jvim.finder	Search workspace diagnostics
+    :JenovaChat		jenova.chat	Toggle Jenova AI Chat window
+    :JenovaChatNew	jenova.chat	Create new AI chat session
+    :JenovaChatRespond	jenova.chat	Trigger response for active prompt
+    :JenovaChatDelete	jenova.chat	Delete current chat session file
+    :JenovaChatFresh	jenova.chat	Clear session context & wipe buffer
+    :JenovaChatStop	jenova.chat	Abort active streaming generation
+    :JenovaWebSearch	jenova.chat	Run web search query via AI agent
+    :JenovaChatContext	jenova.chat	Attach current buffer content to chat
+    :JenovaToggleMode	jenova.chat	Toggle Agent vs. Conversation mode
+    :JenovaAgentReset	jenova.chat	Reset agent memory & context window
+    :JenovaMonitor	jenova.monitor	Open real-time telemetry monitor
+    :JenovaLanScan	jenova.lan	Scan local network for Jenova CA
+    :ConformInfo	conform.nvim	Display registered code formatters
+    :checkhealth jenova	jenova.health	Run diagnostic suite for Jenova
+
+==============================================================================
+5. NATIVE UI MODULES & FINDER				*jvim-modules*
+
+5.1 FINDER TOOLING (`jvim.finder`) ~
+    The native fuzzy finder (`jvim.finder`) provides floating prompt pickers:
+    - Files (`:JvimFindFiles`): Prefers `fd`, falls back to `find`, and
+      falls back to `vim.fs` walking.
+    - Live Grep (`:JvimFindGrep`): Requires system `rg` (*ripgrep*). Runs
+      debounced searches across workspace files.
+    - Recent Files (`:JvimFindOldfiles`): Inspects Neovim `vim.v.oldfiles` ShaDa
+      history, filtering out missing files with `uv.fs_stat`.
+
+5.2 OTHER UI MODULES ~
+    - `jvim.tree`: Native file tree with Git status badges.
+    - `jvim.layout`: Panel layout coordinator.
+    - `jvim.notify`: Floating notification queue.
+    - `jvim.statusline` / `jvim.tabline`: Global status bar & tab line.
+    - `jvim.keyhelp`: Leader-prefix keyhint popup menu.
+    - `jvim.indent_guides`: Extmark-based indent guide lines.
+
+==============================================================================
+6. JENOVA AI INTEGRATION				*jvim-ai*
+
+The Jenova AI suite includes:
+- FIM Completion (`llama.vim`): Real-time fill-in-the-middle code completion.
+- AI Chat (`jenova.chat`): Interactive drawer for multi-turn dialogue, code
+  rewrites, and automated diagnostic fixing.
+- Agent Execution (`jenova.agent`): Autonomous tool calling and context
+  compaction engine.
+- LAN Discovery (`jenova.lan`): Auto-detects remote Jenova CA backend hosts.
+- Telemetry Monitor (`jenova.monitor`): Real-time server telemetry dashboard.
+
+==============================================================================
+7. ENVIRONMENT VARIABLES				*jvim-environment*
+
+    Variable		Default		Description ~
+    JENOVA_CONNECT_HOST	127.0.0.1	Explicit remote Jenova CA IP/host
+    JENOVA_HOST		127.0.0.1	Fallback Jenova backend bind host
+    JENOVA_PORT		8080		Main API proxy & intelligence port
+    JENOVA_LLAMA_PORT	8081		Dedicated FIM completion port
+    JENOVA_LAN_MODE	0		Set to 1 to force LAN scanning on boot
+    JENOVA_ROOT		(none)		Root directory of Jenova workspace
+
+==============================================================================
+8. HEALTH CHECKS & TROUBLESHOOTING			*jvim-troubleshooting*
+
+To diagnose setup or backend connectivity:
+1. Run `:checkhealth jenova`
+2. Check binary dependencies: `which rg fd clangd rust-analyzer`
+3. Test backend network discovery: `:JenovaLanScan`
+4. Inspect real-time server telemetry: `:JenovaMonitor`
+
+vim:tw=78:ts=8:ft=help:norl:

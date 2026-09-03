@@ -10,14 +10,10 @@
 #
 #     cp .clangd.example .clangd
 #
-#   Then uncomment exactly ONE of the platform macro lines below that matches
-#   your operating system.
 #
-# Platform macro options — uncomment the one that matches your OS:
-#   Linux:    -D__linux__
-#   macOS:    -D__APPLE__
-#   FreeBSD:  -D__FreeBSD__
-#   Other:    consult `cpp -dM /dev/null` on your system
+# Jenova targets FreeBSD only, so __FreeBSD__ is defined unconditionally below.
+# clang defines it natively when compiling here; it is listed explicitly so
+# clangd resolves the same #ifdef branches the compiler will take.
 #
 # Keeping this in sync: if configure.ac gains new AC_DEFINE probes, mirror
 # the corresponding -DHAVE_* flag here so clangd sees the same definition set
@@ -26,10 +22,7 @@ CompileFlags:
   Add:
     - "-I."
     - "-DHAVE_CONFIG_H"      # standard autoconf config.h guard
-    # Platform macro — uncomment exactly ONE of the following for your OS:
-    # - "-D__linux__"
-    # - "-D__APPLE__"
-    # - "-D__FreeBSD__"
+    - "-D__FreeBSD__"        # the only supported platform
     - "-DPOSIX"              # POSIX job-control and signal semantics
     - "-DPOSIXJOBS"          # POSIX job-control builtins
     - "-DBSDJOBS"            # BSD job-control support

@@ -1,56 +1,66 @@
-# --- Jenova CLI (external checkout — downloaded at runtime, not tracked or a submodule) ---
-/jenova-cli/*
-!/jenova-cli/.gitkeep
+# Jenova — .gitignore
+#
+# Consolidated 2026-09-01 (Session 019). Rules for paths that no longer exist
+# were removed rather than carried: /jenova-cli, /cli-agent, /models, /backups,
+# conductor/, /.kdev4, the installation-audit artifacts and the shellcheck
+# report. Duplicate entries for .jenova/ and .crush/ were folded into one.
+#
+# ONE KNOWN INCONSISTENCY, deliberately left for the USER to decide:
+# `bin/jenova` is listed below AND is tracked in git, because it was committed
+# before the rule existed and .gitignore does not untrack an existing file. It
+# is therefore a ~2 MB binary re-committed on every build. Untracking it
+# (`git rm --cached bin/jenova`) removes it from the repository on the next
+# commit, which changes what a clone gets — so it is not done here.
 
-# --- Build Artifacts ---
-/public/
+# --- Build artifacts ---------------------------------------------------------
+# Both binaries are built by `nimble core` and `nimble gui` (never `make` — this
+# project has no Makefile, D-AM).
+/bin/jenova
+/bin/jenova-core
 /bin/llama-server
-/bin/jenova-ui
-/jenova-ui/jenova-ui
+/public/
 /external/ext_bin/
-
-/cli-agent/build/
-/cli-agent/build_test/
+nimcache/
 
 *.o
 *.so
 *.a
 *.dylib
 
-# --- Models (never upload multi-GB LLM weights) ---
+# --- jvim: TRACKED ON PURPOSE — do not add an ignore rule here ---------------
+# `jvim/` is the configuration for the Neovim this application embeds, added by
+# the USER 2026-09-01 and ruled **D-BS**: it is configuration, not product Lua,
+# so the no-Lua rule (D-AM, D-AZ) does not archive it and it is not ignored.
+#
+# `jvim/pack/` is vendored third-party plugins and is tracked deliberately —
+# the distribution's promise is zero package manager and no network on first
+# boot, which only holds if the vendored tree ships with it. ~28 MB total.
+#
+# Its runtime noise (shada, swap, undo, *.log) is handled by `jvim/.gitignore`,
+# which git honours in place. `*.log` below also covers `jvim/nvim.log`.
+
+# --- Models (never commit multi-GB weights) ----------------------------------
 *.gguf
-/models/**/*.bin
 *.safetensors
 *.onnx
 *.pt
 *.pth
 *.h5
 *.tflite
-!/models/.gitkeep
-!/models/**/.gitkeep
-!/models/README.md
+*.bin
 
-# --- Runtime Data ---
+# --- Runtime data and private state ------------------------------------------
 /var/log/**
 /var/cache/**
 !/var/log/.gitkeep
 !/var/cache/.gitkeep
-
-# --- Jenova Runtime (Private Data) ---
-/.jenova/
-/.system/
-/.crush/
 /var/state/
+/.system/
 
-# --- Temporary Search & Discovery Artifacts ---
-/var/cache/find_results.tmp
-/var/cache/workspaces.tmp
-/var/cache/storage.tmp
-
-# --- Backups (local-only snapshots) ---
-/backups/
-
-# --- AI Agent / Assistant Data (chat history, session data, dev docs) ---
+# --- AI assistant working directories ----------------------------------------
+# `.devdocs/` is deliberately NOT here: the process record is tracked and public
+# in repository history. A previous revision of this file claimed otherwise and
+# was wrong on both counts.
 .claude/
 .crush/
 .gemini/
@@ -63,7 +73,7 @@
 .tabnine/
 .windsurf/
 
-# --- Environment, Keys & Secrets ---
+# --- Environment, keys and secrets -------------------------------------------
 .env
 .env.*
 *.key
@@ -81,23 +91,15 @@ credentials.json
 secrets.json
 auth.json
 
-# --- System & IDE ---
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-*.iml
-*~
-*.swp
-*.swo
-\#*\#
-
-# --- Configuration (local overrides) ---
+# --- Local configuration overrides -------------------------------------------
+# `jenova.local.conf` is the USER's machine file. `hardware.applyProfile`
+# never writes it, and that is asserted (D-BN) — silently overwriting it is the
+# one way the profile feature could do real damage.
 /etc/jenova.conf.local
 /etc/jenova.conf.bak.*
 /etc/jenova.local.conf
 
-# --- User / Session Data (chat history, memory, training data) ---
+# --- Databases and session data ----------------------------------------------
 *.sqlite
 *.sqlite3
 *.db
@@ -106,7 +108,7 @@ Thumbs.db
 .zsh_history
 .history
 
-# --- Large / temporary files ---
+# --- Logs, archives and crash dumps ------------------------------------------
 *.log
 *.tar
 *.tar.gz
@@ -118,29 +120,20 @@ Thumbs.db
 core
 core.*
 *.dmp
-nul
 
-# Conductor working notes
-/.kdev4
-*.kdev4
-conductor/
+# --- System and IDE ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.iml
+*~
+*.swp
+*.swo
+\#*\#
 
-# --- Installation analysis artifacts ---
-/.jenova-tmp-ca-old
-
-/INSTALLATION-AUDIT.md
-/INSTALLATION-FINAL-REPORT.md
-/test-installation.sh
-/test_bin_jenova.log
-/debug.log
-/pr_inline_comments.txt
-/pr_reviews.txt
-
-# --- Dev reports (generated, not source) ---
-/shellcheck_report.txt
-
+# --- Web UI build output (jca_web is frozen, D-Z — read it, never edit it) ----
 /jca_web/node_modules/
 /jca_web/.svelte-kit/
 /jca_web/build/
 /jca_web/src-tauri/target/
-
