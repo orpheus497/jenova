@@ -785,6 +785,30 @@ reintroducing the defect and re-running, which is the only way to know a test ca
 `StatusNotifierItem` tray (no watcher runs under Xvfb), the embedded Neovim page, and any
 behaviour that differs between GTK 4.14 and the target's 4.20.4. Phase 1 of report 05 stands.
 
+### R-23 · the harness ran against the developer's live data · session 8
+
+`gui_build.sh` set `JENOVA_ROOT` to a scratch tree and said so:
+
+> A scratch root, so the run cannot touch the developer's own database, notes or settings.
+
+`paths.resolve` reads **two** variables and they mean different things. `JENOVA_ROOT` is the
+install tree; `JCA_HOME` is the data tree, and it does not derive from `JENOVA_ROOT` — it defaults
+to `$HOME/Jenova` (`paths.nim:66`). With only the first set:
+
+```
+JENOVA_ROOT=<scratch>
+JCA_HOME=/root/Jenova
+JENOVA_STATE=/root/Jenova/.system
+```
+
+So both the `--check` and the mapped window ran against the real database, notes, workspaces, logs
+and cache. `--check` builds the entire widget tree, which opens the database and migrates it.
+
+Proven by running the built binary both ways: without `JCA_HOME` it creates
+`/root/Jenova/.system/jenova.db`; with it, that file does not appear and the database lands in the
+scratch instead. This is the defect class `test_api_db.sh` records in its own header as having
+destroyed a real conversation database, and the fix is the one that suite already uses.
+
 ---
 
 ## How session 2's changes were verified

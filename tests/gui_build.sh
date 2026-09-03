@@ -117,13 +117,24 @@ cd "$SRC"
 echo "gui_build: compiling jenova"
 "$NIM" c $FLAGS --mm:arc --path:src --out:"$OUT/jenova" src/jenova_gui.nim
 
-# A scratch root, so the run cannot touch the developer's own database, notes or
-# settings. `etc/` is copied because `config.load` reads it; `png/` because the
-# sidebar logo is read from there and a missing one is survivable but noisy.
+# Two roots, because `paths.resolve` reads two variables and they mean
+# different things. `JENOVA_ROOT` is the install tree — `etc/` because
+# `config.load` reads it, `png/` because the sidebar logo is read from there and
+# a missing one is survivable but noisy.
 RT="$OUT/root"
 mkdir -p "$RT"
 cp -R "$ROOT/etc" "$RT/" 2>/dev/null || true
 cp -R "$ROOT/png" "$RT/" 2>/dev/null || true
+
+# `JCA_HOME` is the DATA tree, and it has to be set explicitly: it does not
+# derive from `JENOVA_ROOT`, it defaults to `$HOME/Jenova`
+# (`paths.nim:66`). Setting only `JENOVA_ROOT` therefore ran both the `--check`
+# and the mapped window against the developer's live database, notes,
+# workspaces, logs and cache — `--check` builds the whole widget tree, so it
+# opens the database and migrates it. That is the defect `test_api_db.sh`
+# records having destroyed a real conversation database, and this is its fix.
+JH="$OUT/jcahome"
+mkdir -p "$JH/.system" "$JH/Workspaces"
 
 echo "gui_build: jenova --check"
 # `--check` initialises GTK, installs the stylesheet and builds the whole widget
@@ -137,7 +148,7 @@ run_check() {
   # line still satisfied the `grep` below and the whole step passed. POSIX `sh`
   # has no `pipefail` to lean on, so the pipe is removed instead.
   rc=0
-  JENOVA_ROOT="$RT" JENOVA_NO_BACKENDS=1 CANVAS=0 \
+  JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 CANVAS=0 \
     "$OUT/jenova" --check >"$OUT/check.out" 2>"$OUT/check.err" || rc=$?
   cat "$OUT/check.out"
   if [ "$rc" -ne 0 ]; then
@@ -321,7 +332,7 @@ echo "gui_build: running the window"
 # A port of its own, so the run cannot collide with a server the developer has
 # up. `--no-tray` because a StatusNotifierWatcher is a desktop service and its
 # absence is not this script's subject.
-JENOVA_ROOT="$RT" JENOVA_NO_BACKENDS=1 CANVAS=0 PORT=18787 \
+JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 CANVAS=0 PORT=18787 \
   "$OUT/jenova" --no-tray >"$OUT/run.log" 2>&1 &
 GPID=$!
 # Long enough for the window to map and paint its first frame. The three worker
