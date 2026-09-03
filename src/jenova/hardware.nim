@@ -1,36 +1,18 @@
-## Script function and purpose: Hardware detection, profile scoring and profile
-## selection in Nim, replacing `hardware-profiles/detect-hardware.sh` (S-1,
-## ruled at D-BC).
+## Script function and purpose: detect the machine, score every profile against
+## it, and deploy the winner. Kept below the window because a wrong score does
+## not fail loudly — it silently runs the machine on the wrong tuning — so all of
+## it has to be assertable with no window and no backend.
 ##
-## Choosing which profile Jenova runs under was a 431-line shell script that
-## died on its line 19 sourcing an archived `lib/detect-env.sh`, and which
-## nothing invoked anyway because `config.nim` reads `etc/jenova.conf`
-## directly. So there was no way to detect hardware or change profile at all
-## except hand-editing a config file, which D-BC makes a defect.
-##
-## ## Why this is a module and not part of `gui.nim`
-##
-## Scoring is pure logic over data files, and a wrong score does not fail
-## loudly — it silently runs the machine on the wrong tuning. Keeping detection,
-## scoring and apply here means `hardware-selftest` can assert all of it with no
-## window and no backend, which is the same reason `settings.nim` and the
-## branching tree walk sit below the widget layer.
-##
-## ## What this deliberately does NOT do
-##
-## **It never touches `sysctl` as a setting (D-BN).** No kernel tunable is
-## applied, `/etc/sysctl.conf` is never written, and the tuning in the archived
-## `jenova-setup` scripts is not ported. Reading a `sysctl` to find out what the
-## machine *is* — `hw.model`, `hw.physmem` — is detection, not tuning, and is
-## the only use of it here.
+## No kernel tunable is ever applied and `/etc/sysctl.conf` is never written.
+## Reading a `sysctl` to learn what the machine *is* is detection; setting one
+## would be tuning, and that is out of scope here.
 
 import std/[algorithm, os, osproc, re, streams, strtabs, strutils]
 
 type
   Hardware* = object
-    ## What was detected, in the shape the scorer matches against. The three
-    ## `*Raw` fields are the strings a profile's patterns are tested on; the
-    ## rest exist to be shown to the USER.
+    ## The three `*Raw` fields are the strings a profile's patterns are tested
+    ## against; the rest exist only to be shown.
     osName*: string        ## always "FreeBSD" — see `detectOs`
     osRelease*: string
     cpuModel*: string
@@ -42,9 +24,8 @@ type
     swapInfo*: string
 
   Profile* = object
-    ## One `hardware-profiles/<vendor>/<name>/` directory, read from its
-    ## `profile.conf`. `dir` is the absolute path; `name` is the
-    ## vendor/name pair the USER sees and `apply` is given.
+    ## One profile directory, read from its `profile.conf`. `name` is the
+    ## vendor/name pair shown on screen and accepted by `apply`.
     name*: string
     dir*: string
     desc*: string
@@ -57,9 +38,9 @@ type
     hwSummary*: seq[tuple[key, value: string]]
 
   Score* = object
-    ## The outcome of scoring one profile. `disqualified` is not "scored zero":
-    ## a required pattern that did not match takes the profile out of the
-    ## running entirely, and `why` is what the screen shows to explain it.
+    ## `disqualified` is not "scored zero" — a required pattern that did not
+    ## match takes the profile out of the running entirely, and `why` is what
+    ## the screen shows to explain it.
     profile*: Profile
     points*: int
     disqualified*: bool
@@ -70,10 +51,9 @@ type
 const
   ProfilesDirName* = "hardware-profiles"
 
-  ## The scoring ladder, ported from `detect-hardware.sh`'s `match_profile`.
-  ## These are the numbers that decide which profile a machine gets, so they are
-  ## named rather than inlined — the -8 in particular is the whole reason a
-  ## dual-GPU profile loses on a single-GPU machine.
+  ## The numbers that decide which profile a machine gets, named rather than
+  ## inlined. The penalty in particular is the whole reason a dual-GPU profile
+  ## loses on a single-GPU machine.
   PtsOs* = 20
   PtsCpu* = 10
   PtsGpu* = 5
@@ -81,10 +61,9 @@ const
   PtsSwap* = 10
   PtsGeneric* = -5
 
-## Function purpose: read a `KEY="value"` line out of a `profile.conf` without
-## running it. The originals are `sh` and were sourced; sourcing a data file to
-## read five strings out of it is what `load_jenova_profile` did and is exactly
-## what this project is removing.
+## Function purpose: reads a `KEY="value"` line without running the file. These
+## are shell and could be sourced, but sourcing a data file to read five strings
+## out of it executes whatever else is in it.
 proc confValue(lines: seq[string], key: string): string =
   for raw in lines:
     let line = raw.strip
@@ -98,6 +77,8 @@ proc confValue(lines: seq[string], key: string): string =
     return v
   ""
 
+## Function purpose: one profile directory read into a value, so scoring never
+## touches the filesystem and can be asserted against fixtures.
 proc readProfile*(dir: string): Profile =
   let conf = dir / "profile.conf"
   if not fileExists(conf):
@@ -117,13 +98,13 @@ proc readProfile*(dir: string): Profile =
             "HW_STORAGE", "HW_GPU_TOTAL_VRAM", "STRATEGY_DESC"]:
     let v = confValue(lines, k)
     if v.len > 0: result.hwSummary.add (k, v)
-  # A profile whose PROFILE_NAME is missing is still selectable by directory,
-  # which is what the shell keyed on — it derived the name from the path.
+  # A profile whose declared name is missing stays selectable by its directory,
+  # so a malformed `profile.conf` costs its label and not its existence.
   if result.name.len == 0:
     result.name = dir.lastPathPart
 
-## Function purpose: every profile in the tree, in a stable order so the screen
-## and the self-test see the same list. `find` gave the shell an arbitrary one.
+## Function purpose: sorted, so the screen and the self-test see the same list —
+## directory enumeration order is not defined.
 proc listProfiles*(root: string): seq[Profile] =
   let base = root / ProfilesDirName
   if not dirExists(base):
@@ -136,6 +117,8 @@ proc listProfiles*(root: string): seq[Profile] =
 
 # ---------------------------------------------------------------- detection --
 
+## Function purpose: an unavailable key answers empty rather than raising,
+## because detection has to work on a partially-reporting kernel.
 proc sysctlStr(key: string): string =
   try:
     let (outp, code) = execCmdEx("sysctl -n " & key)
@@ -143,37 +126,33 @@ proc sysctlStr(key: string): string =
   except OSError, IOError:
     ""
 
+## Function purpose: an unparseable value answers zero, which every scoring
+## rule already treats as "not detected".
 proc sysctlInt(key: string): int =
   try: parseInt(sysctlStr(key)) except ValueError: 0
 
-## Action purpose: the OS name is hardcoded rather than taken from `uname -s`,
-## and this is not laziness — under the FreeBSD Linuxulator `uname -s` answers
-## "Linux", which made the shell script select a Linux profile on a FreeBSD
-## host. The release still comes from the kernel.
+## Action purpose: the OS name is hardcoded rather than read from `uname -s`.
+## Under the Linuxulator `uname -s` answers "Linux", which selects a Linux
+## profile on a FreeBSD host. The release still comes from the kernel.
 proc detectOs(h: var Hardware) =
   h.osName = "FreeBSD"
   h.osRelease = sysctlStr("kern.osrelease")
   if h.osRelease.len == 0: h.osRelease = "unknown"
 
+## Function purpose: the model string is what the CPU patterns match against,
+## so it is taken verbatim rather than normalised.
 proc detectCpu(h: var Hardware) =
   h.cpuModel = sysctlStr("hw.model")
   h.cpuThreads = sysctlInt("hw.ncpu")
 
-## Function purpose: run a command that must not be allowed to hang, and kill it
-## if it does.
+## Function purpose: `execCmdEx` has no timeout, and the GPU probe below
+## initialises Vulkan — which can be arbitrarily slow while the agent model is
+## loading onto the same device. An unbounded probe holds the worker it runs on,
+## and that worker is joined at exit, so a stuck probe would hang shutdown too.
 ##
-## Action purpose: **`execCmdEx` has no timeout, and that cost a hang.** The GPU
-## probe below initialises Vulkan; while the agent model is loading onto the same
-## device it can be slow, and there is no upper bound on "slow". The first
-## version of this ran unbounded on the shared control worker and left the window
-## sitting on "starting" with every button dead (**D-BQ**). It is off that worker
-## now, and it is bounded here as well — one guard would have been enough for
-## today, and two is what keeps a stuck probe from also hanging the exit path,
-## where the worker is joined.
-##
-## The output is read after the process ends rather than while it runs: this
-## reads a device list of a few hundred bytes, far below the pipe buffer, so
-## draining concurrently would be machinery for no gain.
+## Action purpose: the output is read after the process ends rather than while it
+## runs. This reads a few hundred bytes, far below the pipe buffer, so draining
+## concurrently would be machinery for no gain.
 proc runBounded(exe: string, args: seq[string], libDir: string,
                 timeoutMs: int): tuple[output: string, ok: bool] =
   var p: Process
@@ -181,10 +160,10 @@ proc runBounded(exe: string, args: seq[string], libDir: string,
     var env = newStringTable(modeCaseSensitive)
     for k, v in envPairs(): env[k] = v
     if libDir.len > 0 and dirExists(libDir):
-      # Required, not defensive: without it the loader cannot find
-      # `libllama-server-impl.so` and the device list comes back **empty**,
-      # which does not look like an error — it looks like a machine with no GPU,
-      # and it silently selected the wrong profile the first time this ran.
+      # Action purpose: required, not defensive. Without it the loader cannot
+      # find the server's own shared object and the device list comes back
+      # empty — which reads as a machine with no GPU rather than as an error,
+      # and silently selects the wrong profile.
       let prior = getEnv("LD_LIBRARY_PATH")
       env["LD_LIBRARY_PATH"] =
         if prior.len > 0: libDir & ":" & prior else: libDir
@@ -201,8 +180,8 @@ proc runBounded(exe: string, args: seq[string], libDir: string,
     waited += Step
 
   if p.peekExitCode() == -1:
-    # Still running past its budget. Killed rather than waited on, because the
-    # caller is a worker whose thread is joined at exit.
+    # Killed rather than waited on: the caller is a worker whose thread is
+    # joined at exit.
     try: p.terminate() except CatchableError: discard
     try: p.kill() except CatchableError: discard
     try: discard p.waitForExit() except CatchableError: discard
@@ -214,35 +193,35 @@ proc runBounded(exe: string, args: seq[string], libDir: string,
   try: p.close() except CatchableError: discard
   (outp, true)
 
-## Action purpose: the GPU list comes from `llama-server --list-devices`, not
-## from `vulkaninfo` or `pciconf` as the shell used. It is the same source that
-## established the SETTLED FACTS device row, it is a binary this project already
-## ships and runs, and it reports the devices *the inference engine can actually
-## use* — which is the only question a profile is asking. Failure is not fatal:
-## a machine with no working Vulkan still scores, it just cannot win a
-## GPU-matched profile.
+## Function purpose: the GPU list comes from `llama-server --list-devices`
+## rather than `vulkaninfo` or `pciconf`, because it reports the devices the
+## inference engine can actually use — which is the only question a profile
+## asks. Failure is not fatal: a machine with no working Vulkan still scores, it
+## just cannot win a GPU-matched profile.
 proc detectGpu(h: var Hardware, llamaServer, llamaLibDir: string) =
   if llamaServer.len == 0 or not fileExists(llamaServer): return
-  # 10 seconds: an enumeration that has not answered by then is not going to,
-  # and the caller would rather report "no GPU reported" than never return.
+  # An enumeration that has not answered by then is not going to, and the
+  # caller would rather report no GPU than never return.
   let (outp, ok) = runBounded(llamaServer, @["--list-devices"], llamaLibDir,
                               10_000)
   if not ok: return
   for raw in outp.splitLines:
     let line = raw.strip
-    # The listing is `  Vulkan0: NVIDIA GTX 1650 Ti (4342 MiB, ...)`; the
-    # device name is what the MATCH_GPU_* patterns are written against.
+    # The device name between the colon and the parenthesis is what the
+    # profiles' GPU patterns are written against.
     if line.len == 0 or not line.contains(':'): continue
     let head = line.split(':')[0].strip
     if not (head.startsWith("Vulkan") or head.startsWith("CUDA") or
             head.startsWith("ROCm") or head.startsWith("SYCL")): continue
     h.gpuDevices.add line
 
+## Function purpose: swap is detected as well as RAM because one profile
+## identifies itself by its swap device rather than by its memory size.
 proc detectMemory(h: var Hardware) =
   let physBytes = sysctlInt("hw.physmem")
   if physBytes > 0: h.ramGiB = physBytes div (1024 * 1024 * 1024)
-  # `swapinfo -k` prints a header then one row per device; the total is the sum
-  # of the device rows, which are the ones whose first field is a path.
+  # `swapinfo -k` prints a header then one row per device, so the rows to sum
+  # are the ones whose first field is a path.
   var swapKiB = 0
   try:
     let (outp, code) = execCmdEx("swapinfo -k")
@@ -255,12 +234,14 @@ proc detectMemory(h: var Hardware) =
     discard
   h.swapGiB = swapKiB div (1024 * 1024)
 
+## Function purpose: reported rather than scored — no profile matches on
+## storage, but the screen shows it beside the rest.
 proc detectStorage(h: var Hardware) =
   h.storage = if execCmdEx("zpool list").exitCode == 0: "ZFS" else: "UFS"
 
-## Action purpose: `MATCH_SWAP` is written against swap device names plus the
-## NVMe controller listing, because the one profile that uses it is matching an
-## Optane swap device by controller model.
+## Function purpose: the swap patterns are tested against device names plus the
+## NVMe controller listing, because the profile that uses them is identifying a
+## swap device by its controller model.
 proc detectSwapHardware(h: var Hardware) =
   var parts: seq[string]
   try:
@@ -278,6 +259,8 @@ proc detectSwapHardware(h: var Hardware) =
   except OSError, IOError: discard
   h.swapInfo = if parts.len == 0: "None" else: parts.join(" ")
 
+## Function purpose: the whole probe in one call, so a caller cannot run half
+## of it and score against a partly-filled record.
 proc detect*(llamaServer = "", llamaLibDir = ""): Hardware =
   detectOs(result)
   detectCpu(result)
@@ -288,24 +271,22 @@ proc detect*(llamaServer = "", llamaLibDir = ""): Hardware =
 
 # ------------------------------------------------------------------ scoring --
 
-## Action purpose: the profile patterns are POSIX extended regexes — they use
-## alternation (`Lucienne|Renoir`) — and the shell tested them with `grep -iE`.
-## A pattern that does not compile must not take the profile out of the running
-## silently, so it is treated as a non-match and said so by the caller.
+## Function purpose: the profile patterns are POSIX extended regexes and use
+## alternation, so they cannot be compared literally. A pattern that does not
+## compile is treated as a non-match rather than silently removing the profile.
 proc matchesRe(hay, pattern: string): bool =
   if pattern.len == 0: return false
   try: hay.contains(re(pattern, {reIgnoreCase}))
   except RegexError: false
 
-## `MATCH_CPU` was tested with `grep -Fi` — a fixed string, case-insensitive —
-## specifically so a CPU model containing regex metacharacters cannot inject.
+## Function purpose: the CPU pattern is matched as a fixed string, not a regex,
+## so a CPU model containing metacharacters cannot change what it means.
 proc matchesFixed(hay, needle: string): bool =
   needle.len > 0 and hay.toLowerAscii.contains(needle.toLowerAscii)
 
-## Function purpose: score one profile against detected hardware, reproducing
-## `detect-hardware.sh`'s `match_profile` exactly — including the three
-## conditions that **disqualify** rather than merely score zero, which is the
-## part a summary of the ladder loses.
+## Function purpose: three conditions disqualify rather than merely score zero,
+## which is the part of the ladder that decides most outcomes — a profile out of
+## the running cannot be beaten back into it by accumulating points elsewhere.
 proc scoreProfile*(p: Profile, h: Hardware): Score =
   result.profile = p
 
@@ -344,10 +325,10 @@ proc scoreProfile*(p: Profile, h: Hardware): Score =
     else:
       result.why.add "GPU does not match " & p.matchGpu0 & " (+0)"
 
-  # Action purpose: this is the rule that separates the dual-GPU profile from
-  # the single-GPU one on the same CPU. A declared second GPU that is absent is
-  # penalised, not merely unscored, so the single-GPU profile wins on a machine
-  # with one GPU and loses on a machine with two.
+  # Action purpose: the rule that separates the dual-GPU profile from the
+  # single-GPU one on the same CPU. A declared second GPU that is absent is
+  # penalised rather than merely unscored, so the single-GPU profile wins on one
+  # GPU and loses on two.
   if p.matchGpu1.len > 0:
     if matchesRe(gpuHay, p.matchGpu1):
       result.points += PtsGpu
@@ -366,9 +347,8 @@ proc scoreProfile*(p: Profile, h: Hardware): Score =
       result.why.add "swap is not " & p.matchSwap & " — disqualified"
       return
 
-## Function purpose: score every profile, highest first, so both the screen and
-## the subcommand can show the ranking and not just the winner — "which one
-## matched and why" is the requirement D-BC's screen exists to answer.
+## Function purpose: ranked rather than reduced to a winner, because the screen
+## has to answer which profile matched and why, not only which one won.
 proc scoreAll*(profiles: seq[Profile], h: Hardware): seq[Score] =
   for p in profiles: result.add scoreProfile(p, h)
   result.sort(proc (a, b: Score): int =
@@ -377,9 +357,8 @@ proc scoreAll*(profiles: seq[Profile], h: Hardware): seq[Score] =
     else:
       cmp(b.points, a.points))
 
-## Function purpose: the winner, or nothing. The shell required a score above
-## zero to select at all, and that is kept: a profile that only ever accumulated
-## penalties is not a match, it is the absence of one.
+## Function purpose: a positive score is required to select at all. A profile
+## that only ever accumulated penalties is not a match, it is the absence of one.
 proc bestProfile*(profiles: seq[Profile], h: Hardware): tuple[found: bool, score: Score] =
   let ranked = scoreAll(profiles, h)
   if ranked.len == 0: return (false, Score())
@@ -388,14 +367,12 @@ proc bestProfile*(profiles: seq[Profile], h: Hardware): tuple[found: bool, score
 
 # -------------------------------------------------------------------- apply --
 
-## Function purpose: deploy a profile by copying its `jenova.conf` to
-## `$JCA_HOME/etc`, which `config.configDir` already prefers over the source
-## tree (D-AT2).
+## Function purpose: copies the profile's `jenova.conf` into `$JCA_HOME/etc`,
+## which configuration loading already prefers over the source tree.
 ##
-## Action purpose: **`jenova.local.conf` is never touched.** It is the USER's
-## machine file (SETTLED FACTS), `config.load` layers it over the profile, and
-## an apply that clobbered it would silently discard their overrides while
-## looking like it worked.
+## Action purpose: `jenova.local.conf` is never touched. It is the user's machine
+## file and is layered over the profile, so an apply that clobbered it would
+## discard their overrides while appearing to work.
 proc applyProfile*(p: Profile, jcaHome: string): tuple[ok: bool, msg: string] =
   let src = p.dir / "jenova.conf"
   if not fileExists(src):
@@ -410,18 +387,17 @@ proc applyProfile*(p: Profile, jcaHome: string): tuple[ok: bool, msg: string] =
   (true, "applied " & p.name & " to " & (destDir / "jenova.conf") &
          " — restart the backend for it to take effect")
 
-## Function purpose: find a profile by the name the USER sees, for `apply` by
-## name. An opt-in profile is selectable this way and only this way, which is
-## the whole meaning of opt-in.
+## Function purpose: an opt-in profile is selectable by name and only by name,
+## which is what opt-in means — scoring will never choose one.
 proc findByName*(profiles: seq[Profile], name: string): tuple[found: bool, profile: Profile] =
   for p in profiles:
     if p.name == name or p.dir.lastPathPart == name:
       return (true, p)
   (false, Profile())
 
-## Function purpose: the currently deployed profile, by matching the deployed
-## `jenova.conf` against each profile's own copy. There is no marker file, so
-## the content is the only evidence of which one is live.
+## Function purpose: there is no marker file, so the deployed `jenova.conf`'s
+## content compared against each profile's own copy is the only evidence of
+## which one is live.
 proc currentProfile*(profiles: seq[Profile], jcaHome: string): tuple[found: bool, name: string] =
   let deployed = jcaHome / "etc" / "jenova.conf"
   if not fileExists(deployed): return (false, "")

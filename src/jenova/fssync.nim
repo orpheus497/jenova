@@ -1,23 +1,16 @@
-## Script function and purpose: the filesystem mirror behind `/api/db/*` and the
-## `/api/fs/*` routes, replacing `lib/fs_sync.lua`.
+## Script function and purpose: the filesystem mirror behind the database and
+## storage routes. Every workspace, project, folder, note and file asset has a
+## real counterpart on disk, and deleting one moves it into a trash tree beside
+## a metadata sidecar rather than unlinking it, which is what makes restore
+## possible at all.
 ##
-## Every workspace, project, folder, note and file asset in the database has a
-## real counterpart on disk under `$JENOVA_WORKSPACES`. Deleting one moves it into
-## a trash tree beside a `.metadata.json` sidecar rather than unlinking it, which
-## is what makes restore possible. **This is the half of the `/api/db/*` contract
-## `src/jenova/api.nim` was missing** — recorded as N-27, and it matters beyond
-## fidelity: the RAG layer at N-S5b indexes these files, so a core that never
-## writes them would index an empty tree.
+## The path layout, trash naming and sidecar shape are a fixed contract: the Web
+## UI is frozen and reads them, so changing any of the three breaks a client
+## that cannot be changed back.
 ##
-## The path layout, trash naming and metadata shape are reproduced from
-## `lib/fs_sync.lua` exactly, because `jca_web` is frozen (D-Z) and reads them.
-##
-## **Three deliberate deviations, all removals of forks rather than behaviour:**
-## `fs_sync.lua` shells out to `find` for every listing, runs `test -d` once per
-## entry in `get_fs_tree`, and `rm -rf` for emptying trash (B-16, B-17). Those
-## existed because LuaJIT on a single event loop had no better option. Here the
-## walk is native `os` code on a worker thread, so the fork storm simply does not
-## arise. The observable results are identical; only the process count changes.
+## Every walk here is native rather than a subprocess. The results are identical
+## and only the process count differs, which matters because these run on worker
+## threads and a listing is not worth a fork per entry.
 
 import std/[os, json, strutils, times, base64, osproc, algorithm, streams, random]
 import ./db
@@ -43,12 +36,10 @@ type
 var wsRoot {.threadvar.}: string
 var trashRoot {.threadvar.}: string
 
-## Function purpose: resolve the two roots once per thread. `paths.resolve` reads
-## the environment, and doing that per call would make every mirroring write pay
-## for it. Deliberately threadvar rather than a global: a shared string is
-## refcounted memory that every worker thread would touch, which is neither
-## GC-safe nor necessary — the same reasoning that made `api.nim`'s entity table
-## `const` and `db.nim`'s connection per-thread.
+## Function purpose: resolving the roots reads the environment, so it is done
+## once per thread rather than on every mirroring write. A threadvar rather than
+## a global because a shared string is refcounted memory every worker would
+## touch, which is not GC-safe across them.
 proc roots(): tuple[workspaces, trash: string] =
   if wsRoot.len == 0:
     let p = paths.resolve()
@@ -56,10 +47,9 @@ proc roots(): tuple[workspaces, trash: string] =
     trashRoot = p.jcaHome / ".trash"
   (wsRoot, trashRoot)
 
-## Function purpose: make a database-supplied name safe to use as one path
-## component. Reproduces `fs_sync.lua:29` exactly — separators become
-## underscores and leading dots are stripped, so a name can neither escape its
-## directory nor create a hidden entry.
+## Function purpose: a database-supplied name becomes one path component here.
+## Separators become underscores and leading dots are stripped, so a name can
+## neither escape its directory nor create a hidden entry.
 proc sanitize*(s: string): string =
   if s.len == 0: return ""
   result = newStringOfCap(s.len)
@@ -70,9 +60,9 @@ proc sanitize*(s: string): string =
     inc start
   result = result[start .. ^1]
 
-## Function purpose: the original only mirrors rows whose id is a real UUID
-## (`fs_sync.lua:70`). It is a guard against a malformed id becoming a filename,
-## and dropping it would widen what can be written to disk.
+## Function purpose: only rows whose id is a real UUID are mirrored, which is
+## what stops a malformed id becoming a filename. Dropping this widens what can
+## be written to disk.
 proc isValidUuid*(id: string): bool =
   if id.len != 36: return false
   const dashes = [8, 13, 18, 23]
@@ -83,24 +73,26 @@ proc isValidUuid*(id: string): bool =
       return false
   true
 
-## Seeded per thread: the default global RNG is deterministic, which would make
-## two runs mint the same "unique" ids — and a single shared `Rand` is mutable
-## state every worker thread would advance concurrently, which is the same race
-## the roots above are threadvar to avoid. The thread id joins the seed so two
-## threads starting inside the same microsecond do not mint the same stream.
+## Function purpose: seeded per thread, because the default generator is
+## deterministic and would mint the same "unique" ids on every run, while a
+## single shared one is mutable state every worker would advance concurrently.
+## The thread id joins the seed so two threads starting in the same microsecond
+## do not produce the same stream.
 var uuidRng {.threadvar.}: Rand
 var uuidRngSeeded {.threadvar.}: bool
 
+## Function purpose: called before the first id is minted on each thread, since
+## an unseeded generator repeats across runs.
 proc seedUuidRng() =
   if not uuidRngSeeded:
     uuidRng = initRand(int(epochTime() * 1_000_000) xor
                        getCurrentProcessId() xor getThreadId())
     uuidRngSeeded = true
 
-## Function purpose: the counterpart to `isValidUuid`, and the reason it has to
-## exist is `physicalPath` — it refuses any note or file-asset id that is not a
-## UUID, and `upsert` then deletes the row it just wrote. A caller minting one of
-## those ids needs this; `genOid` produces 24 hex characters and is rejected.
+## Function purpose: the counterpart to the UUID test, needed because path
+## resolution refuses any note or asset id that is not one — and the upsert then
+## deletes the row it just wrote. A generic object id is 24 hex characters and
+## is rejected, so a caller minting one of these ids has to use this.
 proc newUuid*(): string =
   seedUuidRng()
   var bytes: array[16, uint8]
@@ -114,16 +106,19 @@ proc newUuid*(): string =
     result.add hex[int(b shr 4)]
     result.add hex[int(b and 0x0f)]
 
+## Function purpose: groups everything deleted in one second under one trash
+## directory, so a bulk delete restores as a unit.
 proc epochPrefix(): string = $int(epochTime())
 
+## Function purpose: swallows the error, because a directory that already exists
+## is the ordinary case and every caller creates before writing.
 proc ensureDir(path: string) =
   if path.len > 0:
     createDir(path)
 
-## Function purpose: run one git command in a workspace, replacing `lib/git.lua`'s
-## `io.popen` wrapper. Arguments are passed as a vector, never interpolated into a
-## shell string — `git.lua` hand-quoted every path into `sh -c`, and a workspace
-## name is user data.
+## Function purpose: arguments are passed as a vector and never interpolated
+## into a shell string, because a workspace name is user data and hand-quoting
+## it into `sh -c` is how that becomes a command.
 proc gitRun(cwd: string, args: openArray[string]): bool =
   if not dirExists(cwd): return false
   try:
@@ -135,12 +130,16 @@ proc gitRun(cwd: string, args: openArray[string]): bool =
   except OSError, IOError:
     false
 
+## Function purpose: a workspace is a repository so the user can see and revert
+## what the mirror wrote; failure is reported, not raised.
 proc gitInit(workspacePath: string): bool =
   if not gitRun(workspacePath, ["init"]): return false
   discard gitRun(workspacePath, ["config", "user.email", "jenova@local"])
   discard gitRun(workspacePath, ["config", "user.name", "Jenova"])
   true
 
+## Function purpose: stages without committing, so the history is the user's to
+## write and the mirror only keeps it aware of new files.
 proc gitAdd(workspacePath, filePath: string) =
   discard gitRun(workspacePath, ["add", filePath])
 
@@ -148,10 +147,10 @@ proc gitAdd(workspacePath, filePath: string) =
 # Physical path resolution
 # ---------------------------------------------------------------------------
 
+## Function purpose: the row's name and its parent id, for walking a note up to
+## its workspace. The parent column differs per table, so it is named here
+## rather than inferred.
 proc lookupName(table, id: string): tuple[found: bool, name, parent: string] =
-  ## Returns the row's name and its parent id, for walking note -> folder ->
-  ## project -> workspace. The parent column differs per table, so it is named
-  ## here rather than inferred.
   let parentCol =
     case table
     of "folders": "projectId"
@@ -166,14 +165,15 @@ proc lookupName(table, id: string): tuple[found: bool, name, parent: string] =
   if rows.len == 0: return (false, "", "")
   (true, rows[0][0], (if parentCol.len > 0 and rows[0].len > 1: rows[0][1] else: ""))
 
+## Function purpose: a container id is absent as either an empty string or the
+## literal "null", depending on which client wrote the row.
 proc isSet(v: string): bool =
   v.len > 0 and v != "null"
 
-## Function purpose: build the on-disk path for a note or asset by walking its
-## ancestry, reproducing `fs_sync.lua:76-128`. The three placements — under a
-## folder, under a project, or directly under a workspace — are the client's
-## contract, and an item with no resolvable ancestry lands in `unassigned/`
-## rather than being dropped.
+## Function purpose: walks a note or asset's ancestry to build its path. The
+## three placements — under a folder, under a project, or directly under a
+## workspace — are a client contract, and an item with no resolvable ancestry
+## lands in `unassigned/` rather than being dropped.
 proc physicalPath(id, displayName, folderId, projectId, workspaceId,
                   suffix: string): tuple[path, workspace: string] =
   let (workspaces, _) = roots()
@@ -207,13 +207,12 @@ proc physicalPath(id, displayName, folderId, projectId, workspaceId,
 
   (workspaces / "unassigned" & "/" & safeName & "_" & id & suffix, "unassigned")
 
-## Function purpose: the directory a container occupies, resolved from an explicit
-## name and parent id rather than from its own row. `api.upsert` overwrites the
-## row before the mirror runs, so a container's *previous* location can only be
-## rebuilt from the values captured beforehand — which is what makes moving the
-## directory possible at all. The layout is the same one `trashProject` and
-## `trashFolder` build, so a container that has been moved is still found when it
-## is later deleted.
+## Function purpose: resolved from an explicit name and parent id rather than
+## from the row, because the upsert overwrites the row before the mirror runs —
+## so a container's previous location can only be rebuilt from values captured
+## beforehand, which is what makes moving the directory possible at all. The
+## layout matches what the trash paths build, so a moved container is still
+## found when it is later deleted.
 proc containerDir*(kind, name, parentId: string): string =
   let (workspaces, _) = roots()
   let safe = sanitize(name)
@@ -233,17 +232,15 @@ proc containerDir*(kind, name, parentId: string): string =
   else:
     ""
 
-## Function purpose: move a container's directory when its name or its parent
-## changes. Without this a rename strands everything underneath it: every note and
-## asset path is built from ancestor *names* (`physicalPath`), so the row moved and
-## the directory did not, leaving the old tree orphaned and the next write landing
-## in a fresh empty directory beside it (T-14).
+## Function purpose: without this a rename strands everything underneath it.
+## Every note and asset path is built from ancestor *names*, so the row moves and
+## the directory does not, leaving the old tree orphaned and the next write
+## landing in a fresh empty directory beside it.
 ##
-## Returns false only when the move itself could not be done, so `api.upsert` rolls
-## the row back — a database claiming a name the disk does not carry is the state
-## this mirror exists to prevent. **A container with no directory yet is not a
-## failure:** directories are created by the first note or asset written into them,
-## so there is simply nothing to move.
+## Action purpose: false means only that the move could not be done, so the
+## caller rolls the row back — a database claiming a name the disk does not carry
+## is the state this mirror exists to prevent. A container with no directory yet
+## is not a failure: directories are created by the first item written into them.
 proc renameContainer*(kind, priorName, priorParent, newName,
                       newParent: string): bool =
   let dst = containerDir(kind, newName, newParent)
@@ -252,8 +249,8 @@ proc renameContainer*(kind, priorName, priorParent, newName,
   if src.len == 0 or src == dst: return true
   if not dirExists(src): return true
   # Action purpose: a sibling already standing at the new path would be merged
-  # into by `moveDir`, silently mixing two containers' files together. Refusing
-  # hands the caller a rollback instead, which is recoverable; a merge is not.
+  # into, silently mixing two containers' files. Refusing hands the caller a
+  # rollback, which is recoverable; a merge is not.
   if dirExists(dst) or fileExists(dst): return false
   try:
     ensureDir(dst.parentDir)
@@ -262,23 +259,28 @@ proc renameContainer*(kind, priorName, priorParent, newName,
   except OSError:
     false
 
+## Function purpose: a note is mirrored as markdown, so the extension is fixed
+## here rather than taken from the title.
 proc notePath(id, title, folderId, projectId, workspaceId: string):
     tuple[path, workspace: string] =
   physicalPath(id, title, folderId, projectId, workspaceId, ".md")
 
+## Function purpose: an asset keeps the name it was uploaded under, so its
+## extension comes from that rather than being imposed.
 proc assetPath(id, name, folderId, projectId, workspaceId: string):
     tuple[path, workspace: string] =
   physicalPath(id, name, folderId, projectId, workspaceId, "")
 
+## Function purpose: each workspace has its own trash, so deleting one takes its
+## deleted items with it rather than orphaning them globally.
 proc workspaceTrash(workspaceName: string): string =
   let (workspaces, _) = roots()
   result = workspaces / workspaceName / ".trash"
   ensureDir(result)
 
-## Function purpose: the sidecar that makes restore possible. `restore_trash`
-## reads it back to recover both the original path and the database row to
-## un-delete, so a trashed item that loses this file can only be restored by
-## hand.
+## Function purpose: the sidecar that makes restore possible — it carries both
+## the original path and which row to un-delete, so a trashed item that loses
+## this file can only be put back by hand.
 proc writeTrashMetadata(trashPath, table, id, originalPath: string) =
   try:
     writeFile(trashPath & ".metadata.json",
@@ -286,6 +288,8 @@ proc writeTrashMetadata(trashPath, table, id, originalPath: string) =
   except IOError, OSError:
     discard
 
+## Function purpose: the one path a delete takes, so the sidecar is always
+## written beside the item and never only sometimes.
 proc moveToTrash(source, trashPath, table, id: string): bool =
   try:
     ensureDir(trashPath.parentDir)
@@ -299,27 +303,25 @@ proc moveToTrash(source, trashPath, table, id: string): bool =
 # Sync — database row to disk
 # ---------------------------------------------------------------------------
 
-## Function purpose: a workspace is a git repository, created on first sync.
-## `fs_sync.lua:141` removes the directory again if `git init` fails, so a
-## half-made workspace is not left behind; that is reproduced.
+## Function purpose: a workspace is a git repository, created on first sync. A
+## failed `git init` removes the directory again, so a half-made workspace is
+## not left behind.
 ##
-## `priorName` is the name the row carried before this upsert, empty on insert.
-## A rename **moves** the repository instead of leaving it behind under the old
-## name with every file still in it (T-14).
+## `priorName` is what the row carried before this upsert and is empty on
+## insert. It is what lets a rename move the repository rather than leave it
+## behind under the old name with every file still in it.
 proc syncWorkspace*(name: string, priorName = ""): bool =
   let (workspaces, _) = roots()
   let path = workspaces / sanitize(name)
-  # `priorName != name` is checked first so the common case — a re-sync of an
-  # unchanged workspace — costs one string compare instead of two `sanitize`
-  # allocations.
+  # Checked first so the common case, a re-sync of an unchanged workspace, costs
+  # one string compare rather than two sanitising allocations.
   if priorName.len > 0 and priorName != name and
      sanitize(priorName) != sanitize(name):
     if not renameContainer("workspaces", priorName, "", name, ""):
       return false
-  # Action purpose: whether this call created the directory decides whether it may
-  # unmake it below. Removing one that was already there — or that a rename has
-  # just moved here — would delete the user's files, which the original could not
-  # do because it only ever created.
+  # Action purpose: whether this call created the directory decides whether it
+  # may unmake it below. Removing one that was already there, or that a rename
+  # has just moved here, deletes the user's files.
   let created = not dirExists(path)
   try:
     ensureDir(path)
@@ -332,6 +334,8 @@ proc syncWorkspace*(name: string, priorName = ""): bool =
     return false
   true
 
+## Function purpose: the write half for a note, staging the file in git so the
+## user can see what the mirror did.
 proc syncNote*(id, title, content, folderId, projectId, workspaceId: string): bool =
   let (path, ws) = notePath(id, title, folderId, projectId, workspaceId)
   if path.len == 0: return false
@@ -344,18 +348,14 @@ proc syncNote*(id, title, content, folderId, projectId, workspaceId: string): bo
   gitAdd(workspaces / ws, path)
   true
 
-## Function purpose: read a note's mirror file back off disk — the half of this
-## module that did not exist (`PLANS.md` Step 13b).
+## Function purpose: every other sync proc writes one way, database to disk.
+## This is the read back, without which an edit made outside the note editor —
+## in the embedded Neovim, another editor, or over the storage route — goes to a
+## file the database ignores for ever and the next save silently overwrites.
 ##
-## **Every `sync*` proc above writes one way, database to disk.** Nothing read a
-## `.md` back, so an edit made outside the note editor — in the embedded Neovim,
-## in another editor, over `/api/storage` — was written to a file the database
-## then ignored for ever, and the next save silently overwrote it. That is the
-## `SyncService.pull` gap.
-##
-## The path is `notePath`'s, not a second construction of it: a reader that
-## built the path itself would drift from the writer the first time `sanitize`
-## changed, and then quietly reconcile nothing.
+## Action purpose: the path comes from the writer's own resolution rather than
+## being rebuilt here. A reader that constructed it itself would drift from the
+## writer the first time sanitising changed, and then reconcile nothing.
 proc readNoteMirror*(id, title, folderId, projectId, workspaceId: string):
     tuple[found: bool, content: string] =
   let (path, _) = notePath(id, title, folderId, projectId, workspaceId)
@@ -365,11 +365,10 @@ proc readNoteMirror*(id, title, folderId, projectId, workspaceId: string):
   except IOError, OSError:
     (false, "")
 
-## Function purpose: file assets arrive from the Web UI as `data:` URIs, so the
-## base64 payload is decoded back to bytes before writing — otherwise every
-## uploaded image is stored as its own text encoding. Reproduces
-## `fs_sync.lua:172-180`, including the rejection of a payload whose length is
-## not a multiple of four rather than writing truncated bytes.
+## Function purpose: file assets arrive as `data:` URIs, so the payload is
+## decoded back to bytes before writing — otherwise every uploaded image is
+## stored as its own text encoding. A payload whose length is not a multiple of
+## four is rejected rather than written truncated.
 proc syncFileAsset*(id, name, content, folderId, projectId,
                     workspaceId: string): bool =
   let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)
@@ -403,16 +402,20 @@ proc syncFileAsset*(id, name, content, folderId, projectId,
 # Trash — move to trash rather than unlink
 # ---------------------------------------------------------------------------
 
+## Function purpose: the delete half for a note, which moves rather than
+## unlinks so the row and the file can be restored together.
 proc trashNote*(id, title, folderId, projectId, workspaceId: string): bool =
   let (path, ws) = notePath(id, title, folderId, projectId, workspaceId)
   if path.len == 0:
-    # `fs_sync.lua:206`: an unassigned item with no resolvable path is not an
-    # error — there was nothing on disk to move.
+    # An unassigned item with no resolvable path is not an error: there was
+    # nothing on disk to move.
     return ws == "unassigned"
   if not fileExists(path): return true
   let dest = workspaceTrash(ws) / epochPrefix() & "_" & path.extractFilename
   moveToTrash(path, dest, "notes", id)
 
+## Function purpose: the same for an uploaded file, whose bytes are the only
+## copy — there is no re-save path to recreate one from the database.
 proc trashFileAsset*(id, name, folderId, projectId, workspaceId: string): bool =
   let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)
   if path.len == 0:
@@ -421,6 +424,8 @@ proc trashFileAsset*(id, name, folderId, projectId, workspaceId: string): bool =
   let dest = workspaceTrash(ws) / epochPrefix() & "_" & path.extractFilename
   moveToTrash(path, dest, "fileAssets", id)
 
+## Function purpose: a workspace is a whole directory, so this takes its
+## repository and everything below it into the global trash in one move.
 proc trashWorkspace*(id, name: string): bool =
   let (workspaces, trash) = roots()
   let safe = sanitize(name)
@@ -435,11 +440,10 @@ proc trashWorkspace*(id, name: string): bool =
   except OSError:
     false
 
-## Function purpose: project and folder trashing must resolve their ancestry
-## through the database first, because the on-disk path is built from ancestor
-## *names*. `fs_sync.lua:248` treats an already-absent directory as success
-## (ENOENT) and anything else as failure — that distinction is kept, since a
-## delete of something that was never mirrored is not an error.
+## Function purpose: ancestry is resolved through the database first, because
+## the on-disk path is built from ancestor names. An already-absent directory is
+## success and anything else is failure: deleting something that was never
+## mirrored is not an error.
 proc trashProject*(id, workspaceId, name: string): FsResult =
   let (workspaces, _) = roots()
   let w = lookupName("workspaces", workspaceId)
@@ -457,6 +461,8 @@ proc trashProject*(id, workspaceId, name: string): FsResult =
   except OSError:
     FsResult(ok: false, path: dest, original: path, msg: "rename failed")
 
+## Function purpose: answers a result rather than a bool, because a folder's
+## ancestry can fail to resolve and the caller has to say which failure it was.
 proc trashFolder*(id, projectId, name: string): FsResult =
   let (workspaces, _) = roots()
   let p = lookupName("projects", projectId)
@@ -478,9 +484,11 @@ proc trashFolder*(id, projectId, name: string): FsResult =
     FsResult(ok: false, path: dest, original: path, msg: "rename failed")
 
 # ---------------------------------------------------------------------------
-# Trash listing, restore, empty — the /api/fs/* surface (N-20)
+# Trash listing, restore, empty
 # ---------------------------------------------------------------------------
 
+## Function purpose: filters the sidecars out of the listing, since a client is
+## shown items rather than the metadata that describes them.
 proc collectTrash(dir: string, kind: TrashKind, workspace: string,
                   acc: var seq[TrashEntry]) =
   if not dirExists(dir): return
@@ -490,22 +498,21 @@ proc collectTrash(dir: string, kind: TrashKind, workspace: string,
     if path.endsWith(".metadata.json"): continue
     acc.add TrashEntry(path: path, kind: kind, workspace: workspace, name: base)
 
-## Function purpose: list everything in the global trash and in every workspace's
-## own `.trash`, which is what `GET /api/fs/trash` returns. `fs_sync.lua:314`
-## does this with two `find` subprocesses; the walk here is native.
+## Function purpose: the global trash and every workspace's own, in one listing,
+## because a client asks the question once and should not have to know there are
+## two places to look.
 proc getTrash*(): seq[TrashEntry] =
   let (workspaces, trash) = roots()
   collectTrash(trash, tkGlobal, "", result)
-  # A-17. `storageTrash` files a deleted storage path under `<workspaces>/.trash`
-  # so its relative structure survives the move, and this walk never looked
-  # there: it enumerated `<workspaces>` as a list of workspaces, met `.trash`
-  # among them, and went looking for `<workspaces>/.trash/.trash`, which cannot
-  # exist. So every `/api/storage` deletion was invisible here and to
-  # `emptyTrash`, and accumulated for ever with no way to list or clear it.
+  # Action purpose: storage deletions are filed directly under the workspaces
+  # root's own trash so their relative structure survives the move. Walking that
+  # root as a list of workspaces meets `.trash` among them and then looks for a
+  # `.trash` inside it, which cannot exist — so those entries would be invisible
+  # both here and to the emptying below.
   #
-  # They are `tkGlobal` because they belong to no one workspace — which also
-  # leaves the JSON `toJson` emits byte-identical, since `workspace` is only
-  # added for `tkWorkspace` and `jca_web` is frozen against that shape (D-Z).
+  # Classified as global because they belong to no one workspace, which also
+  # keeps the emitted JSON unchanged: the workspace field is added only for
+  # workspace-scoped entries.
   collectTrash(workspaces / ".trash", tkGlobal, "", result)
   if dirExists(workspaces):
     for kind, wsPath in walkDir(workspaces):
@@ -516,35 +523,24 @@ proc getTrash*(): seq[TrashEntry] =
       if dirExists(wsTrash):
         collectTrash(wsTrash, tkWorkspace, wsPath.extractFilename, result)
 
-## Function purpose: move an item back out of the trash and un-delete its
-## database row. The sidecar's `original_path` wins over the caller-supplied one
-## — `fs_sync.lua:356` does the same, because the client sends back what it was
-## shown while the sidecar is what was actually recorded at deletion.
-## Function purpose: is `path` the root itself or something beneath it? A bare
-## prefix test accepts `<root>-evil` as being inside `<root>`, which is the same
-## directory-boundary rule `resolveStoragePath` applies.
+## Function purpose: the root itself or something beneath it. A bare prefix test
+## accepts a sibling whose name merely starts with the root's, so the separator
+## is part of the test rather than decoration.
 proc underRoot(path, root: string): bool =
   if root.len == 0: return false
   let r = root.normalizedPath
   path == r or path.startsWith(r & "/")
 
-## Function purpose: containment that a symlink cannot defeat — **T-4's rule,
-## ported to the trash primitive rather than reinvented beside it (A-19).**
+## Function purpose: containment a symlink cannot defeat. The lexical test above
+## cannot see that a path component is a link pointing out of the tree, and this
+## primitive is reachable from more than one caller — so the stronger standard
+## belongs here rather than at each of them.
 ##
-## `underRoot` above is purely lexical, and T-4's own comment says why that is
-## not enough: it "cannot see that a component is a link pointing out of the
-## tree". That was tolerable while `restoreTrash`'s only caller was the HTTP
-## route. **A-16 gave it a second caller reachable from the window**, and A-18-2
-## is about to give it a third where the path comes from a list the user clicks
-## — so the weaker of this module's two containment standards is now the one on
-## the reachable path, which is the wrong way round.
-##
-## Resolve the root, walk up to the deepest ancestor that actually exists,
-## resolve that, and require it inside the resolved root. **The walk-up is what
-## makes this work for a destination that does not exist yet**, which is every
-## restore: the unresolved tail below that ancestor holds no symlink, because it
-## holds nothing at all. That reasoning is T-4's and is spelled out in
-## `resolveStoragePath`; this is the same shape applied to both ends of a move.
+## Action purpose: resolve the root, walk up to the deepest ancestor that
+## actually exists, resolve that, and require it inside the resolved root. The
+## walk-up is what makes this work for a destination that does not exist yet,
+## which is every restore: the unresolved tail below that ancestor holds no
+## symlink because it holds nothing at all.
 proc resolvedUnderRoot(path, root: string): bool =
   if path.len == 0 or root.len == 0: return false
   let normRoot = root.normalizedPath
@@ -566,48 +562,41 @@ proc resolvedUnderRoot(path, root: string): bool =
   except OSError:
     false
 
-## Action purpose: the tables `writeTrashMetadata` is ever called with. The
-## sidecar is a file on disk, so its `type` field is untrusted input that was
-## being concatenated straight into an UPDATE statement; only these five names
-## may reach the SQL.
-## The tables `writeTrashMetadata` is ever called with — equivalently, the entity
-## kinds that have a physical form on disk. **`RestoreOutcome` is derived from
-## this list and not from a second one**, so an entity added here without a
-## mirror, or given one without being listed, cannot drift into reporting the
-## wrong outcome.
+## Action purpose: the sidecar is a file on disk, so its type field is untrusted
+## input that reaches an UPDATE statement by concatenation — only these names may
+## get that far. They are equivalently the entity kinds with a physical form, and
+## the restore outcome below is derived from this one list rather than a second,
+## so an entity added here without a mirror cannot drift into reporting the wrong
+## result.
 const RestorableTables* = ["notes", "fileAssets", "workspaces", "projects", "folders"]
 
 type
-  ## A-18-1. What a restore actually did, because "false" said two very
-  ## different things and the window could not tell them apart.
+  ## What a restore actually did, because a bool says two very different things
+  ## with one word. A conversation or message never had a file, so nothing is
+  ## wrong and nothing should be said; a note whose file is not in the trash is
+  ## wrong — the row is back and the content is not.
   ##
-  ## The distinction is the whole point: a conversation or a message never had a
-  ## file, so nothing is wrong and nothing should be said. A note whose `.md` is
-  ## not in the trash **is** wrong — the row is back and the content is not —
-  ## and a restore that reports success there is the same class of defect as the
-  ## delete confirmation promising a restore that never happened.
-  ## **`rmNoPhysicalForm` is first deliberately**, so it is the zero value. An
-  ## outcome that some future path forgets to assign then defaults to the silent
-  ## case rather than to `rmRestored`, which would be a claim that a restore
-  ## happened — the exact false-success this type was added to end.
+  ## The no-physical-form case is first deliberately, so it is the zero value: an
+  ## outcome some future path forgets to assign then defaults to silence rather
+  ## than to a claim that a restore happened.
   RestoreOutcome* = enum
     rmNoPhysicalForm    ## this kind never has a file; ordinary, say nothing
     rmRestored          ## row and file both back
     rmFileMissing       ## this kind does have files and this one did not return
 
+## Function purpose: the move itself, with both ends contained. Every restore
+## goes through here so the containment rule has one implementation.
 proc restoreTrash*(trashPath, originalPath: string): bool =
   if trashPath.len == 0 or originalPath.len == 0: return false
   let (workspaces, trash) = roots()
 
-  # Containment: only paths inside a known trash directory may be restored, so a
-  # crafted request cannot move an arbitrary file. fs_sync.lua had no such check;
-  # it is added here rather than reproduced, and is the one behavioural addition
-  # in this module.
-  # A-19: resolved, not lexical. The source is read and then moved, so a link
-  # standing in for a trash entry would have this proc move a file it was never
-  # shown. The `/.trash/` test stays lexical on purpose — it asks *which* root
-  # this is, not whether the path is contained, and the containment beside it
-  # is now resolved.
+  # Action purpose: only paths inside a known trash directory may be restored,
+  # so a crafted request cannot move an arbitrary file. Resolved rather than
+  # lexical, because the source is read and then moved and a link standing in
+  # for a trash entry would have this move a file it was never shown.
+  #
+  # The `/.trash/` test stays lexical on purpose: it asks which root this is,
+  # not whether the path is contained.
   let normalized = trashPath.normalizedPath
   if not (resolvedUnderRoot(normalized, trash) or
           (resolvedUnderRoot(normalized, workspaces) and
@@ -627,16 +616,14 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
     except CatchableError:
       discard
 
-  # The destination is as much a filesystem write as the source is a read, and
-  # it comes from the same two untrusted places — the caller's `original_path`
-  # and the sidecar. Without this a crafted pair moved a trashed file anywhere
+  # Action purpose: the destination is as much a filesystem write as the source
+  # is a read, and comes from the same two untrusted places — the caller's path
+  # and the sidecar. Without this a crafted pair moves a trashed file anywhere
   # the process could write.
-  # A-19, and this is the end that matters most: the destination does not exist
-  # yet, which is exactly the case T-4 found the lexical check blind to — it saw
-  # an existing file through a symlink and missed a *new* one written through a
-  # symlinked parent, "which is the one that matters, because that is how a file
-  # gets outside the tree in the first place". `resolvedUnderRoot` walks up to
-  # the deepest existing ancestor for precisely this.
+  # The end that matters most: the destination does not exist yet, which is
+  # exactly what a lexical check is blind to. It sees an existing file through a
+  # symlink but misses a new one written through a symlinked parent, and that is
+  # how a file gets outside the tree in the first place.
   let normalizedTarget = target.normalizedPath
   if not (resolvedUnderRoot(normalizedTarget, workspaces) or
           resolvedUnderRoot(normalizedTarget, trash)):
@@ -660,41 +647,27 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
   except OSError: discard
   true
 
-## Function purpose: put back the file or directory a delete filed in the trash,
-## found by its sidecar rather than by recomputing where it used to live.
+## Function purpose: puts back the file a delete filed in the trash, found by
+## its sidecar. Without this the row comes back and the content does not — which
+## is the opposite of what the delete confirmation promises.
 ##
-## **A-16: restoring from the window restored the row and never the file.**
-## `api.restoreItem` contained no call into this module at all, while deletion
-## mirrors with care — the item is moved into a trash tree and
-## `writeTrashMetadata` writes `{type, id, original_path}` beside it *for the
-## express purpose of putting it back*. Nothing ever read that sidecar from the
-## desktop path. A restored note's `.md` stayed in the trash until the note
-## happened to be saved again; **a restored file asset's file never came back at
-## all**, having no re-save path; and a restored workspace, project or folder
-## left its whole directory behind for ever. The delete confirmation the user
-## is shown says "It can be restored from the trash."
+## Action purpose: the id is the key, not the path. A path would have to be
+## recomputed from the row, and the row's name may have changed since the
+## delete; the sidecar records where the item actually came from, which is why
+## it exists.
 ##
-## **The id is the key, not the path.** A path would have to be recomputed from
-## the row, and the row's name may have changed since the delete — the sidecar
-## records where the item actually came from, which is why it exists.
+## All three trash roots are walked — the global one, the storage root's, and
+## each workspace's — and the workspace loop has to skip an entry named `.trash`
+## or it enumerates the storage root as though it were a workspace.
 ##
-## **All three trash roots are walked**, and that is not one root too many: the
-## global `<jcaHome>/.trash`, the storage root `<workspaces>/.trash`, and each
-## workspace's own. Walking only the first two is precisely A-17, and the
-## workspace loop must skip an entry named `.trash` or it enumerates the storage
-## root as though it were a workspace — the mechanism behind that defect.
-##
-## `collectTrash` is deliberately not reused: it filters `*.metadata.json` out,
-## which is the only thing being looked for here.
-##
-## The move itself is `restoreTrash`, so containment is enforced once, in one
-## place. A second check here would be a third standard in a module that already
-## has two, which is A-19's warning.
+## The listing proc is deliberately not reused: it filters out the sidecars,
+## which are the only thing being looked for here. The move itself goes through
+## the trash primitive, so containment is enforced in one place rather than
+## checked again here.
 proc restoreMirror*(table, id: string): RestoreOutcome =
-  # A-18-1. A bool conflated the two failures and that is why it was safe to
-  # discard: `rmNoPhysicalForm` is the ordinary answer for a conversation or a
-  # message and must stay silent, while `rmFileMissing` is a restore the user
-  # asked for that did not fully happen and must not.
+  # A bool conflates the two failures, which is why one is safe to discard and
+  # the other is not: no physical form is the ordinary answer for a conversation
+  # or a message, while a missing file is a restore that did not fully happen.
   if table notin RestorableTables: return rmNoPhysicalForm
   if id.len == 0: return rmFileMissing
   let (workspaces, trash) = roots()
@@ -717,18 +690,18 @@ proc restoreMirror*(table, id: string): RestoreOutcome =
       if meta.kind != JObject: continue
       if meta{"type"}.getStr != table or meta{"id"}.getStr != id: continue
       # The sidecar was found, so from here a failure is a real one: the move
-      # itself did not happen and the user is owed that.
+      # itself did not happen.
       return (if restoreTrash(path[0 ..< path.len - Suffix.len],
                               meta{"original_path"}.getStr): rmRestored
               else: rmFileMissing)
-  # No sidecar anywhere, for a kind that has files. Deleted before the mirror
-  # existed, or the sidecar was lost — nothing to look up and nothing to say
+  # No sidecar anywhere, for a kind that has files — deleted before the mirror
+  # existed, or the sidecar was lost. Nothing to look up and nothing to say
   # except that the row is back and the file is not.
   rmFileMissing
 
-## Function purpose: empty the global trash and every workspace trash.
-## `fs_sync.lua:378` shells out to `rm -rf "$dir"/*`; this removes entries
-## directly, so there is no shell to quote against and no fork per workspace.
+## Function purpose: entries are removed directly rather than through a shell,
+## so there is no quoting to get wrong on a path the user named and no fork per
+## workspace.
 proc emptyTrash*(): bool =
   let (workspaces, trash) = roots()
   var allOk = true
@@ -744,8 +717,8 @@ proc emptyTrash*(): bool =
         result = false
 
   allOk = clear(trash)
-  # A-17's other half — the storage trash root was never emptied either, for the
-  # same reason `getTrash` never listed it.
+  # The storage trash root, for the same reason the listing above has to include
+  # it: nothing else would ever clear it.
   if not clear(workspaces / ".trash"): allOk = false
   if dirExists(workspaces):
     for kind, wsPath in walkDir(workspaces):
@@ -759,13 +732,9 @@ type FsNode* = object
   fullPath*: string
   isDir*: bool
 
-## Function purpose: the tree `GET /api/fs/tree` returns, optionally scoped to a
-## workspace, project or folder. `.trash` and `.git` are excluded, matching the
-## original's `find` predicates.
-##
-## `fs_sync.lua:445` ran `test -d` as a **separate subprocess for every entry**
-## (B-17). `walkDir` already reports the kind, so the whole fork storm
-## disappears without changing a single result.
+## Function purpose: the tree a client renders, optionally scoped to a
+## workspace, project or folder. The trash and the git directory are excluded
+## because neither is content the user put there.
 proc getFsTree*(scopeWorkspace, scopeProject, scopeFolder: string): seq[FsNode] =
   let (workspaces, _) = roots()
 
@@ -794,14 +763,12 @@ proc getFsTree*(scopeWorkspace, scopeProject, scopeFolder: string): seq[FsNode] 
   result.sort(proc (a, b: FsNode): int = cmp(a.path, b.path))
 
 # ---------------------------------------------------------------------------
-# /api/storage/* — raw file access under the workspaces root (N-29)
+# Raw file access under the workspaces root
 # ---------------------------------------------------------------------------
 
-## Function purpose: lexical path normalisation, reproducing
-## `lib/proxy.lua:normalize_path`. Collapses `//`, drops `.`, resolves `..`, and
-## **returns empty when an absolute path tries to escape its own root** rather
-## than clamping at `/` — the distinction matters, because clamping would turn
-## an escape attempt into a valid path.
+## Function purpose: lexical normalisation that answers empty when an absolute
+## path tries to escape its own root, rather than clamping at `/`. The
+## distinction matters: clamping turns an escape attempt into a valid path.
 proc normalizePathLexical(path: string): string =
   var p = path
   while p.contains("//"):
@@ -824,19 +791,15 @@ proc normalizePathLexical(path: string): string =
       segments.add segment
   result = (if isAbsolute: "/" else: "") & segments.join("/")
 
-## Function purpose: resolve a client-supplied relative path against the
-## workspaces root and refuse anything that lands outside it. Reproduces
-## `proxy.lua:resolve_safe_path`, including **the directory-boundary check** —
-## a prefix match alone would accept `/Workspaces-evil` for the root
-## `/Workspaces`, so the character after the prefix must be `/` or the paths must
-## be equal. Returns an empty string on refusal.
+## Function purpose: resolves a client-supplied path against the workspaces root
+## and answers empty for anything landing outside it. The directory boundary is
+## part of the test: a bare prefix match accepts a sibling whose name merely
+## starts with the root's.
 ##
-## Two guards the original does not have are added, and are asserted:
-## a literal `..` rejection before normalisation (the original does this at the
-## call site, so it is centralised here instead of repeated four times), and a
-## symlink check — lexical normalisation cannot see that a component is a link
-## pointing out of the tree, which is the one way the original's containment can
-## still be walked past.
+## Action purpose: two guards beyond the boundary check, both asserted. A literal
+## `..` is rejected before normalisation, centralised here rather than repeated
+## at each call site; and the symlink check exists because lexical normalisation
+## cannot see that a component is a link pointing out of the tree.
 proc resolveStoragePath*(relative: string): string =
   if relative.len == 0 or relative.contains(".."):
     return ""
@@ -854,22 +817,20 @@ proc resolveStoragePath*(relative: string): string =
   if candidate.len != normBase.len and candidate[normBase.len] != '/':
     return ""
 
-  # Action purpose: **T-4 — the symlink check had a hole at each end, and both
-  # close the same way: resolve, then compare resolved against resolved.**
+  # Action purpose: resolved compared against resolved, at both ends, because
+  # each end fails differently otherwise.
   #
-  # 1. It ran only `if fileExists(candidate) or dirExists(candidate)`, so it saw
-  #    an existing file through a symlink and **missed a new one written through
-  #    a symlinked parent** — the create path, which is the one that matters,
-  #    because that is how a file gets outside the tree in the first place.
-  # 2. It compared against `normBase`, the *lexical* root. If the workspaces
-  #    root is itself a symlink, `expandFilename` returns the real location and
-  #    the prefix test fails for **every legitimate path**, refusing the whole
-  #    tree.
+  # Checking only paths that already exist sees a file through a symlink but
+  # misses a new one written through a symlinked parent — the create path, which
+  # is how a file gets outside the tree in the first place. Comparing against the
+  # lexical root fails the other way: if the workspaces root is itself a symlink,
+  # resolution returns the real location and the test refuses every legitimate
+  # path.
   #
-  # So: resolve the base, walk up to the deepest ancestor that actually exists,
-  # resolve that, and require it inside the resolved base. The unresolved tail
-  # below that ancestor cannot smuggle anything — it does not exist, so it holds
-  # no symlink, and `..` was rejected lexically at the top of this proc.
+  # So the base is resolved, the walk goes up to the deepest ancestor that
+  # exists, and that is required inside the resolved base. The unresolved tail
+  # below it holds no symlink because it holds nothing, and `..` was already
+  # rejected lexically above.
   var realBase = normBase
   if dirExists(normBase):
     try:
@@ -880,7 +841,7 @@ proc resolveStoragePath*(relative: string): string =
   var probe = candidate
   while not (fileExists(probe) or dirExists(probe)):
     let up = probe.parentDir
-    # `parentDir` of a root returns itself or empty; either way there is nothing
+    # The parent of a root is itself or empty; either way there is nothing
     # further up and nothing existing was found.
     if up.len == 0 or up == probe: return ""
     probe = up
@@ -893,9 +854,9 @@ proc resolveStoragePath*(relative: string): string =
     return ""
   candidate
 
-## Function purpose: `POST /api/storage/<path>` — write a file verbatim,
-## creating parent directories. The body is written as bytes, not text: the Web
-## UI stores binary assets through this route.
+## Function purpose: the body is written as bytes rather than text, because
+## binary assets are stored through this route and a text write would re-encode
+## them.
 proc storageSave*(relative, content: string): bool =
   let path = resolveStoragePath(relative)
   if path.len == 0: return false
@@ -906,9 +867,8 @@ proc storageSave*(relative, content: string): bool =
   except IOError, OSError:
     false
 
-## Function purpose: `GET /api/storage/<path>` — read a file. Empty result and a
-## false flag distinguish "not found" from "found but empty", which a bare string
-## return could not.
+## Function purpose: the flag distinguishes "not found" from "found but empty",
+## which a bare string return cannot.
 proc storageGet*(relative: string): tuple[found: bool, content: string] =
   let path = resolveStoragePath(relative)
   if path.len == 0 or not fileExists(path):
@@ -918,10 +878,10 @@ proc storageGet*(relative: string): tuple[found: bool, content: string] =
   except IOError, OSError:
     (false, "")
 
-## Function purpose: `GET /api/storage/` — list every file under the workspaces
-## root as paths relative to it. Reproduces the original's `find -maxdepth 4`
-## with its three exclusions: dotfiles and dot-directories, `node_modules`, and
-## `build`. Depth is counted from the root, matching `find`'s semantics.
+## Function purpose: paths relative to the root, with dot entries, dependency
+## directories and build output excluded — a listing of what the user put there
+## rather than of everything a workspace accumulates. Depth is bounded so a deep
+## tree cannot make one request walk the whole disk.
 proc storageList*(): seq[string] =
   let (workspaces, _) = roots()
   if not dirExists(workspaces): return @[]
@@ -941,11 +901,9 @@ proc storageList*(): seq[string] =
   walk(workspaces, 1, result)
   result.sort()
 
-## Function purpose: `DELETE /api/storage/<path>` — move a file into the
-## workspaces trash rather than unlinking it, reproducing `fs_sync.trash_path`
-## (`fs_sync.lua:281`), the thirteenth function and the last one unported. The
-## trash layout is `<root>/.trash/<epoch>/<original relative path>`, which
-## preserves the directory structure so a restore has somewhere to put it back.
+## Function purpose: moves into the trash rather than unlinking, and the layout
+## keeps the original relative path under a timestamp — which is what gives a
+## restore somewhere to put the file back.
 proc storageTrash*(relative: string): FsResult =
   let path = resolveStoragePath(relative)
   if path.len == 0:
@@ -962,6 +920,8 @@ proc storageTrash*(relative: string): FsResult =
   except OSError, IOError:
     FsResult(ok: false, path: dest, original: path, msg: "rename failed")
 
+## Function purpose: the workspace field is emitted only for workspace-scoped
+## entries, which is the shape the frozen client parses.
 proc toJson*(entries: seq[TrashEntry]): JsonNode =
   result = newJArray()
   for e in entries:
@@ -970,6 +930,8 @@ proc toJson*(entries: seq[TrashEntry]): JsonNode =
       node["workspace"] = %e.workspace
     result.add node
 
+## Function purpose: the tree's own encoding, kept beside the type so a field
+## added to one is not forgotten in the other.
 proc toJson*(nodes: seq[FsNode]): JsonNode =
   result = newJArray()
   for n in nodes:
