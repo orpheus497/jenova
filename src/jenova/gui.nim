@@ -1041,6 +1041,20 @@ viewable App:
   draft: string
   status: BackendStatus
   lanEnabled: bool
+  ## **What this process actually bound, not what the flag says.** `run` reads
+  ## `isLanEnabled` once, before the window exists, and hands the answer to
+  ## `server.start`; the listener is in this process and its address is fixed
+  ## for the life of it. `lanEnabled` is the *file* flag and can be changed from
+  ## the menu, the tray or another process at any moment, so the two disagree
+  ## from the instant the toggle is used until the application is restarted.
+  ##
+  ## That disagreement had no surface at all. The toggle wrote a transient
+  ## notice — "LAN enabled - restart to bind 0.0.0.0" — into the same one-line
+  ## label every other message uses, so the next note saved or file attached
+  ## erased it. The dangerous half is the other direction: a user who switches
+  ## LAN *off* is told once, in a line that vanishes, that the socket is still
+  ## answering on `0.0.0.0`.
+  lanBound: bool
   ## Cached, not computed per redraw: resolving it forks `route` and `ifconfig`,
   ## and `view` runs on every token of a stream. `ui.poll_status` forking
   ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
@@ -5139,6 +5153,58 @@ method view(app: AppState): Widget =
               # made it vanish. Atop the chat column rather than spanning the
               # window because the Web UI's sidebar is full height.
               insert(app.topBar()) {.expand: false.}
+
+              # Phase 3, report 05. `Banner` is libadwaita's widget for exactly
+              # this — a strip under the header naming a condition the window is
+              # in — and it was compiled out of the binary until `-d:adwminor=4`
+              # (report 06 §2). Both of these were previously either a word in
+              # the header subtitle or a transient line in the notice label.
+              #
+              # **Unconditional widgets with `revealed` toggled, not `if`
+              # branches.** That is what `revealed` is for: it animates the
+              # strip in and out while the child count of this Box stays fixed,
+              # so owlkettle's positional diff never matches a Banner's state
+              # against a different widget.
+              #
+              # `useMarkup = false` on both: the titles are plain sentences and
+              # one of them interpolates an address, so leaving Pango markup on
+              # would make a stray `&` in a hostname a rendering error.
+              Banner {.expand: false.}:
+                # `bsDown` only. `bsStarting` is deliberately not banner-worthy:
+                # it resolves on its own within seconds and the header subtitle
+                # already says "starting — loading model", so a strip that
+                # appears and disappears on every launch is noise.
+                revealed = app.status == bsDown and not app.editorOpen
+                title = "The model backend is not running. A message sent now " &
+                        "will fail."
+                useMarkup = false
+                buttonLabel = "Start"
+                # The same queue the app menu's "Start backend" uses, so there
+                # is one implementation reachable three ways — here, the menu
+                # and the tray.
+                proc clicked() = pendingActions.add "start"
+
+              Banner {.expand: false.}:
+                # The flag and the socket disagree. See `lanBound`: the listener
+                # is in this process and its address was fixed before the window
+                # opened, so the toggle cannot move it and never claimed to —
+                # it just said so in a line that the next notice overwrote.
+                revealed = app.lanEnabled != app.lanBound and not app.editorOpen
+                title = (if app.lanEnabled:
+                           "LAN access is switched on, but this window's " &
+                           "server is still bound to 127.0.0.1. Quit and start " &
+                           "Jenova again to serve on the network."
+                         else:
+                           "LAN access is switched off, but this window's " &
+                           "server is still bound to 0.0.0.0 and can be " &
+                           "reached from the network. Quit and start Jenova " &
+                           "again to stop that.")
+                useMarkup = false
+                # No button, and that is the honest shape: the listener is this
+                # process's own, so nothing short of restarting the application
+                # changes it, and a button that could not do what it named
+                # would be worse than none.
+
               # The transcript takes all the free height; the notice and the action
               # row take only what they need — the child annotation on the Box, not
               # a property of the child. The three children keep the same types in
@@ -5481,6 +5547,11 @@ proc run*(withTray = true, checkOnly = false) =
                        lc = lc,
                        status = bsDown,
                        lanEnabled = initialLan,
+                       # From `host`, which is what `server.start` was actually
+                       # given a few lines above — not from `initialLan` again.
+                       # Reading the flag twice would make the two agree by
+                       # construction and the banner below could never fire.
+                       lanBound = host == "0.0.0.0",
                        lanAddr = initialAddr,
                        convId = conv,
                        messages = history,
