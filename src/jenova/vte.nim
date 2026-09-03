@@ -1,9 +1,10 @@
 ## Script function and purpose: a VTE terminal hosting the user's own `nvim`.
-## Hand-written `vte-2.91-gtk4` FFI because owlkettle has none; the binding lives
-## here and the `renderable` wrapping it lives in the window, so this module
-## knows nothing but VTE.
+## Hand-written `vte-2.91-gtk4` FFI because owlkettle has none, with the widget
+## the window places at the foot of the file, so this module knows nothing but
+## VTE and the one renderable around it.
 
 import std/[os, strutils]
+import owlkettle
 import owlkettle/bindings/gtk
 import ./theme
 import ./pkgconfig
@@ -143,9 +144,15 @@ proc buildTerminal(socket, workdir, file: string): GtkWidget =
   if envv != nil: deallocCStringArray(envv)
   deallocCStringArray(argv)
 
-## Function purpose: the widget the window instantiates. `--listen` on the
-## configured socket is what makes this instance readable by `nvimctl`, so the
-## chat can be about the buffer the user is looking at.
-proc newNvimTerminal*(): GtkWidget =
+## Function purpose: `--listen` on the configured socket is what makes this
+## instance readable by `nvimctl`, so the chat can be about the buffer the user
+## is looking at.
+proc newNvimTerminal(): GtkWidget =
   buildTerminal(sockPath, spawnCwd, "")
+
+## Closing the tab destroys the widget and ends the `nvim` session with it.
+renderable NvimTerminal of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = newNvimTerminal()
 

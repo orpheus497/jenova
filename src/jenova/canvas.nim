@@ -16,6 +16,7 @@
 ## compositing is slight.
 
 import std/[math, random]
+import owlkettle
 import owlkettle/cairo
 import owlkettle/bindings/gtk
 import ./theme
@@ -122,10 +123,8 @@ proc drawFunc(widget: GtkWidget, ctx: pointer, width, height: cint,
               data: pointer) {.cdecl.} =
   discard draw(CairoContext(ctx), (int(width), int(height)))
 
-## Function purpose: called once from the renderable in the window module, since
-## owlkettle's macro emits an unexported type — so the widget is declared there
-## and the drawing stays here.
-proc newArea*(): GtkWidget =
+## Function purpose: called once, from the renderable at the foot of this file.
+proc newArea(): GtkWidget =
   area = gtk_drawing_area_new()
   gtk_drawing_area_set_draw_func(area, drawFunc, nil, nil)
   area
@@ -135,3 +134,12 @@ proc newArea*(): GtkWidget =
 proc queueFrame*() =
   if not pointer(area).isNil:
     gtk_widget_queue_draw(area)
+
+## The particle field, as its own widget rather than owlkettle's `DrawingArea`,
+## for the reason above: a `DrawingArea` repaints only from its `update` hook,
+## so animating one costs a full widget-tree diff per frame. This is repainted
+## by `queueFrame`.
+renderable NeuralCanvas of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = newArea()

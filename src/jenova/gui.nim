@@ -2593,31 +2593,6 @@ proc rowLabel(app: AppState, entity, id, name: string): Widget =
         xAlign = 0.0
         ellipsize = EllipsizeEnd
 
-## The particle field, as its own widget rather than owlkettle's `DrawingArea`.
-## Declared here for the same reason `SourceCode` is — the `renderable` macro
-## emits an unexported type — with the FFI in `canvas.nim`.
-##
-## The point of the split is the frame clock: owlkettle repaints a `DrawingArea`
-## only from its `update` hook, so animating one costs a full widget-tree
-## diff per frame. This widget is repainted directly by `canvas.queueFrame`.
-renderable NeuralCanvas of BaseWidget:
-  hooks:
-    beforeBuild:
-      state.internalWidget = canvas.newArea()
-
-## Closing the tab destroys the widget and ends the `nvim` session with it.
-renderable NvimTerminal of BaseWidget:
-  hooks:
-    beforeBuild:
-      state.internalWidget = vte.newNvimTerminal()
-
-## A read-only, syntax-highlighted code block. Declared here rather than in
-## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
-## the FFI stays in that module and this is only the widget around it.
-##
-## No ScrolledWindow wraps this and none should — owlkettle's never calls
-## `set_propagate_natural_height`, which is what collapsed the plain-Label code
-## blocks to their header. The view word-wraps instead.
 # Action purpose: the transcript follows a reply as it streams unless the
 # setting turns that off, and owlkettle's `ScrolledWindow` offers no way to move
 # the view. It exposes `child`, `propagateNaturalWidth`/`propagateNaturalHeight`
@@ -2628,8 +2603,9 @@ renderable NvimTerminal of BaseWidget:
 # Only the adjustment getters are missing from owlkettle's bindings, so only
 # those are declared, and by name rather than as a fourth open import.
 # `updateChild` is imported but not re-exported by owlkettle, so a renderable
-# declared outside the library has to reach for it directly. The two renderables
-# above never needed it because neither takes a child widget.
+# declared outside the library has to reach for it directly. Only the ones that
+# take a child widget need it, which is why `canvas.nim`, `sourceview.nim` and
+# `vte.nim` declare theirs without importing this.
 import owlkettle/widgetutils
 # `mainloop` is imported by `owlkettle.nim` but not re-exported, the same as
 # `widgetutils` above — so `--check`'s build-without-present path has to reach
@@ -3303,25 +3279,6 @@ renderable BreakpointHost of BaseWidget:
       raise newException(ValueError, "BreakpointHost takes one child.")
     widget.hasChild = true
     widget.valChild = child
-
-renderable SourceCode of BaseWidget:
-  code: string
-  language: string
-  buffer {.private, onlyState.}: GtkSourceBuffer
-
-  hooks:
-    beforeBuild:
-      let (view, buffer) = newSourceWidget()
-      state.buffer = buffer
-      state.internalWidget = view
-
-  hooks code:
-    property:
-      setSourceText(state.buffer, state.code)
-
-  hooks language:
-    property:
-      setSourceLanguage(state.buffer, state.language)
 
 ## Function purpose: sets the clipboard's text. owlkettle binds this with a third
 ## `length` argument that GDK does not take (`gdkclipboard.h:113` is two

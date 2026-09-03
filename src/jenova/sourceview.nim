@@ -8,6 +8,7 @@
 ## as a GResource, so nothing has to be installed beside the binary.
 
 import std/[os, strutils, tables]
+import owlkettle
 import owlkettle/bindings/gtk
 import ./theme
 import ./pkgconfig
@@ -217,16 +218,12 @@ proc resolveLanguage(label: string): GtkSourceLanguage =
 
 # ---------------------------------------------------------------------------
 # The Nim surface: three calls, and no C type crosses them but the buffer handle
-# the widget has to keep.
-#
-# Action purpose: the `renderable` lives in `gui.nim` rather than here because
-# owlkettle's macro emits its type without an export marker, so a widget
-# declared in this module would be invisible to the module using it.
+# the widget has to keep. The widget itself is at the foot of this file.
 # ---------------------------------------------------------------------------
 
 ## Function purpose: hands back both halves because every later call addresses
 ## the buffer, not the view, and the widget cannot be asked for it afterwards.
-proc newSourceWidget*(): tuple[view: GtkWidget, buffer: GtkSourceBuffer] =
+proc newSourceWidget(): tuple[view: GtkWidget, buffer: GtkSourceBuffer] =
   ensureSourceInit()
   let buffer = gtk_source_buffer_new(nil)
   applyScheme(buffer)
@@ -241,11 +238,35 @@ proc newSourceWidget*(): tuple[view: GtkWidget, buffer: GtkSourceBuffer] =
 
 ## Function purpose: the length is passed explicitly so a code block containing
 ## a NUL byte is set whole rather than truncated at it.
-proc setSourceText*(buffer: GtkSourceBuffer, text: string) =
+proc setSourceText(buffer: GtkSourceBuffer, text: string) =
   bufferSetText(buffer, text.cstring, text.len.cint)
 
 ## Function purpose: an unrecognised fence label leaves the block uncoloured
 ## rather than failing — the lookup answers nil for an unknown id, and a nil
 ## language is how GtkSourceView is told there is no highlighting.
-proc setSourceLanguage*(buffer: GtkSourceBuffer, label: string) =
+proc setSourceLanguage(buffer: GtkSourceBuffer, label: string) =
   gtk_source_buffer_set_language(buffer, resolveLanguage(label))
+
+## A read-only, syntax-highlighted code block, beside the binding it wraps.
+##
+## No ScrolledWindow wraps this and none should — owlkettle's never calls
+## `set_propagate_natural_height`, which is what collapsed the plain-Label code
+## blocks to their header. The view word-wraps instead.
+renderable SourceCode of BaseWidget:
+  code: string
+  language: string
+  buffer {.private, onlyState.}: GtkSourceBuffer
+
+  hooks:
+    beforeBuild:
+      let (view, buffer) = newSourceWidget()
+      state.buffer = buffer
+      state.internalWidget = view
+
+  hooks code:
+    property:
+      setSourceText(state.buffer, state.code)
+
+  hooks language:
+    property:
+      setSourceLanguage(state.buffer, state.language)
