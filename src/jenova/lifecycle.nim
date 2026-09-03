@@ -255,26 +255,29 @@ const
   LockTries = 100
   LockRetryMs = 10
 
-## Function purpose: a negative answer means the caller proceeds unlocked, which
-## is deliberate — see the note above `LockRetries`.
-proc lockStart(l: Lifecycle, be: Backend): cint =
-  result = -1
+## Function purpose: two failures, and they are not the same. A lock file that
+## cannot be opened means an unwritable state directory, which everything else
+## here already reports, so the caller proceeds unlocked. Losing the wait means
+## another process is inside `start` for this backend right now, and proceeding
+## is the race the lock exists to prevent — `contended` says which happened.
+proc lockStart(l: Lifecycle, be: Backend): tuple[fd: cint, contended: bool] =
+  result = (cint(-1), false)
   try:
     let fd = posix.open(lockFileFor(l, be).cstring,
                         O_WRONLY or O_CREAT, 0o644.Mode)
-    if fd < 0: return -1
+    if fd < 0: return (cint(-1), false)
     # Action purpose: POSIX record locks are not inherited across `fork`, but
     # the descriptor is and nothing closes it before `execve` — so it is marked
     # close-on-exec rather than left open in the backend for its lifetime.
     discard fcntl(fd, FdSetFd, FdCloexec)
     for _ in 0 ..< LockTries:
       if lockf(fd, LockTry, 0) == 0:
-        return fd
+        return (fd, false)
       os.sleep(LockRetryMs)
     discard posix.close(fd)
-    result = -1
+    result = (cint(-1), true)
   except CatchableError:
-    result = -1
+    result = (cint(-1), false)
 
 ## Function purpose: released explicitly rather than left to process exit,
 ## because the caller is a long-lived worker and not a short command.
@@ -291,12 +294,17 @@ proc start*(l: Lifecycle, be: Backend): int =
     return l.state(be).pid
 
   createDir(l.paths.state)
-  let lock = lockStart(l, be)
+  let (lock, contended) = lockStart(l, be)
   defer: unlockStart(lock)
 
   # Asked again with the lock held: another process may have started this
   # backend while this one waited, making the earlier answer stale.
   let existing = l.state(be)
+  if contended and not existing.running:
+    # Lost the wait, and the holder has not published a pid yet or the check
+    # above would have found it. Forking now is the second backend the lock
+    # exists to prevent.
+    return 0
   if existing.running:
     return existing.pid
 
@@ -385,16 +393,21 @@ proc start*(l: Lifecycle, be: Backend): int =
   # parent's read returns 0; a failed one writes `errno` first, which is the
   # only thing distinguishing the two from here. `write` and `_exit` are both
   # async-signal-safe, so the child stays inside what POSIX permits.
+  # Without the pipe there is no way to tell a successful `execve` from a child
+  # that exited 127, which is the whole point of it. Refusing is the honest
+  # answer: `pipe` fails on descriptor exhaustion, which is not a state to fork
+  # in either.
   var efd: array[0..1, cint] = [cint(-1), cint(-1)]
-  let haveHandshake = pipe(efd) == 0
-  if haveHandshake:
-    discard fcntl(efd[1], FdSetFd, FdCloexec)
+  if pipe(efd) != 0:
+    deallocCStringArray(cargs)
+    deallocCStringArray(cenv)
+    return 0
+  discard fcntl(efd[1], FdSetFd, FdCloexec)
 
   let pid = fork()
   if pid < 0:
-    if haveHandshake:
-      discard posix.close(efd[0])
-      discard posix.close(efd[1])
+    discard posix.close(efd[0])
+    discard posix.close(efd[1])
     deallocCStringArray(cargs)
     deallocCStringArray(cenv)
     return 0
@@ -402,7 +415,7 @@ proc start*(l: Lifecycle, be: Backend): int =
     # Child. Nothing below allocates. Detached from the controlling terminal so
     # the backend survives this process exiting, then stdout and stderr are
     # pointed at the log before exec.
-    if haveHandshake: discard posix.close(efd[0])
+    discard posix.close(efd[0])
     discard setsid()
     let fd = posix.open(logPath.cstring,
                         O_WRONLY or O_CREAT or O_APPEND, 0o644.Mode)
@@ -422,9 +435,8 @@ proc start*(l: Lifecycle, be: Backend): int =
     # against state inherited mid-mutation from threads that do not exist here —
     # a deadlock on the one path that is already a failure. `exitnow` is
     # `_exit(2)`: immediate, no handlers, no flush.
-    if haveHandshake:
-      var why = errno
-      discard posix.write(efd[1], addr why, sizeof(cint))
+    var why = errno
+    discard posix.write(efd[1], addr why, sizeof(cint))
     posix.exitnow(127)
 
   # Parent only: the child either replaced its image or exited, so neither array
@@ -433,12 +445,11 @@ proc start*(l: Lifecycle, be: Backend): int =
   deallocCStringArray(cenv)
 
   var execErr: cint = 0
-  if haveHandshake:
-    discard posix.close(efd[1])
-    # Blocks only until `execve` resolves either way: on success the
-    # close-on-exec descriptor is closed for us and this reads zero.
-    if posix.read(efd[0], addr execErr, sizeof(cint)) <= 0: execErr = 0
-    discard posix.close(efd[0])
+  discard posix.close(efd[1])
+  # Blocks only until `execve` resolves either way: on success the close-on-exec
+  # descriptor is closed for us and this reads zero.
+  if posix.read(efd[0], addr execErr, sizeof(cint)) <= 0: execErr = 0
+  discard posix.close(efd[0])
 
   if execErr != 0:
     # No pid file: the process is gone, and a file naming it would send `stop`

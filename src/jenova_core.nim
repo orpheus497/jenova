@@ -4128,12 +4128,19 @@ proc main() =
           check("a note that keeps its title stays indexed",
                 rag.indexNote("wsidx-keep", "Postgres pooling", "") and
                 rag.notePath("wsidx-keep") in indexedPaths(rag.NoteRoot))
-          var bodyHit, titleHit = false
-          for h in rag.query("xyzzy", topK = 5, withSnippets = false):
-            if h.path == rag.notePath("wsidx-keep"): bodyHit = true
+          # Asked of the stored chunks, not of `query`. A hit on this path
+          # proves only that the path is still indexed — with an embedder
+          # running, the surviving title chunk can answer a query for the body
+          # text on similarity alone, and the assertion would pass for the
+          # wrong reason.
+          var bodyKept = false
+          for r in db.query("SELECT text FROM rag_chunks WHERE path=?",
+                            rag.notePath("wsidx-keep")):
+            if r.len > 0 and r[0].contains("xyzzy"): bodyKept = true
+          check("the cleared body is gone from the stored chunks", not bodyKept)
+          var titleHit = false
           for h in rag.query("Postgres pooling", topK = 5, withSnippets = false):
             if h.path == rag.notePath("wsidx-keep"): titleHit = true
-          check("the cleared body is gone from the index", not bodyHit)
           check("and the note is still findable by its title", titleHit)
           rag.forgetNote("wsidx-keep")
 
