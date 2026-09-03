@@ -364,7 +364,9 @@ frame,
    a direct child and an element-path selector broke silently the last time
    this tree changed shape. */
 listview,
-listview > row {
+listview > row,
+columnview,
+columnview > listview > row {
   background-color: transparent;
 }
 

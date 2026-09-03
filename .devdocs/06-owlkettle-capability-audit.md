@@ -115,7 +115,20 @@ the right widget, not a bigger lid.
 > rendered*, bounded only by session 2's caps. Reducing them to viewport scale is the other half
 > of this finding and has not been done.
 
-`ColumnView` (`widgets.nim`) is the same mechanism with columns, for the file and trash lists.
+`ColumnView` (`widgets.nim`) is the same mechanism with columns.
+
+> **Done for the models list, session 7 — and *not* for the trash, deliberately.** The models
+> panel was the right fit and was drawn as prose: a name on one line and "instruct · 4387 MB" in
+> grey underneath, so comparing two models by size meant reading down a ragged column that did
+> not line up. Model, folder and size are columns now.
+>
+> The trash is a poor fit and forcing it there would be worse than leaving it. It holds **two
+> lists of different kinds** — rows addressed by id, which can be restored, and files addressed
+> by path, which cannot — and the comment in `trashPanel` already records that presenting them
+> as one thing would be a false claim about what restoring one does. A `ColumnView` must be the
+> `ScrolledWindow`'s own child to be a list, so accommodating both would mean either merging
+> them or giving a 720x560 panel two scrollers. Neither is an improvement on a short list that
+> fits on screen.
 
 ---
 

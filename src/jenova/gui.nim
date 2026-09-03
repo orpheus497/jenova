@@ -5087,62 +5087,100 @@ proc modelsPanel(app: AppState): Widget =
             placeholderText = "Search models"
             proc changed(t: string) = app.modelFilter = t
 
-          ScrolledWindow {.expand: true.}:
-            Box(orient = OrientY, spacing = 14, margin = 4):
-              # Phase 3, report 05: `StatusPage` rather than a dim `Label`. It
-              # is what libadwaita draws an empty view with, and the icon plus
-              # the title/description split is what makes "there are none" and
-              # "none of them match" read as different answers instead of two
-              # sentences in the same grey.
-              if app.modelList.len == 0:
-                StatusPage:
-                  iconName = "drive-multidisk-symbolic"
-                  title = "No models installed"
-                  # Action purpose: name both folders that were actually looked
-                  # in. "No models found" over a tree the user knows has models
-                  # in it is the report that sends them looking in the wrong
-                  # place.
-                  description = "No .gguf files in " & app.lc.paths.jcaHome &
-                                "/models/instruct or " & app.lc.paths.jcaHome &
-                                "/models/thinking."
-              elif app.visibleModels().len == 0:
-                # Action purpose: a search matching no model must say so. A list
-                # that empties itself without a word reads as a broken panel
-                # rather than as a search result, and the sidebar already
-                # answers the same question for conversations.
-                StatusPage:
-                  iconName = "system-search-symbolic"
-                  title = "No matches"
-                  description = "No installed model's file name or folder " &
-                                "contains \u201C" & app.modelFilter & "\u201D."
-              else:
-                Label {.expand: false.}:
-                  text = "Switching relinks models/agent. The model it " &
-                         "replaces stays where it is, in its own folder. It " &
-                         "does not reload the backend — llama-server holds " &
-                         "the old weights until it is restarted."
-                  xAlign = 0.0
-                  wrap = true
-                  style = [StyleClass("settings-help")]
+          # **Above the scroller, not inside it.** The `ColumnView` below has to
+          # be the `ScrolledWindow`'s own child to behave as a list — the same
+          # constraint the transcript's `ListView` carries and for the same
+          # reason — so the fixed help text cannot sit beside it any more. It is
+          # fixed text; it does not need to scroll.
+          if app.modelList.len > 0 and app.visibleModels().len > 0:
+            Label {.expand: false.}:
+              text = "Switching relinks models/agent. The model it replaces " &
+                     "stays where it is, in its own folder. It does not " &
+                     "reload the backend — llama-server holds the old weights " &
+                     "until it is restarted."
+              xAlign = 0.0
+              wrap = true
+              style = [StyleClass("settings-help")]
 
-                for m in app.visibleModels():
-                    Box(orient = OrientY, spacing = 2) {.expand: false.}:
-                      Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                        Label {.expand: true.}:
-                          text = m.name & (if m.active: "  — active" else: "")
-                          xAlign = 0.0
-                          wrap = true
-                        Button {.expand: false.}:
-                          text = "Switch"
-                          style = [ButtonFlat, StyleClass("row-btn")]
-                          sensitive = not m.active
-                          proc clicked() = app.switchToModel(m.path)
-                      Label {.expand: false.}:
-                        text = (if m.role.len > 0: m.role else: "models") &
-                               " · " & $((m.bytes + 1024 * 1024 - 1) div
-                                         (1024 * 1024)) & " MB"
+          ScrolledWindow {.expand: true.}:
+            # `StatusPage` rather than a dim `Label`. It is what libadwaita
+            # draws an empty view with, and the icon plus the title/description
+            # split is what makes "there are none" and "none of them match" read
+            # as different answers instead of two sentences in the same grey.
+            if app.modelList.len == 0:
+              StatusPage:
+                iconName = "drive-multidisk-symbolic"
+                title = "No models installed"
+                # Action purpose: name both folders that were actually looked
+                # in. "No models found" over a tree the user knows has models
+                # in it is the report that sends them looking in the wrong
+                # place.
+                description = "No .gguf files in " & app.lc.paths.jcaHome &
+                              "/models/instruct or " & app.lc.paths.jcaHome &
+                              "/models/thinking."
+            elif app.visibleModels().len == 0:
+              # Action purpose: a search matching no model must say so. A list
+              # that empties itself without a word reads as a broken panel
+              # rather than as a search result, and the sidebar already
+              # answers the same question for conversations.
+              StatusPage:
+                iconName = "system-search-symbolic"
+                title = "No matches"
+                description = "No installed model's file name or folder " &
+                              "contains \u201C" & app.modelFilter & "\u201D."
+            else:
+              # **`ColumnView`, because this list is a table and was drawn as
+              # prose** (report 06 §3). Each model was a name on one line and
+              # "instruct · 4096 MB" in grey underneath, so comparing two models
+              # by size meant reading down a ragged column that did not line up.
+              # Folder and size are now columns that do.
+              ColumnView:
+                rows = app.visibleModels().len
+                columns = @[
+                  initColumnViewColumn("Model", expand = true),
+                  initColumnViewColumn("Folder", fixedWidth = 100),
+                  initColumnViewColumn("Size", fixedWidth = 100),
+                  initColumnViewColumn("", fixedWidth = 100)]
+                showRowSeparators = true
+                # The bounds check is the one `viewItem` on the transcript
+                # carries, for the same reason: owlkettle re-runs this for rows
+                # bound before the current redraw, so a model list that shrank
+                # under a filter asks for a row that is gone — inside a `cdecl`
+                # callback, where an `IndexDefect` has nowhere to go.
+                proc viewItem(row, column: int): Widget =
+                  let shown = app.visibleModels()
+                  if row < 0 or row >= shown.len: return gui: Box()
+                  let m = shown[row]
+                  case column
+                  of 0:
+                    gui:
+                      Label:
+                        text = m.name & (if m.active: "  — active" else: "")
+                        xAlign = 0.0
+                        ellipsize = EllipsizeMiddle
+                        tooltip = m.path
+                  of 1:
+                    gui:
+                      Label:
+                        text = (if m.role.len > 0: m.role else: "models")
                         xAlign = 0.0
                         style = [StyleClass("settings-help")]
+                  of 2:
+                    gui:
+                      Label:
+                        # Rounded up, so a model under a megabyte does not
+                        # report as 0 MB.
+                        text = $((m.bytes + 1024 * 1024 - 1) div
+                                 (1024 * 1024)) & " MB"
+                        xAlign = 1.0
+                        style = [StyleClass("settings-help")]
+                  else:
+                    gui:
+                      Button:
+                        text = "Switch"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        sensitive = not m.active
+                        proc clicked() = app.switchToModel(m.path)
 
 ## Function purpose: the full-size attachment preview, the Web UI's
 ## `DialogChatAttachmentPreview`. Same overlay shape as the settings and hardware
