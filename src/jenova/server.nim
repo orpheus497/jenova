@@ -23,6 +23,7 @@ import ./api
 import ./pipeline
 # For the one intent value that is not worth a header.
 import ./prompts
+import ./inspect
 import std/json
 
 type
@@ -155,6 +156,55 @@ proc serveStatic(client: Socket, req: Request) =
   client.sendResponse(200, http.contentTypeFor(full), readFile(full),
                       headOnly = headOnly)
 
+## Function purpose: what the pipeline did to one request, as the header lines
+## its response head is spliced with. Below the handler so a self-test reads the
+## real bytes rather than a rebuilt copy of them.
+##
+## Action purpose: `trimmed` is why these are worth reporting at all — it counts
+## the oldest turns dropped to fit the context budget, which is silent
+## conversation loss no client can otherwise discover. Nothing is emitted when
+## there is nothing to say, so an ordinary turn's head is unchanged.
+##
+## Action purpose: the counts are integers and the intent and block names fixed
+## enums, so none can carry the CRLF that would make this response splitting. A
+## retrieval path can, and `inspect.encodeHit` escapes it — which is what keeps
+## that argument true rather than nearly true.
+##
+## Action purpose: the rewritten prompt is not here and does not travel. The
+## relay files the captured stream verbatim for replay, so a field carrying it
+## would be stored in the cache and served to whoever asks the same question
+## next.
+proc diagnosticHeaders*(prepared: pipeline.Prepared): string =
+  if prepared.trimmed > 0:
+    result.add "X-Jenova-Trimmed: " & $prepared.trimmed & "\r\n"
+    result.add "X-Jenova-Trimmed-Bytes: " & $prepared.trimmedBytes & "\r\n"
+  if prepared.ragHits > 0:
+    result.add "X-Jenova-Rag-Hits: " & $prepared.ragHits & "\r\n"
+  if prepared.webHits > 0:
+    result.add "X-Jenova-Web-Hits: " & $prepared.webHits & "\r\n"
+  if prepared.intent != prompts.inNone:
+    result.add "X-Jenova-Intent: " & $prepared.intent & "\r\n"
+  if prepared.editorDoc:
+    result.add "X-Jenova-Editor-Doc: 1\r\n"
+  if prepared.msgCount > 0:
+    result.add "X-Jenova-Msg-Count: " & $prepared.msgCount & "\r\n"
+    result.add "X-Jenova-Body-Bytes: " & $prepared.bodyBytes & "\r\n"
+  if prepared.sysBytes > 0:
+    result.add "X-Jenova-Sys-Bytes: " & $prepared.sysBytes & "\r\n"
+  if prepared.injected.len > 0:
+    result.add "X-Jenova-Injected: " &
+                inspect.encodeInjected(prepared.injected) & "\r\n"
+
+  # Action purpose: one header per hit, so a single unparseable value costs the
+  # reader that hit and not the list. On a LAN bind these paths reach whoever
+  # the socket reaches — who already has unauthenticated access to the same
+  # files through the file routes, so the header discloses nothing the
+  # connection did not. The chunk's own text is a different question and stays
+  # off.
+  for i, h in prepared.hits:
+    if i >= inspect.MaxHits: break
+    result.add "X-Jenova-Hit: " & inspect.encodeHit(h) & "\r\n"
+
 ## Function purpose: the bool result exists because a relay may take ownership
 ## of the socket, and the caller must not close one it no longer owns.
 proc handle(client: Socket, class: RouteClass, workerId: int): bool =
@@ -213,26 +263,7 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       # the request the backend reads.
       outbound.body = prepared.body
 
-      # Action purpose: the pipeline computes six diagnostics per request, and
-      # `trimmed` is why they are worth reporting rather than discarding — it
-      # counts the oldest turns dropped to fit the context budget, which is
-      # silent conversation loss no client can otherwise discover. A header is
-      # the smallest thing that can carry it and reaches every client at once
-      # rather than one interface.
-      #
-      # Emitted only when there is something to say, so an ordinary turn's head
-      # is unchanged. Every value is an integer or a fixed enum, so none can
-      # carry the CRLF that would make this response splitting.
-      if prepared.trimmed > 0:
-        diagHeaders.add "X-Jenova-Trimmed: " & $prepared.trimmed & "\r\n"
-      if prepared.ragHits > 0:
-        diagHeaders.add "X-Jenova-Rag-Hits: " & $prepared.ragHits & "\r\n"
-      if prepared.webHits > 0:
-        diagHeaders.add "X-Jenova-Web-Hits: " & $prepared.webHits & "\r\n"
-      if prepared.intent != prompts.inNone:
-        diagHeaders.add "X-Jenova-Intent: " & $prepared.intent & "\r\n"
-      if prepared.editorDoc:
-        diagHeaders.add "X-Jenova-Editor-Doc: 1\r\n"
+      diagHeaders = diagnosticHeaders(prepared)
 
     # Action purpose: the relay tees only when there is a key to file it under,
     # so an uncacheable request pays nothing for the cache existing.

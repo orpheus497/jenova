@@ -23,6 +23,7 @@ import ./sha256
 import ./nvimctl
 import ./settings
 import ./pdf
+import ./inspect
 
 type
   Prepared* = object
@@ -34,6 +35,18 @@ type
     hadTools*: bool
     editorDoc*: bool       ## an `Editor:` turn found a live document
     trimmed*: int          ## oldest turns dropped to fit the context budget
+    trimmedBytes*: int     ## what those turns weighed
+    ## The shape of the rewritten prompt, which is what a client can be told
+    ## about it. The text itself never leaves this process: it is the user's own
+    ## conversation plus their own files, and a response head is neither the
+    ## size nor the place for it.
+    sysBytes*: int         ## the assembled system message
+    msgCount*: int         ## messages in the body the backend is given
+    bodyBytes*: int
+    injected*: set[inspect.InjectedBlock]
+    ## The retrieval this turn actually used, paths and scores. `rag.query`
+    ## has always returned them and every caller threw them away.
+    hits*: seq[inspect.RetrievalHit]
 
 const
   ## An array rather than a table so the order is the declared one: the window
@@ -149,9 +162,18 @@ proc ragQueryFor(message: string): tuple[query: string, large: bool] =
 ## contexts are appended to it. Conversationally the persona comes first, then
 ## the contexts, then any existing system message beneath. With no intent the
 ## persona is prepended and retrieval appended, without the intent personas.
+##
+## Action purpose: it answers which blocks it added rather than the caller
+## inferring them from which contexts were non-empty. The persona is the one
+## that cannot be inferred — whether it goes in at all depends on the tools and
+## system-message combination decided here, and nowhere else.
 proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
-                  ragContext, webContext, editorContext: string) =
+                  ragContext, webContext, editorContext: string):
+    set[inspect.InjectedBlock] =
   if messages.kind != JArray: return
+  if ragContext.len > 0: result.incl inspect.ibRag
+  if webContext.len > 0: result.incl inspect.ibWeb
+  if editorContext.len > 0: result.incl inspect.ibEditor
   let hasSystem = messages.len > 0 and messages[0].kind == JObject and
                   messages[0].hasKey("role") and
                   messages[0]["role"].getStr == "system"
@@ -161,6 +183,7 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
       let mandate = "CORE MANDATE: You are Jenova, an autonomous agent. " &
                     prompts.FreeChat
       messages.elems.insert(%*{"role": "system", "content": mandate}, 0)
+      result.incl inspect.ibPersona
     # The role being present does not prove a `content` key is: a client may
     # send the text elsewhere, and direct indexing would fail the whole turn.
     var content = messages[0]{"content"}.getStr
@@ -171,6 +194,7 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
     return
 
   if intent != inNone:
+    result.incl inspect.ibPersona
     var systemPrompt = prompts.personaFor(intent)
     if webContext.len > 0: systemPrompt.add "\n" & webContext
     if editorContext.len > 0: systemPrompt.add "\n" & editorContext
@@ -183,6 +207,7 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
     return
 
   # No intent: persona prepended, retrieval appended.
+  result.incl inspect.ibPersona
   if hasSystem:
     var content = prompts.FreeChat & "\n\n" & messages[0]{"content"}.getStr
     if ragContext.len > 0: content.add "\n" & ragContext
@@ -281,13 +306,14 @@ proc messageWeight*(m: JsonNode): int =
 ## Oldest first, because the recent turns are what the next answer depends on.
 ## Content is never shortened — a truncated message reads as a working one while
 ## meaning something the user did not write.
-proc trimHistory*(messages: JsonNode, budgetBytes: int): int =
+proc trimHistory*(messages: JsonNode, budgetBytes: int):
+    tuple[turns, bytes: int] =
   if budgetBytes <= 0 or messages.kind != JArray or messages.len <= 1:
-    return 0
+    return (0, 0)
   var total = 0
   for m in messages:
     total += messageWeight(m)
-  if total <= budgetBytes: return 0
+  if total <= budgetBytes: return (0, 0)
 
   var i = 0
   # The bound keeps the final turn whatever happens, and the index does not
@@ -297,9 +323,11 @@ proc trimHistory*(messages: JsonNode, budgetBytes: int): int =
     if m.kind == JObject and m{"role"}.getStr == "system":
       inc i
       continue
-    total -= messageWeight(m)
+    let w = messageWeight(m)
+    total -= w
     messages.elems.delete(i)
-    inc result
+    inc result.turns
+    result.bytes += w
 
 ## Function purpose: the whole pipeline over one request body, answering the
 ## rewritten body and its cache key. A body that is not a chat request passes
@@ -347,6 +375,16 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
       let hits = rag.query(query, topK = limit, withSnippets = true,
                            pathFilter = projectRoot)
       result.ragHits = hits.len
+      # Action purpose: the hits are kept, not only counted. `rag.query` has
+      # always returned the path and the three scores and every caller
+      # discarded them, so "did retrieval find anything" was answerable and
+      # "what did it find" was not. The snippet is left behind on purpose: it
+      # is prose out of the user's own files and it already reaches the model
+      # inside the prompt, which is the only place it needs to be.
+      for h in hits:
+        result.hits.add inspect.RetrievalHit(
+          path: h.path, score: h.score, bm25: h.bm25, semantic: h.semantic,
+          startLine: h.startLine)
       ragContext = rag.formatContext(hits)
 
     if intent == inWebSearch:
@@ -365,8 +403,8 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
         result.editorDoc = doc.found
         editorContext = doc.asPromptContext()
 
-    injectSystem(messages, intent, result.hadTools, ragContext, webContext,
-                 editorContext)
+    result.injected = injectSystem(messages, intent, result.hadTools,
+                                   ragContext, webContext, editorContext)
 
   # Action purpose: outside the block above, so every request passes through it.
   # Inside, it would run only on a turn not already carrying a context marker —
@@ -375,9 +413,23 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
   #
   # After the system message is assembled, because that is what grows it and the
   # budget is measured against what is actually sent.
-  result.trimmed = trimHistory(messages, historyBudget)
+  let cut = trimHistory(messages, historyBudget)
+  result.trimmed = cut.turns
+  result.trimmedBytes = cut.bytes
+
+  # Action purpose: measured here rather than by the caller, because this is the
+  # only point at which the rewritten prompt exists as a value. A client is told
+  # the shape of what the model was sent — how many messages, how large, and how
+  # much of that is the system message the rewrite assembled — and never the
+  # text, which is the user's own conversation.
+  if messages.kind == JArray:
+    result.msgCount = messages.len
+    if messages.len > 0 and messages[0].kind == JObject and
+       messages[0]{"role"}.getStr == "system":
+      result.sysBytes = messages[0]{"content"}.getStr.len
 
   result.body = $req
+  result.bodyBytes = result.body.len
   result.cacheKey = cacheKeyFor(result.body)
 
 ## Function purpose: answers the stored body or empty. The caller owns the
