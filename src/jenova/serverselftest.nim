@@ -146,6 +146,16 @@ proc holdClient(arg: ClientArg) {.thread.} =
 ## returns a process exit status so the suite can be run from a script.
 proc run*(dbPath, staticRoot: string): int =
   echo "jenova-core serve-selftest"
+  # Action purpose: checked here, before a server exists, because phase 3 asks
+  # `/` for a body containing markup and `serveStatic` answers that out of
+  # `staticRoot/index.html`. Without one the request returns `404 not found: /`
+  # in a fraction of a millisecond and phase 3 reports a saturation failure that
+  # did not happen — the request answered, and fast. `nimble web` is what builds
+  # the directory; no other task does, which is why `suites` runs it first.
+  if not fileExists(staticRoot / "index.html"):
+    echo "  FAIL: no Web UI at " & staticRoot & " — phase 3 serves `/` from it."
+    echo "        Run `nimble web` first, or `nimble suites`, which does."
+    return 1
   db.initDb(dbPath)
   discard server.start("127.0.0.1", TestPort, staticRoot, enableDebug = true)
   echo "  ", server.describe()
@@ -226,8 +236,14 @@ proc run*(dbPath, staticRoot: string): int =
       echo &"  FAIL: stream stalled under load — max gap {loaded.maxGapMs:.1f} ms " &
            &"exceeds {budget:.1f} ms"
       result = 1
-    elif not health.contains("\"status\":\"ok\"") or not index.contains("<"):
-      echo "  FAIL: health or static did not answer while the debug class was saturated"
+    # Action purpose: one condition each, because "health or static" named two
+    # classes at once and the reader could not tell which had gone quiet.
+    elif not health.contains("\"status\":\"ok\""):
+      echo "  FAIL: /health did not answer while the debug class was saturated"
+      result = 1
+    elif not index.contains("<"):
+      echo "  FAIL: / did not answer while the debug class was saturated — " &
+           "the Web UI was present at start, so this is the static class"
       result = 1
     elif healthMs > HoldMs.float / 2:
       echo &"  FAIL: /health took {healthMs:.1f} ms while another class was " &

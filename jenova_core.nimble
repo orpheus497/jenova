@@ -1,4 +1,4 @@
-import std/[os, tables]
+import std/[os, strutils, tables]
 
 version       = "0.1.0"
 author        = "orpheus497"
@@ -101,6 +101,18 @@ const SelfTests = [
 task suites, "Build both binaries and run the test suites":
   coreTask()
   guiTask()
+  # Action purpose: `serve-selftest`'s third phase asks `/` for a body while the
+  # debug class is saturated, and `serveStatic` answers that out of
+  # `public/index.html`. Nothing but this task builds that directory, so on a
+  # clean checkout the request returned 404 and the run reported a saturation
+  # failure that had not happened.
+  #
+  # Depended on rather than skipped, because a skip would have to meet the bar
+  # below and cannot: `node` and `npm` are in `docs/install.md`'s dependency
+  # list, which says in as many words that there is no optional tier, and
+  # `nimble web` is step 2 of the documented install. A host that can build and
+  # ship Jenova can build the Web UI.
+  webTask()
   # Action purpose: the self-tests are this project's entire assertion base and
   # until now no build task, no suite and no CI executed any of them — they were
   # reachable only by typing the subcommand by hand (`TODOS.md` A-1). Every one
@@ -114,13 +126,42 @@ task suites, "Build both binaries and run the test suites":
     exec "bin/jenova-core " & t & "-selftest"
   # `test_nvimctl.sh` compiles its own driver and spawns a headless `nvim`; it
   # skips cleanly when nvim is not installed, so it costs nothing on a host
-  # without it. **That skip is the one exception to A-2's rule** that a suite
-  # which cannot run must fail — nvim is not a build dependency of either
+  # without it. That skip is one of exactly two exceptions to the rule that a
+  # suite which cannot run must fail — nvim is not a build dependency of either
   # binary, so requiring it would make a green run impossible on a host that can
-  # legitimately build and ship Jenova. The other five guards all fail.
+  # legitimately build and ship Jenova. The other five guards all fail. The
+  # second exception is the mapped-window tier below, on the same argument.
   for f in ["test_api_db.sh", "test_api_fs.sh", "test_routes.sh",
             "test_lifecycle.sh", "test_models.sh", "test_nvimctl.sh"]:
     exec "sh tests/" & f
+
+  # Action purpose: the two GUI harnesses run last, because they are the
+  # slowest and because they are the only things in this repository that have
+  # ever compiled, linked, mapped and driven the window. `gui_check.sh` needs
+  # nothing `nimble gui` did not already need, and `gui_build.sh` links the same
+  # toolkit `bin/jenova` was just linked against, so neither can legitimately be
+  # unavailable on a host that reached this line. Both run, and both fail.
+  exec "sh tests/gui_check.sh"
+  # The mapped-window step is the one part that can be legitimately absent, and
+  # it is the `test_nvimctl.sh` case exactly: an X server, ImageMagick,
+  # `xwininfo`, `xdotool`, `xclip` and `nc` are in no dependency list in
+  # `docs/install.md` and are not needed to build or run Jenova, so requiring
+  # them would make a green run impossible on a headless FreeBSD build host.
+  # When they are absent the harness is asked for its build-only tier, which it
+  # names on stdout — and the tools that were missing are named here, so the
+  # reduced run is a reported result rather than a silent one.
+  var needed = @["import", "convert", "xwininfo", "xdotool", "xclip", "nc"]
+  # A display already open is as good as being able to start one, which is why
+  # `Xvfb` is asked for only when there is none.
+  if not existsEnv("DISPLAY"): needed.add "Xvfb"
+  var missing: seq[string]
+  for tool in needed:
+    if findExe(tool).len == 0: missing.add tool
+  if missing.len == 0:
+    exec "sh tests/gui_build.sh"
+  else:
+    echo "suites: no mapped-window step — missing " & missing.join(", ")
+    exec "JENOVA_GUI_NO_RUN=1 sh tests/gui_build.sh"
 
 task llama, "Build the llama.cpp backend into external/ext_bin":
   let build = "external" / "llama.cpp" / "build"
