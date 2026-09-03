@@ -138,6 +138,23 @@ proc typeLabel*(view: AssetView, name: string): string =
   if dot > 0 and dot < name.len - 1: return name[dot + 1 .. ^1].toLowerAscii & " file"
   "unrecognised"
 
+## Function purpose: the type shown in a list, where the bytes have not been
+## read and must not be. Distinct from `typeLabel`, which answers about an
+## asset already classified: this one has only the row, so it says what the row
+## says and never more.
+proc rowTypeLabel*(name, declaredType: string): string =
+  let byName = mimeFromName(name)
+  # The window stores the wildcard for every chat image, so a list rendering it
+  # verbatim would print `image/*` down a whole column and say nothing.
+  if declaredType == "image/*":
+    return (if byName.len > 0: byName else: "image")
+  if declaredType.len > 0: return declaredType
+  if byName.len > 0: return byName
+  let dot = name.rfind('.')
+  if dot > 0 and dot < name.len - 1:
+    return name[dot + 1 .. ^1].toLowerAscii & " file"
+  "unrecognised"
+
 ## Function purpose: a size the user can compare, in the units the rest of the
 ## window already uses. Rounded up, for the reason the models list rounds up: a
 ## file under a kilobyte reporting as 0 reads as an empty file.

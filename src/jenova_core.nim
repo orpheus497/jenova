@@ -3158,6 +3158,24 @@ proc main() =
         check("and a name that is only separators still names something",
               assetview.exportName("/") == "asset")
 
+      block listLabels:
+        # The list column has the row and not the bytes, so it must answer from
+        # the row alone — and never by printing the wildcard the window stores.
+        check("a chat image is named by its extension, not by the wildcard",
+              assetview.rowTypeLabel("shot.png", "image/*") == "image/png",
+              assetview.rowTypeLabel("shot.png", "image/*"))
+        check("a wildcard over a nameless row still says something",
+              assetview.rowTypeLabel("shot", "image/*") == "image")
+        check("a declared type is shown as declared",
+              assetview.rowTypeLabel("a.bin", "application/pdf") ==
+                "application/pdf")
+        check("an undeclared type falls back to the name",
+              assetview.rowTypeLabel("a.md", "") == "text/markdown")
+        check("and to the bare extension when the name implies no type",
+              assetview.rowTypeLabel("a.bin", "") == "bin file")
+        check("a row with neither is labelled, not left blank",
+              assetview.rowTypeLabel("README", "") == "unrecognised")
+
       block sizes:
         check("bytes under a kilobyte are reported as bytes",
               assetview.sizeLabel(512) == "512 B", assetview.sizeLabel(512))

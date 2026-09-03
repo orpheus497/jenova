@@ -27,7 +27,7 @@
 ## stripping and the cache all apply identically — and a bug in that path cannot
 ## show up in one client and not the other. The socket is raw rather than
 ## `std/httpclient` because a localhost request needs no TLS stack.
-import std/[atomics, base64, json, net, os, oids, osproc, posix,
+import std/[algorithm, atomics, base64, json, net, os, oids, osproc, posix,
             streams,
             strutils, tables, times]
 import owlkettle
@@ -55,6 +55,7 @@ import ./settings
 import ./sha256
 import ./hardware
 import ./composer
+import ./assetview
 import ./shortcuts
 import ./convmd
 import ./version
@@ -587,11 +588,19 @@ type
   ## only its text.
   TrashItem = tuple[kind, id, label, detail: string]
 
+
   ConvItem = tuple[id, name, folderId, projectId, workspaceId: string]
   NodeItem = tuple[id, parent, name: string]
   ## A note or a file asset. Structurally identical to `ConvItem` — both carry
   ## the same three parent ids — so one set of tree helpers places all three.
   LeafItem = tuple[id, name, folderId, projectId, workspaceId: string]
+
+  ## One row of the Files screen. `LeafItem` carries what the tree needs to
+  ## place a row and no more; the list also shows what a file is, how big it is
+  ## and when it arrived, so those are read once into here rather than queried
+  ## per row per frame.
+  FileRow = tuple[id, name, kind, workspace: string, size: int,
+                  uploaded: int64, folderId, projectId, workspaceId: string]
 
 ## Function purpose: the sidebar's four levels are read whole and held in
 ## state, because `view` runs on every canvas frame and a query per frame is a
@@ -1244,6 +1253,44 @@ viewable App:
   ## and the other by path, and unifying them would mean inventing an identity
   ## for rows that do not have one.
   trashFiles: seq[fssync.TrashEntry]
+  ## The Files screen. Every file asset in one place, which the tree cannot
+  ## show — it lists them a container at a time, and a file the user remembers
+  ## attaching is somewhere in it. Cached for the reason `convs` is: `view`
+  ## runs on every canvas frame.
+  filesOpen: bool
+  fileRows: seq[FileRow]
+  fileFilter: string
+  ## Which of `FileSorts` the list is in, as an index because that is what a
+  ## `DropDown` selects with. The ordering is applied to `fileRows` when it
+  ## changes rather than in `view`, so the per-frame cost is the filter alone.
+  ##
+  ## Sorted from here and not by clicking a column header: owlkettle's
+  ## `ColumnView` binds no `GtkSorter` at the revision this window is written
+  ## against, so a header click has nowhere to go.
+  fileSort: int
+  ## The asset the viewer is showing, as its row id; empty means the panel is
+  ## the list. Held apart from `filesOpen` so closing the viewer returns to the
+  ## list rather than closing the screen.
+  assetOpen: string
+  assetName: string
+  ## What `assetview.classify` decided about the open asset, held rather than
+  ## recomputed: deciding reads the bytes, and `view` runs on every frame.
+  assetView: assetview.AssetView
+  ## The open asset as an attachment, when it is an image. It exists so the
+  ## preview goes through `attachmentPixbuf` — the decoder, the cache and the
+  ## eviction rule the transcript's thumbnails already use — instead of a
+  ## second decode path with its own defects.
+  assetImage: PendingAttachment
+  ## Whether the text view is showing all of the file. A preview that stops
+  ## silently is indistinguishable from a file that ends there.
+  assetTruncated: bool
+  ## Why nothing is shown, when the reason is not the file's type: it is larger
+  ## than the viewer will read onto the GTK thread.
+  assetProblem: string
+  ## A `TextView` owns a `TextBuffer` rather than a string, so — as the note
+  ## editor and the in-place message edit already do — it is filled when the
+  ## asset opens rather than driven from `view`.
+  assetBuffer: TextBuffer = newTextBuffer()
   hwDetecting: bool
   hw: hardware.Hardware
   hwScores: seq[hardware.Score]
@@ -1937,6 +1984,11 @@ proc deleteNode(app: AppState, entity, id: string) =
       app.leaf = ""
     if entity == "notes" and id == app.openNote:
       app.openNote = ""
+    # The viewer would otherwise keep offering a deleted file to be exported.
+    # Only the id is cleared here, which is what the panel branches on;
+    # `closeAsset` is declared further down the file.
+    if entity == "fileAssets" and id == app.assetOpen:
+      app.assetOpen = ""
     app.reloadTree()
   else:
     app.notice = "could not delete"
@@ -3878,6 +3930,216 @@ proc fullscreenButton(app: AppState): Widget =
 proc forkConversationRow(app: AppState, id: string) =
   app.forkFrom(id, "")
 
+## The orderings the Files screen offers, in the order the drop-down shows
+## them. `app.fileSort` indexes this.
+const FileSorts = ["Name", "Largest first", "Newest first", "Type"]
+
+## Function purpose: apply `app.fileSort` to the cached rows. Done here, when
+## the ordering or the list changes, rather than in `view`: `view` runs on
+## every canvas frame and a sort there is an n log n per frame.
+proc sortFiles(app: AppState) =
+  case app.fileSort
+  of 1:
+    app.fileRows.sort(proc (a, b: FileRow): int = cmp(b.size, a.size))
+  of 2:
+    app.fileRows.sort(proc (a, b: FileRow): int = cmp(b.uploaded, a.uploaded))
+  of 3:
+    # Name breaks the tie, so two files of the same type keep a stable order
+    # the user can read down rather than whatever the table returned.
+    app.fileRows.sort(proc (a, b: FileRow): int =
+      result = cmp(assetview.rowTypeLabel(a.name, a.kind).toLowerAscii,
+                   assetview.rowTypeLabel(b.name, b.kind).toLowerAscii)
+      if result == 0:
+        result = cmp(a.name.toLowerAscii, b.name.toLowerAscii))
+  else:
+    app.fileRows.sort(proc (a, b: FileRow): int =
+      cmp(a.name.toLowerAscii, b.name.toLowerAscii))
+
+## Function purpose: read every live file asset into `fileRows`. Its own query
+## rather than `listFiles`, because the tree wants placement and the list wants
+## type, size and date — and a per-row lookup for those would be a query per
+## row per frame.
+##
+## Action purpose: `size` and `uploadDate` are stored as text and are empty on
+## rows written before either was set, so both are parsed defensively. A row
+## that cannot report its size is still a row the user can open.
+proc refreshFiles(app: AppState) =
+  app.fileRows = @[]
+  for r in db.query("SELECT id, name, type, size, uploadDate, folderId, " &
+                    "projectId, workspaceId FROM fileAssets WHERE is_deleted=0"):
+    if r.len < 8: continue
+    var ws = ""
+    for w in app.workspaces:
+      if w.id == r[7]: ws = w.name
+    var size = 0
+    try: size = parseInt(r[3].strip) except ValueError: discard
+    var uploaded = 0'i64
+    try: uploaded = parseBiggestInt(r[4].strip).int64 except ValueError: discard
+    app.fileRows.add (id: r[0], name: r[1], kind: r[2], workspace: ws,
+                      size: size, uploaded: uploaded,
+                      folderId: r[5], projectId: r[6], workspaceId: r[7])
+  app.sortFiles()
+
+## Function purpose: the list as it is shown. Filter only — the ordering is
+## already in `fileRows` — so what runs on every frame is one pass.
+proc visibleFiles(app: AppState): seq[FileRow] =
+  if app.fileFilter.len == 0: return app.fileRows
+  let q = app.fileFilter.toLowerAscii
+  for f in app.fileRows:
+    if q in f.name.toLowerAscii or q in f.workspace.toLowerAscii or
+       q in assetview.rowTypeLabel(f.name, f.kind).toLowerAscii:
+      result.add f
+
+## Function purpose: where a file asset sits in the tree, which the mirror path
+## needs. Both caches are consulted because the viewer is reachable from the
+## sidebar, which fills `files`, and from the Files screen, which fills
+## `fileRows`.
+proc assetPlacement(app: AppState, id: string):
+    tuple[found: bool, folderId, projectId, workspaceId: string] =
+  for f in app.files:
+    if f.id == id: return (true, f.folderId, f.projectId, f.workspaceId)
+  for f in app.fileRows:
+    if f.id == id: return (true, f.folderId, f.projectId, f.workspaceId)
+  (false, "", "", "")
+
+## Function purpose: leave the viewer without leaving the Files screen, and
+## drop what it was holding — the decoded bytes of the last asset are the
+## largest thing this panel keeps.
+proc closeAsset(app: AppState) =
+  app.assetOpen = ""
+  app.assetName = ""
+  app.assetView = assetview.AssetView()
+  app.assetImage = PendingAttachment()
+  app.assetTruncated = false
+  app.assetProblem = ""
+  app.assetBuffer.text = ""
+
+## Function purpose: open one file asset. It is what makes a `fileAssets` row
+## something other than a name: the window files one on every attachment, and a
+## row that can only be renamed and deleted is a file this window wrote and
+## cannot read.
+##
+## Action purpose: the read is synchronous and bounded rather than a job on the
+## control worker. What runs on the GTK thread is one `getFileSize` and, only
+## if that is under `assetview.MaxOpenBytes`, one read of a local file — the
+## same shape and the same ceiling as the note editor's own load. The worker
+## exists for probes with no ceiling, which is what froze the window once; a
+## read with a ceiling is not one of those.
+proc openAsset(app: AppState, id, name: string) =
+  app.closeAsset()
+  app.filesOpen = true
+  # The list is read here and not only by `openFiles`, because this is also how
+  # the sidebar opens an asset — and the viewer's Back button lands on the list
+  # either way. Without it a file opened from the tree goes back to an empty
+  # screen that says there are no files.
+  app.refreshFiles()
+  app.assetOpen = id
+  app.assetName = name
+
+  let stored = loadFileAsset(id)
+  let place = app.assetPlacement(id)
+  var content = stored.content
+
+  # The mirror is preferred over the column because it is the file. An asset
+  # uploaded as a `data:` URI is on disk as its decoded bytes, and one edited
+  # outside this window — in the embedded Neovim, another editor, or over the
+  # storage route — is on disk as it now stands and in the column as it was.
+  if place.found:
+    let probe = fssync.fileAssetMirrorSize(id, name, place.folderId,
+                                           place.projectId, place.workspaceId)
+    if probe.found and probe.size > assetview.MaxOpenBytes:
+      const Mib = 1024 * 1024
+      # Rounded up, for the reason the attach path rounds up: a file barely
+      # over the ceiling reporting as exactly at it reads as a broken check.
+      app.assetProblem = name & " is " &
+        $((probe.size + Mib - 1) div Mib) & " MB, and the viewer reads at most " &
+        $(assetview.MaxOpenBytes div Mib) &
+        " MB — the read happens on the thread that draws the window. " &
+        "Export it to open it elsewhere."
+      return
+    if probe.found and probe.size > 0:
+      let mirror = fssync.readFileAssetMirror(id, name, place.folderId,
+                                              place.projectId,
+                                              place.workspaceId)
+      if mirror.found: content = mirror.content
+
+  app.assetView = assetview.classify(name, stored.kind, content)
+  if app.assetView.viewer == assetview.avImage:
+    # Re-encoded rather than decoded a second way. `attachmentPixbuf` takes a
+    # `data:` URL because that is the shape an attachment arrives in, and
+    # handing it one is what keeps this window to a single image decoder, a
+    # single thumbnail cache and a single eviction rule. It costs one encode,
+    # here, and never on the frame path — the cache is keyed and hits after.
+    app.assetImage = PendingAttachment(
+      kind: "IMAGE", name: name,
+      payload: "data:" & app.assetView.mime & ";base64," &
+               base64.encode(app.assetView.data),
+      bytes: app.assetView.data.len,
+      key: "asset:" & id & ":" & $app.assetView.data.len)
+  elif app.assetView.viewer == assetview.avText:
+    let shown = assetview.previewText(app.assetView.data)
+    app.assetBuffer.text = shown.text
+    app.assetTruncated = shown.truncated
+
+## Function purpose: open the Files screen on the list.
+proc openFiles(app: AppState) =
+  app.closeAsset()
+  app.fileFilter = ""
+  app.refreshFiles()
+  app.filesOpen = true
+
+## Function purpose: write the open asset out where the user chooses. This is
+## the only way its bytes leave the workspace, and it is what makes the
+## no-viewer state an answer rather than a dead end.
+##
+## Action purpose: the desktop's default handler is deliberately not spawned.
+## This window's stated property is that it starts no supervisor and no project
+## script, and its two documented exceptions are the LAN address lookup and the
+## Web UI opener; adding a third is a decision for whoever owns that contract,
+## not one to take from inside a viewer.
+proc exportAsset(app: AppState) =
+  if app.assetView.data.len == 0:
+    app.notice = "nothing is stored for " & app.assetName & " to export"
+    return
+  let suggested = assetview.exportName(app.assetName)
+  # The asset's own type first and "all files" after it, so the chooser opens
+  # showing what the user is exporting rather than the whole filesystem.
+  var picks: seq[FileFilter]
+  if app.assetView.mime.len > 0:
+    picks.add newFileFilter(assetview.typeLabel(app.assetView, app.assetName),
+                            mimeTypes = [app.assetView.mime])
+  picks.add newFileFilter("All files", patterns = ["*"])
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      # The name is in the title because owlkettle binds no
+      # `gtk_file_chooser_set_current_name` at the revision this window pins,
+      # so the chooser's entry cannot be pre-filled. Naming the file in the
+      # title is what is left, and it is better than a dialog that says only
+      # "Export".
+      title = "Export " & suggested
+      action = FileChooserSave
+      filters = picks
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Export"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  let names = FileChooserDialogState(state).filenames
+  if names.len == 0: return
+  # A chooser left on a directory returns the directory. Writing to it fails
+  # with an error naming a path the user does not think they chose, so the
+  # asset's own name is used inside it instead.
+  var target = names[0]
+  if dirExists(target): target = target / suggested
+  try:
+    writeFile(target, app.assetView.data)
+    app.notice = "exported to " & target
+  except CatchableError as e:
+    app.notice = "export failed: " & e.msg
+
 ## Function purpose: one sidebar row, including its rename state, so the tree
 ## does not have to branch on that at every level.
 ## What a sidebar row can have done to it, as menu items.
@@ -3902,6 +4164,11 @@ proc rowMenuItems(app: AppState, entity, id, name: string): Widget =
           text = "Fork"
           tooltip = "Copy this conversation's current branch into a new one"
           proc clicked() = app.forkConversationRow(id)
+      if entity == "fileAssets":
+        MenuItem:
+          text = "Open"
+          tooltip = "Preview this file, or export it"
+          proc clicked() = app.openAsset(id, name)
       MenuItem:
         text = "Delete"
         proc clicked() = app.deleteNode(entity, id)
@@ -4004,8 +4271,10 @@ proc convRow(app: AppState, c: ConvItem): Widget =
           insert(app.rowMenuItems("conversations", c.id, c.name))
 
 ## Function purpose: a note or file-asset row. Same shape as `convRow` — an
-## activating button, a rename and a delete — but a file asset has no editor to
-## open, because its content may be binary; it is listed, renamed and deleted.
+## activating button, a rename and a delete — and both kinds activate. A note
+## opens its editor; a file asset opens the viewer, which decides what it can
+## show by reading the bytes rather than refusing every row because some of
+## them are binary.
 proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
   gui:
     # Same shape as `convRow`, and the same reason: two icons per row of a
@@ -4018,12 +4287,13 @@ proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
         # The floor `convRow` explains, for the same reason.
         Button:
           sizeRequest = (204, -1)
-          sensitive = entity == "notes"
           style = [ButtonFlat, StyleClass("row-btn"),
-                   StyleClass(if entity == "notes" and n.id == app.openNote:
+                   StyleClass(if (if entity == "notes": n.id == app.openNote
+                                  else: n.id == app.assetOpen):
                                 "conv-active" else: "conv-idle")]
           proc clicked() =
             if entity == "notes": app.openNoteGuarded(n.id)
+            else: app.openAsset(n.id, n.name)
           insert(app.rowLabel(entity, n.id,
                               (if entity == "notes": "▤  " else: "◫  ") & n.name))
         PopoverMenu {.addMenu.}:
@@ -4032,7 +4302,7 @@ proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
       MenuButton {.expand: false.}:
         icon = "view-more-symbolic"
         tooltip = (if entity == "notes": "Rename or delete this note"
-                   else: "Rename or delete this file")
+                   else: "Open, rename or delete this file")
         style = [ButtonFlat, StyleClass("row-btn")]
         PopoverMenu:
           hasArrow = false
@@ -4794,6 +5064,11 @@ proc emptyTrashConfirmed(app: AppState) =
 ## It draws only; the listing is `api.deletedRows` and the undo is
 ## `api.restoreEntity`, both of which the HTTP routes already used and which are
 ## asserted without a window.
+##
+## Action purpose: `ColumnView`, for the reason the models list is one. The two
+## sections were hand-built rows of Labels whose columns did not line up, and a
+## trash accumulates without bound — so of the window's three lists this is the
+## one whose length is least under anyone's control.
 proc trashPanel(app: AppState): Widget =
   gui:
     Box(orient = OrientY):
@@ -4832,75 +5107,104 @@ proc trashPanel(app: AppState): Widget =
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() = app.trashOpen = false
 
-          ScrolledWindow {.expand: true.}:
-            Box(orient = OrientY, spacing = 6, margin = 4):
-              # The empty state has to account for BOTH lists. Saying
-              # "nothing has been deleted" while the file section below listed
-              # entries would be the same false reassurance the trash view was
-              # built to end.
-              if app.trashItems.len == 0 and app.trashFiles.len == 0:
-                StatusPage:
-                  iconName = "user-trash-symbolic"
-                  title = "Nothing has been deleted"
-                  description = "Deleted chats, notes, files and folders are " &
-                                "kept here until the trash is emptied."
-              if app.trashItems.len > 0:
-                Label {.expand: false.}:
-                  text = "Restoring a container brings back what was inside " &
-                         "it. Restoring something inside a deleted container " &
-                         "brings the container back too."
-                  xAlign = 0.0
-                  wrap = true
-                  style = [StyleClass("settings-help")]
-                for item in app.trashItems:
-                  Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                    Label {.expand: false.}:
-                      text = item.detail
-                      xAlign = 0.0
-                      sizeRequest = (110, -1)
-                      style = [StyleClass("settings-label")]
-                    Label {.expand: true.}:
-                      text = item.label
-                      xAlign = 0.0
-                      ellipsize = EllipsizeEnd
-                    Button {.expand: false.}:
-                      text = "Restore"
-                      style = [ButtonFlat, StyleClass("row-btn")]
-                      proc clicked() = app.restoreFromTrash(item)
+          # Above the scroller, not inside it: the `ColumnView` below has to be
+          # the `ScrolledWindow`'s own child to behave as a list, which is the
+          # constraint the models panel and the transcript both carry. It is
+          # fixed text and does not need to scroll.
+          #
+          # One paragraph covering both kinds, because the list is now one
+          # table and a paragraph that described only half of it would be read
+          # as describing all of it.
+          if app.trashItems.len > 0 or app.trashFiles.len > 0:
+            Label {.expand: false.}:
+              text = "Restoring a container brings back what was inside it, " &
+                     "and restoring something inside a deleted container " &
+                     "brings the container back too. A deleted file has no " &
+                     "database entry: restoring one puts the file back where " &
+                     "it was recorded as having come from."
+              xAlign = 0.0
+              wrap = true
+              style = [StyleClass("settings-help")]
 
-              # Kept as its own section rather than merged above: these
-              # are addressed by path and have no database row, so they cannot
-              # share the row list's Restore, and presenting them as though they
-              # were the same kind of thing would be a false claim about what
-              # restoring one does.
-              if app.trashFiles.len > 0:
-                Label {.expand: false.}:
-                  text = "Deleted files"
-                  xAlign = 0.0
-                  style = [StyleClass("settings-label")]
-                Label {.expand: false.}:
-                  text = "Files deleted from the workspace tree itself. These " &
-                         "have no database entry — restoring one puts the file " &
-                         "back where it was recorded as having come from."
-                  xAlign = 0.0
-                  wrap = true
-                  style = [StyleClass("settings-help")]
-                for entry in app.trashFiles:
-                  Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                    Label {.expand: false.}:
-                      text = (if entry.workspace.len > 0: entry.workspace
-                              else: "File")
-                      xAlign = 0.0
-                      sizeRequest = (110, -1)
-                      style = [StyleClass("settings-label")]
-                    Label {.expand: true.}:
-                      text = entry.name
-                      xAlign = 0.0
-                      ellipsize = EllipsizeEnd
-                    Button {.expand: false.}:
-                      text = "Restore"
-                      style = [ButtonFlat, StyleClass("row-btn")]
-                      proc clicked() = app.restoreTrashFile(entry)
+          ScrolledWindow {.expand: true.}:
+            # The empty state has to account for BOTH lists. Saying "nothing
+            # has been deleted" while the other one held entries would be the
+            # same false reassurance the trash screen was built to end.
+            if app.trashItems.len == 0 and app.trashFiles.len == 0:
+              StatusPage:
+                iconName = "user-trash-symbolic"
+                title = "Nothing has been deleted"
+                description = "Deleted chats, notes, files and folders are " &
+                              "kept here until the trash is emptied."
+            else:
+              # One table over two lists, indexed rather than merged into a
+              # third. `viewItem` runs per visible cell on every redraw, so
+              # building a combined sequence here would be an allocation
+              # proportional to the whole trash for each of them.
+              #
+              # The row-addressed items come first and the path-addressed ones
+              # after, and `row < app.trashItems.len` is the whole of the
+              # distinction. It has to survive: the two are restored by
+              # different calls, and one Restore button that meant two things
+              # would be a false claim about what pressing it does. The Kind
+              # column is where the user can see which is which.
+              ColumnView:
+                rows = app.trashItems.len + app.trashFiles.len
+                columns = @[
+                  initColumnViewColumn("Kind", fixedWidth = 170),
+                  initColumnViewColumn("Name", expand = true),
+                  initColumnViewColumn("", fixedWidth = 100)]
+                showRowSeparators = true
+                # The bounds check the models list carries, for the same
+                # reason: owlkettle re-runs this for rows bound before the
+                # current redraw, so a trash that shrank under a restore asks
+                # for a row that is gone — inside a `cdecl` callback, where an
+                # `IndexDefect` has nowhere to go.
+                proc viewItem(row, column: int): Widget =
+                  let rowed = app.trashItems.len
+                  if row < 0 or row >= rowed + app.trashFiles.len:
+                    return gui: Box()
+                  if column == 0:
+                    gui:
+                      Label:
+                        # The noun for a row, and the same two words for every
+                        # path-addressed entry. Which workspace it came from
+                        # goes on the name beside it: a column carrying a noun
+                        # for one half of the list and a workspace name for the
+                        # other says less than either.
+                        text = (if row < rowed: app.trashItems[row].detail
+                                else: "Deleted file")
+                        xAlign = 0.0
+                        ellipsize = EllipsizeEnd
+                        style = [StyleClass("settings-label")]
+                  elif column == 1:
+                    gui:
+                      Label:
+                        text = (if row < rowed: app.trashItems[row].label
+                                else: app.trashFiles[row - rowed].name)
+                        xAlign = 0.0
+                        ellipsize = EllipsizeEnd
+                        tooltip = (if row < rowed: ""
+                                   elif app.trashFiles[row - rowed].workspace.len > 0:
+                                     "deleted from " &
+                                     app.trashFiles[row - rowed].workspace
+                                   else: "deleted from outside any workspace")
+                  else:
+                    gui:
+                      Button:
+                        text = "Restore"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        # Indexed again inside the handler rather than closed
+                        # over: a restore or an empty can have changed both
+                        # lists between the redraw that built this button and
+                        # the press, and a stale index would put back something
+                        # else.
+                        proc clicked() =
+                          let at = app.trashItems.len
+                          if row < at:
+                            app.restoreFromTrash(app.trashItems[row])
+                          elif row - at < app.trashFiles.len:
+                            app.restoreTrashFile(app.trashFiles[row - at])
 
 ## Function purpose: open the hardware screen and ask the control worker for a
 ## detection. Opening always re-detects rather than showing a cached result —
@@ -5278,6 +5582,242 @@ proc previewPanel(app: AppState): Widget =
               pixbuf = pb
               contentFit = ContentContain
 
+## Function purpose: the Files screen, and the viewer for one asset. Two things
+## in one panel because they are one question — the list is how a file is found
+## and the viewer is what finding it was for — and because a viewer in its own
+## overlay would stack a second scrim over the first.
+##
+## Action purpose: `ColumnView` rather than a Box of rows, for the reason the
+## models list is one. What is shown is a table: a name, what the file is, and
+## how big. Drawn as rows it is a ragged column nobody can read down, and it is
+## also the list that grows without bound as chats accumulate attachments — so
+## it is the one that most needs virtualising.
+proc filesPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Same shape as the settings, hardware, models and trash panels: always in
+      # the tree, insensitive when closed so it does not swallow clicks. See the
+      # note in `settingsPanel`.
+      sensitive = app.filesOpen
+      style = (if app.filesOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.filesOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          style = [StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            # Back rather than a second close: the viewer was reached from the
+            # list, and a close that dismissed the whole screen would make
+            # looking at two files in a row cost two more clicks each time.
+            if app.assetOpen.len > 0:
+              Button {.expand: false.}:
+                icon = "go-previous-symbolic"
+                tooltip = "Back to the file list"
+                style = [ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.closeAsset()
+            Label {.expand: true.}:
+              text = (if app.assetOpen.len > 0: app.assetName else: "Files")
+              xAlign = 0.0
+              ellipsize = EllipsizeMiddle
+              style = (if app.assetOpen.len > 0: @[StyleClass("settings-label")]
+                       else: @[StyleClass("brand"),
+                               StyleClass("brand-purple")])
+            # Offered whenever there are bytes, including for a type with no
+            # viewer — that case is the one export exists for.
+            if app.assetOpen.len > 0:
+              Button {.expand: false.}:
+                text = "Export"
+                tooltip = "Write this file somewhere outside the workspace"
+                sensitive = app.assetView.data.len > 0
+                style = [ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.exportAsset()
+            else:
+              Button {.expand: false.}:
+                icon = "view-refresh-symbolic"
+                tooltip = "Re-read the file list"
+                style = [ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.refreshFiles()
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() =
+                app.closeAsset()
+                app.filesOpen = false
+
+          if app.assetOpen.len > 0:
+            Label {.expand: false.}:
+              text = assetview.typeLabel(app.assetView, app.assetName) &
+                     " · " & assetview.sizeLabel(app.assetView.data.len) &
+                     (if app.assetTruncated:
+                        " · showing the first " &
+                        assetview.sizeLabel(assetview.PreviewTextCap)
+                      else: "")
+              xAlign = 0.0
+              style = [StyleClass("settings-help")]
+
+            # `if` and not `case`: each branch builds a different widget, and
+            # each answer is a different sentence — which is the point. One
+            # "cannot show this" covering four distinct situations is the inert
+            # row this screen exists to replace.
+            #
+            # Only the text branch is wrapped in a scroller. `Picture` sizes
+            # itself to fit its allocation and a `StatusPage` centres in one, so
+            # putting either inside a `ScrolledWindow` gives it the natural
+            # height it asked for and scrolls the panel instead of filling it.
+            if app.assetProblem.len > 0:
+              StatusPage {.expand: true.}:
+                iconName = "dialog-warning-symbolic"
+                title = "Too large to show here"
+                description = app.assetProblem
+            elif app.assetView.viewer == assetview.avEmpty:
+              StatusPage {.expand: true.}:
+                iconName = "text-x-generic-symbolic"
+                title = "Nothing is stored for this file"
+                # The honest account of a deliberate design, not a failure. An
+                # image attached to a chat keeps its bytes with the message;
+                # this column is the text a model can be shown, and base64 in
+                # it would be retrieved and sent as though it were readable.
+                description = "The workspace records this file but holds no " &
+                  "content for it. An image attached to a chat is kept with " &
+                  "the message it was attached to, and the attachment strip " &
+                  "on that turn is where it can be seen full size."
+            elif app.assetView.viewer == assetview.avImage:
+              # 900 rather than the natural size, for the reason the attachment
+              # preview gives: a large photograph would otherwise size the
+              # panel past the window, and a `Picture` has no maximum of its
+              # own. It goes through `attachmentPixbuf`, so this shares the
+              # transcript's decoder, its cache and its eviction rule.
+              let pb = app.attachmentPixbuf(app.assetImage, 900)
+              if pb.isNil:
+                StatusPage {.expand: true.}:
+                  iconName = "image-missing-symbolic"
+                  title = "This image could not be decoded"
+                  description = "The bytes are stored and can still be " &
+                    "exported; the toolkit has no loader that reads them as " &
+                    assetview.typeLabel(app.assetView, app.assetName) & "."
+              else:
+                Picture {.expand: true.}:
+                  pixbuf = pb
+                  contentFit = ContentContain
+            elif app.assetView.viewer == assetview.avText:
+              ScrolledWindow {.expand: true.}:
+                TextView:
+                  buffer = app.assetBuffer
+                  # Read-only, and with no cursor: this is a view of a stored
+                  # file, and an editable buffer would invite an edit the panel
+                  # has nowhere to save.
+                  editable = false
+                  cursorVisible = false
+                  monospace = true
+                  wrapMode = WrapWord
+                  textMargin = Margin(top: 8, bottom: 8, left: 8, right: 8)
+            else:
+              StatusPage {.expand: true.}:
+                iconName = "application-x-executable-symbolic"
+                title = "No viewer for " &
+                        assetview.typeLabel(app.assetView, app.assetName)
+                description = "Jenova shows images and text. Export this " &
+                  "file to open it in something that reads " &
+                  assetview.typeLabel(app.assetView, app.assetName) & "."
+          else:
+            Box(orient = OrientX, spacing = 8) {.expand: false.}:
+              SearchEntry {.expand: true.}:
+                text = app.fileFilter
+                placeholderText = "Search files"
+                proc changed(t: string) = app.fileFilter = t
+              DropDown {.expand: false.}:
+                items = @FileSorts
+                selected = app.fileSort
+                tooltip = "Order the list. The column headers do not sort: " &
+                          "owlkettle's ColumnView binds no GtkSorter at the " &
+                          "revision this window is written against."
+                proc select(item: int) =
+                  app.fileSort = item
+                  app.sortFiles()
+
+            ScrolledWindow {.expand: true.}:
+              # The `ColumnView` has to be the `ScrolledWindow`'s own child to
+              # behave as a list — the constraint the models panel and the
+              # transcript both carry — so the empty states take its place
+              # rather than sitting beside it.
+              if app.fileRows.len == 0:
+                StatusPage:
+                  iconName = "folder-documents-symbolic"
+                  title = "No files"
+                  # Name where they come from. "No files" over a tree the user
+                  # has been attaching things to all week is the report that
+                  # sends them looking for a bug that is not there.
+                  description = "Files attached to a chat are filed into the " &
+                    "workspace that chat belongs to. A chat with no workspace, " &
+                    "project or folder files nothing at all."
+              elif app.visibleFiles().len == 0:
+                StatusPage:
+                  iconName = "system-search-symbolic"
+                  title = "No matches"
+                  description = "No file's name, type or workspace contains " &
+                                "\u201C" & app.fileFilter & "\u201D."
+              else:
+                ColumnView:
+                  rows = app.visibleFiles().len
+                  columns = @[
+                    initColumnViewColumn("File", expand = true),
+                    initColumnViewColumn("Type", fixedWidth = 150),
+                    initColumnViewColumn("Size", fixedWidth = 80),
+                    initColumnViewColumn("", fixedWidth = 90)]
+                  showRowSeparators = true
+                  # Double-click opens, which is what a native list does, and
+                  # the button column stays because a control that can only be
+                  # found by guessing is the defect this file argues against
+                  # everywhere else.
+                  proc activate(index: int) =
+                    let shown = app.visibleFiles()
+                    if index >= 0 and index < shown.len:
+                      app.openAsset(shown[index].id, shown[index].name)
+                  # The bounds check the models list carries, for the same
+                  # reason: owlkettle re-runs this for rows bound before the
+                  # current redraw, so a list that shrank under a filter asks
+                  # for a row that is gone — inside a `cdecl` callback, where an
+                  # `IndexDefect` has nowhere to go.
+                  proc viewItem(row, column: int): Widget =
+                    let shown = app.visibleFiles()
+                    if row < 0 or row >= shown.len: return gui: Box()
+                    let f = shown[row]
+                    if column == 0:
+                      gui:
+                        Label:
+                          text = f.name
+                          xAlign = 0.0
+                          ellipsize = EllipsizeMiddle
+                          tooltip = (if f.workspace.len > 0:
+                                       "in " & f.workspace
+                                     else: "not in any workspace")
+                    elif column == 1:
+                      gui:
+                        Label:
+                          # Read from the row alone. Deciding what the file
+                          # really is means reading its bytes, and this runs
+                          # per visible row.
+                          text = assetview.rowTypeLabel(f.name, f.kind)
+                          xAlign = 0.0
+                          ellipsize = EllipsizeEnd
+                          style = [StyleClass("settings-help")]
+                    elif column == 2:
+                      gui:
+                        Label:
+                          text = (if f.size > 0: assetview.sizeLabel(f.size)
+                                  else: "—")
+                          xAlign = 1.0
+                          style = [StyleClass("settings-help")]
+                    else:
+                      gui:
+                        Button:
+                          text = "Open"
+                          style = [ButtonFlat, StyleClass("row-btn")]
+                          proc clicked() = app.openAsset(f.id, f.name)
+
 ## Function purpose: drawn from the field declarations rather than written out,
 ## so a field added below the window appears here without being added twice.
 ## `settings.OmittedFields` names the ones deliberately absent.
@@ -5492,6 +6032,15 @@ proc topBar(app: AppState): Widget =
         tooltip = "Trash"
         style = [ButtonFlat]
         proc clicked() = app.openTrash()
+
+      # In the bar beside Trash because it answers the same kind of question —
+      # where did the thing I put in here go. The sidebar lists a workspace's
+      # files a container at a time; this is all of them.
+      Button {.addRight.}:
+        icon = "folder-documents-symbolic"
+        tooltip = "Files"
+        style = [ButtonFlat]
+        proc clicked() = app.openFiles()
 
       # In the bar rather than in the app menu because it is a surface the
       # user opens repeatedly while tuning a model, not a one-off action like
@@ -6143,6 +6692,7 @@ method view(app: AppState): Widget =
               insert(app.hardwarePanel()) {.addOverlay.}
               insert(app.modelsPanel()) {.addOverlay.}
               insert(app.trashPanel()) {.addOverlay.}
+              insert(app.filesPanel()) {.addOverlay.}
               insert(app.previewPanel()) {.addOverlay.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
