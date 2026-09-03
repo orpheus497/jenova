@@ -17,7 +17,7 @@ native widgets exist.
 |---|---|---|
 | `owlkettle/widgets.nim` renderables | **62** | — |
 | `owlkettle/adw.nim` renderables | **23** | — |
-| **Total** | **85** | **18 distinct types** |
+| **Total** | **85** | ~~**18 distinct types**~~ → **38 after session 7** |
 
 > **Session 7 first "corrected" these to 21 and 83, and that was wrong.** The
 > recount was taken against the **`v3.0.0` tag**; this report states its revision in
@@ -34,6 +34,18 @@ Of ~160 widget instances in `gui.nim`, **130 are `Button` (72) or `Label` (58)**
 That ratio is the finding. A native toolkit offering 85 widgets is being used as though it
 offered two, with structure expressed through nested `Box`es and CSS classes. It is a web
 document tree rendered by GTK.
+
+> **Session 7 closed §4 and §3.** The window now uses **38** distinct owlkettle renderables,
+> having added `ActionRow`, `Avatar`, `Banner`, `Clamp`, `ColumnView`, `ComboRow`, `ContextMenu`,
+> `ListView`, `MenuButton`, `OverlaySplitView`, `PopoverMenu`, `PreferencesGroup`, `SplitButton`,
+> `StatusPage`, `SwitchRow`, `ToastOverlay` and `ToolbarView` — plus two hand-bound widgets for
+> things owlkettle does not have at all: `MenuItem` (a `GtkModelButton` that closes the menu it
+> is in) and `BreakpointHost` (`AdwBreakpoint`, which nothing in owlkettle binds).
+>
+> `Button` and `Label` counts barely moved (72→67, 58→55), and that is expected: the
+> substitutions replaced *structure* — a Box of a Label and a Switch became a `SwitchRow`, a Box
+> of message cards became a `ListView` — while buttons and labels remain what a button and a
+> label are. The ratio was a symptom of the structure, not of the leaf widgets.
 
 ---
 
