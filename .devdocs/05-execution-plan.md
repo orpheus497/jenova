@@ -1,207 +1,188 @@
 # Report 05 — Execution Plan
 
-**Status:** the plan the other four reports feed. Sequential, one phase per session.
-**Rulings in force:** `jca_web` is **frozen**. Push/Pull is **out of scope for the GUI**.
-**MCP and TTS are deferred.**
-**Baseline:** branch `claude/gui-webui-parity-audit-avmj8w` against `main` at `c5111ce`.
+**Supersedes the parity-port plan.** Report 06 established that owlkettle is not a constraint:
+the window uses 18 of 85 available widgets, has 7 more compiled out of the build by omission, and
+expresses structure through nested `Box`es because it was written to reproduce a browser DOM.
+
+**The goal is restated:** not "reproduce the Web UI in GTK", but **build a native application on
+the shared core**, which reaches parity on most items as a side effect and exceeds it on the rest.
+Both surfaces are clients of the same `api.nim`, the same pipeline, the same retrieval. The
+window's advantage is that it is a process on the machine.
+
+**Rulings in force:** `jca_web` frozen · Push/Pull out of scope · MCP and TTS deferred.
 
 ---
 
-## 0. Where the work actually stands
+## The reframe, concretely
 
-Four sessions of audit and repair have closed every **high**-severity finding in reports 01 and
-03 and roughly a third of report 02. What remains is not cleanup — it is the parity work itself,
-which was never started, plus one structural repair that gates a third of it.
-
-| Report | Findings | Closed | Open | Parked by ruling |
-|---|---|---|---|---|
-| 01 — documentation | 25 | 22 | 2 (A-2, A-3 · both blocked on a screenshot; D-15) | 1 |
-| 02 — parity | 27 | 6 | 17 | 4 |
-| 03 — error/memory/wiring | 21 | 17 | 0 | 4 |
-| 04 — comment standard | 6 classes | 18 files of 37 (batches 1–2) | 19 files | — |
-
-**Verification standing:** 17 self-tests, `tests/test_lifecycle.sh`, and a `gui.nim` differential
-type-check all pass. `nimble suites` runs the 17 plus `serve`. Nothing in this branch has been
-built on FreeBSD or run against a GPU.
+| Was planned as | Is actually |
+|---|---|
+| P-B12 keyboard shortcuts — *blocked on replacing a mechanism* | One custom `renderable` holding a window-level `GtkShortcutController`. The existing mechanism is already window-scoped; its `assert` is an upstream `# TODO` with a narrow constraint (report 06 §6) |
+| P-B6 dedicated Files/Trash pages — *M, port two routes* | `ColumnView` — a virtualised, sortable, native list. Smaller than the port |
+| The settings screen — *drawn with Label + Button + Switch* | `PreferencesPage` / `ActionRow` / `ComboRow` / `SwitchRow` / `EntryRow`. Deletes code |
+| M-01 render caches — *capped in session 2* | Symptom. `ListView` virtualises the transcript and the cache becomes viewport-sized |
+| P-B1 error dialog, P-B2 processing state | `ToastOverlay` + `Banner` + `StatusPage`, all native, all currently unused |
 
 ---
 
-## 1. The single fact that shapes everything below
+## Phase 0 — Unlock the toolkit (½ session, do first)
 
-**`gui.nim` cannot be type-checked in any environment available so far.** It imports owlkettle,
-which needs GTK4 and libadwaita, which need FreeBSD. Every other module — 30 of 35 — type-checks
-against a scratch tree with the FreeBSD guards neutralised, and `jenova-core` builds and runs its
-whole suite. `gui.nim` gets a differential check against empty owlkettle stubs: identical error
-signatures at HEAD and in the tree means no *new* error, and a clean parse to EOF catches syntax.
-That is real, and it is not a type check.
-
-Every phase below is ordered by that constraint. Work that can be proven off-GUI comes first;
-work that only a FreeBSD build can prove is grouped so one build session validates all of it.
-
-**Phase 1 exists to remove this constraint.** Until it lands, GUI work is written blind.
-
----
-
-## Phase 1 — Establish a FreeBSD build (1 session)
-
-**Nothing else in this plan is fully verifiable until this is done.** Twenty commits of GUI
-changes are currently defended by a differential parse, and the parity work ahead is almost
-entirely `gui.nim`.
+Two changes, both small, both gating everything after.
 
 | Step | Detail |
 |---|---|
-| 1.1 | Build both binaries on the target FreeBSD host: `nimble core`, `nimble gui`, `nimble suites` |
-| 1.2 | Fix whatever the real compiler rejects in this branch's `gui.nim` edits — the `appInt` call, `attachPastedText`, `forkFrom`, `clearRenderMemos`, the `runCapture` timeout, the `umLanAddr` drain branch |
-| 1.3 | Run the window. Exercise: long paste → attachment; fork from a message; conversation switch (memo clearing); LAN toggle; backend start/stop/restart |
-| 1.4 | **A-2** — capture a GUI screenshot into `png/`, then **A-3**: reorder the README so the window leads and the Web UI is shown as the secondary surface |
-| 1.5 | Record in report 03 what the first real build changed, so the differential harness's blind spots are known rather than assumed |
+| 0.1 | Confirm the libadwaita version on the FreeBSD host (`pkg info libadwaita`), then set `-d:adwminor=<n>` in `jenova_core.nimble` beside the existing `-d:gtkminor=10 -d:gtk48`. This alone restores `OverlaySplitView`, `ToolbarView`, `SwitchRow`, `EntryRow`, `PasswordEntryRow`, `Banner`, `AboutWindow` and 13 properties (report 06 §2) |
+| 0.2 | Record the standard from report 04 §3 in `CLAUDE.md`, so every phase below is written to it rather than retrofitted in Phase 6 |
 
-**Exit:** `nimble suites` green on FreeBSD, the window runs, `png/` has a desktop screenshot,
-README leads with it.
-
-**Risk:** `--mm:arc` on the GUI and the `Button.shortcut` hazard are both documented but only
-ever exercised on the author's machine. This session may surface latent breakage from earlier
-work, not just this branch's.
+**Exit:** the build sees the whole toolkit; the comment rule is where a future session reads it.
 
 ---
 
-## Phase 2 — The shortcut mechanism, then keyboard parity (1 session)
+## Phase 1 — FreeBSD build and first run (1 session)
 
-**P-B12 is gated, and the gate is structural.** `owlkettle`'s `Button.shortcut` builds a
-`GtkShortcutController` once and its update hook asserts the value never changed
-(`gui.nim:3336-3340`). Two crashes have already come from changing the child count of a container
-holding the one shortcut-carrying button. The window has **exactly one** shortcut today: F11.
+Unchanged in necessity, and now also validates Phase 0. `gui.nim` has never been type-checked
+anywhere available: 30 of 35 modules check against a shimmed scratch tree, `jenova-core` builds
+and runs 17 self-tests, and `gui.nim` gets only a differential parse against owlkettle stubs.
+
+`nimble core` · `nimble gui` · `nimble suites` · fix what the real compiler rejects in this
+branch's window edits · run it · **A-2** capture a GUI screenshot · **A-3** reorder the README to
+lead with the window · record in report 03 what the first real build changed, so the harness's
+blind spots are known rather than assumed.
+
+**Exit:** green suite on FreeBSD, the window runs, `png/` has a desktop screenshot.
+
+---
+
+## Phase 2 — The transcript becomes a ListView (1 session)
+
+The single largest structural change, and the one everything else sits on.
 
 | Step | Detail |
 |---|---|
-| 2.1 | Replace `Button.shortcut` with a **window-level `GtkShortcutController`**, so shortcuts are owned by the window and not by whichever button happens to hold one |
-| 2.2 | Delete the child-count hazard notes that the new mechanism makes obsolete — and only those |
-| 2.3 | Add the Web UI's bindings: new chat, focus composer, toggle sidebar, search, settings, stop generation |
-| 2.4 | **P-E1** becomes cheap once 2.1 lands: a command palette over conversations, notes, files, settings and backend actions. This is the first "beyond parity" feature and it is unlocked by the same work |
+| 2.1 | Replace the `for m in app.messages` loop (`gui.nim:3674`) with `ListView`, `size = app.messages.len`, `viewItem(index)` building one message |
+| 2.2 | Reduce `BlockMemo` / `ParseMemo` / `thumbCache` to viewport scale; keep the caps and the clearing — a smaller working set does not make an unbounded cache safe |
+| 2.3 | Re-verify streaming: the last row updates every token. Confirm `ListView`'s `update` hook (`widgets.nim:4487`) re-runs `viewItem` for bound rows, and that autoscroll still pins |
+| 2.4 | `Clamp` around the transcript for a reading-width column |
+| 2.5 | `Avatar` + `ActionRow` idiom for message headers, replacing the "YOU"/"JENOVA" text labels |
 
-**Why second:** it removes a hazard that constrains every later GUI change, and it converts the
-single largest structural blocker into the foundation for the strongest beyond-parity feature.
+**Risk: this is the highest-risk phase in the plan.** Streaming into a virtualised list is the
+one place where `ListView`'s recycling and the token stream can fight. If 2.3 does not hold,
+fall back to virtualising only conversations above a length threshold and record why.
 
-**Exit:** shortcuts are window-owned, six bindings work, the container hazard is gone.
+**Exit:** a long conversation costs viewport memory, not conversation memory.
 
 ---
 
-## Phase 3 — Retrieval and pipeline made visible (1 session)
+## Phase 3 — Native chrome (1 session)
 
-**The cheapest high-value work left, and no other surface can do it.** `pipeline.Prepared` already
-carries the intent, RAG hit count, web hit count, editor-document flag and trimmed-turn count;
-`rag.query` already returns paths and scores. Both were being discarded until this branch put the
-diagnostics on response headers. The data exists; only the panel is missing.
+Mostly deletion. Every item replaces hand-built structure with a widget that already exists.
+
+`OverlaySplitView` replacing `Flap` · `ToolbarView` for the header/content/footer · `ToastOverlay`
+for transient notices (**P-B1** in part) · `Banner` for backend-down and LAN-on states ·
+`StatusPage` for the empty transcript, empty trash, no-models states · `PopoverMenu` + `ContextMenu`
+for right-click on messages and tree rows · `SplitButton` for send-with-options.
+
+**Exit:** the window reads as a GNOME application. Two Class B gaps close as a side effect.
+
+---
+
+## Phase 4 — Keyboard and the command palette (1 session)
 
 | Step | Detail |
 |---|---|
-| 3.1 | **P-E5** — pipeline inspector: what the model was actually sent. The rewritten body, the intent, how many turns were trimmed to fit |
-| 3.2 | **P-E4** — retrieval inspector: which chunks the last turn retrieved, with scores and source paths |
-| 3.3 | **P-B2** — replace the status subtitle with real processing state, fed by the same channel |
-| 3.4 | **P-B1** — error dialog carrying the server's own detail instead of one truncated notice line |
+| 4.1 | One custom `renderable` owning a window-level `GtkShortcutController` (report 06 §6), so bindings are declared in one place and the `Button.shortcut` constraint stops mattering |
+| 4.2 | New chat, focus composer, toggle sidebar, search, settings, stop generation — **P-B12** |
+| 4.3 | **P-E1** command palette over conversations, notes, files, settings and backend actions. Cheap once 4.1 exists; the first beyond-parity feature |
 
-**Why third:** it is off-critical-path for parity but it is the highest ratio of user value to
-risk in the whole plan, it touches no widget-tree invariants, and 3.3/3.4 close two Class B gaps
-as a side effect of building the channel.
-
-**Exit:** a user can see what the model was sent and what retrieval found. Two Class B gaps close.
+**Exit:** the window is keyboard-driveable. P-B12 closes, P-E1 ships.
 
 ---
 
-## Phase 4 — File assets and rendering (1–2 sessions)
+## Phase 5 — Settings, files and trash as native lists (1 session)
 
-The GUI writes `fileAssets` rows it cannot then read — the most visible incoherence left.
+| Step | Detail |
+|---|---|
+| 5.1 | Rebuild the settings screen on `PreferencesPage` / `PreferencesGroup` / `ActionRow` / `ComboRow` / `SwitchRow` / `EntryRow`. **P-B7** (model information detail) becomes an `ExpanderRow` |
+| 5.2 | **P-B6** Files and Trash on `ColumnView` — virtualised, sortable, native. Not a port of two Svelte routes |
+| 5.3 | **P-A8** open, preview and export a file asset. The window writes `fileAssets` rows on every attachment and offers no way back to them — the most visible incoherence left |
+| 5.4 | **P-B5** attachment "view all" · **P-B8** favourite models · **P-B11** selective export |
 
-| Step | ID | Detail |
-|---|---|---|
-| 4.1 | **P-A8** | Open, preview and export a file asset. The window creates these rows on every attachment and offers no way back to them |
-| 4.2 | **P-B5** | Attachment "view all" surface |
-| 4.3 | **P-B4** | Per-code-block copy button and preview dialog |
-| 4.4 | **P-A5** | Math rendering — the last remaining gap in the markdown path, and the only one not closed in session 2 |
-| 4.5 | **P-A7 / P-C1** | PDF viewing, which also unblocks `pdfAsImage` — the one setting still honestly marked pending because it needs a rasteriser |
-
-**Split point:** 4.1–4.3 are one session; 4.4–4.5 are the second if the rasteriser proves
-non-trivial. **P-A5 needs a decision**: KaTeX is a browser library with no GTK equivalent. The
-options are a Pango-drawn subset (limited, native, no dependency), shelling out to a TeX
-renderer (heavy, correct), or declaring math out of scope for the window. **Decide before
-starting 4.4.**
-
-**Exit:** attachments are a two-way surface; the markdown path is complete or math is formally
-scoped out.
+**Exit:** the three list surfaces are native. Four Class B gaps and one Class A gap close.
 
 ---
 
-## Phase 5 — Remaining Class B parity (1 session)
+## Phase 6 — Inspectors (1 session)
 
-The long tail. Each is small; together they are the difference between "mostly there" and 1:1.
+Highest value-to-risk in the plan, and no browser can do it: the data is in-process.
+`pipeline.Prepared` already carries intent, RAG hits, web hits, editor-document and trimmed-turn
+count; `rag.query` already returns paths and scores. Both were discarded until this branch put
+them on response headers.
 
-P-B6 (dedicated Files/Trash pages vs overlay panels · M) · P-B7 (model information detail) ·
-P-B8 (favourite models) · P-B9 (show system message in transcript) · P-B10 (`useThinking`
-toggle) · P-B11 (selective export) · **P-A3** (audio capture — `pipeline.contentFor` already
-emits `input_audio` parts, so the wire format is done and only the recorder is missing; this
+**P-E5** pipeline inspector — what the model was actually sent, and how many turns were trimmed
+to fit · **P-E4** retrieval inspector — which chunks the last turn retrieved, with scores ·
+**P-B2** real processing state from the same channel · **P-B9** show the system message ·
+**P-B10** `useThinking` toggle.
+
+---
+
+## Phase 7 — Rendering and media (1–2 sessions)
+
+**P-B4** per-code-block copy and preview · **P-A5** math · **P-A7** PDF viewing, which also
+unblocks `pdfAsImage`, the one setting still honestly marked pending · **P-A3** audio capture
+(`pipeline.contentFor` already emits `input_audio` parts, so only the recorder is missing; it
 also unblocks `autoMicOnEmpty`, the last pending setting).
 
-**Exit:** Class B is empty. The GUI is at 1:1 with the Web UI on everything not parked by ruling.
+**P-A5 needs a decision before starting** — see Open decisions.
 
 ---
 
-## Phase 6 — The comment standard (2–4 sessions)
+## Phase 8 — The comment standard (2–4 sessions)
 
-Report 04's own plan, unchanged, executed in its own batches. **It must come last among code
-work**: it touches 37 files and would collide with every phase above.
+Report 04's plan unchanged, last because it touches all 37 files and would collide with every
+phase above. **Batches 1 and 2 are already done** (18 files, `8033bdd` and `63a7440`, −793 comment
+lines against +511) — which is report 04's own recommended stopping point, so **batch 3 waits on
+your review of the shape those produced.** 18 files is cheap to redo; 37 is not.
 
-**Batches 1 and 2 are already done** — 18 files, 8033bdd and 63a7440, −793 lines of comment
-against +511. That is report 04's own recommended stopping point, so **batch 3 should not start
-until you have reviewed the shape those two produced.** If it is not what you meant, 18 files is
-cheap to redo; 37 is not.
-
-`gui.nim` is batch 8, alone, last, and only after Phase 1 gives it a compiler.
-
-Target: 7,106 comment lines → ~1,850; top-level routine coverage 54% → 100%.
-
-**Batch 0 is not optional and should happen at the start of Phase 1, not Phase 6**: write the
-standard into `CLAUDE.md` so every phase above is written to it rather than retrofitted.
+`gui.nim` is batch 8, alone, last — and by then it will have been substantially rewritten by
+phases 2–7, so schedule it against the new file, not the current one.
 
 ---
 
-## Phase 7 — Deferred, pending your ruling
+## Phase 9 — Parked, pending your ruling
 
-Not scheduled. Listed so the parking is deliberate rather than forgotten.
-
-| ID | Item | Note |
-|---|---|---|
-| P-A1 | MCP client | Parked. If revisited, the finding in P-C2 argues for a **server-side** client: `/cors-proxy` is called by the frozen Web UI and not served, which silently disables remote MCP servers there |
-| P-A2 | Agentic tool loop | Downstream of P-A1. `toolCalls` (W-04) is written by one surface and read by neither until this exists |
-| P-A4 | Speech synthesis | Parked |
-| P-C3 / W-05 | Push/Pull | Out of scope by ruling. Vestigial and can move data backwards; the honest end state is removal, which requires a Web-side change and `jca_web` is frozen |
-| P-E2, P-E3, P-E6, P-E7, P-E8 | Beyond-parity proposals | Unscheduled; P-E1 is absorbed into Phase 2 |
+**P-A1** MCP (if revisited, P-C2 argues for a *server-side* client: `/cors-proxy` is called by the
+frozen Web UI and not served, silently disabling remote MCP servers there) · **P-A2** agentic loop,
+downstream of MCP, and `toolCalls` (W-04) stays unread until it exists · **P-A4** TTS ·
+**P-C3 / W-05** Push/Pull · **P-E2, P-E3, P-E6, P-E7, P-E8** beyond-parity proposals; P-E1 is
+absorbed into Phase 4.
 
 ---
 
 ## Open decisions
 
-Three, and only the first blocks a phase.
-
-1. **Math rendering (P-A5)** — Pango subset, external TeX renderer, or out of scope. Blocks 4.4.
+1. **Math rendering (P-A5)** — KaTeX is a browser library with no GTK equivalent. Pango-drawn
+   subset (native, limited), external TeX renderer (correct, heavy), or out of scope. Blocks 7.
 2. **D-15** — `etc/jenova.conf` sets `JENOVA_DRAFT=0` while its source profile and the README say
-   the drafter is on. Drift from commit `7b859f5` updating the profile without re-applying it.
-   **Not changed here on purpose**: it alters inference behaviour and the correct fix is
-   `hardware apply`, not a hand-edit — which is exactly what `eee557e` reverted once already.
-3. **Where the comment standard lives** — `CLAUDE.md`, `docs/`, or `.devdocs/`. It has to be
-   somewhere a future session reads by default, or it will not survive.
+   the drafter is on; drift from `7b859f5` updating the profile without re-applying it. Untouched
+   on purpose: it changes inference behaviour, and the fix is `hardware apply`, not a hand-edit —
+   which is what `eee557e` reverted once already.
+3. **Phase 2's fallback** — if streaming into a virtualised `ListView` proves unstable, is
+   virtualising only long conversations acceptable, or should the phase be reverted whole?
 
 ---
 
-## Sequencing rationale
+## Sequencing
 
 | Phase | Why here |
 |---|---|
-| 1 | Everything after it is written blind otherwise |
-| 2 | Removes the structural hazard that constrains every later GUI change |
-| 3 | Highest value-to-risk; the data already exists and is thrown away |
-| 4 | The largest coherence gap — rows written and never read |
-| 5 | The long tail, cheap individually, only meaningful in bulk |
-| 6 | Touches every file; must not collide with 1–5 |
-| 7 | Awaiting rulings |
+| 0 | One line unlocks a seventh of the toolkit every later phase uses |
+| 1 | Everything after is written blind otherwise |
+| 2 | The structural change the rest sits on, and the riskiest — do it while the build is fresh |
+| 3 | Mostly deletion once 0 and 2 land |
+| 4 | Needs 3's stable container structure |
+| 5 | Needs 0 for the row widgets |
+| 6 | Independent; movable |
+| 7 | Independent; movable |
+| 8 | Touches every file; must not collide |
 
-Phases 1 and 2 are strictly ordered. Phases 3, 4 and 5 can be reordered freely. Phase 6 is last.
+0 → 1 → 2 → 3 are strictly ordered. 4, 5, 6, 7 can be reordered. 8 is last.
