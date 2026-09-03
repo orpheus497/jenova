@@ -105,8 +105,12 @@ const
                      "offered on a reply that carries its own reasoning."),
     SettingDef(key: "pdfAsImage", label: "Parse PDF as image",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               # The block is rasterisation, not attachments — pages reach the
-               # model as text today.
+               # Action purpose: rasterisation is the whole of what is missing.
+               # `pipeline.contentFor` already sends a PDF as `image_url` parts
+               # when the attachment carries them, so the wire format is done
+               # and nothing is left but something that can draw a page. The Web
+               # UI draws one with pdf.js into a canvas — a browser, not a
+               # library that can be linked into this process.
                awaiting: "a PDF rasteriser. `pdf.nim` extracts a page's text " &
                          "and nothing in this program can render a page to " &
                          "pixels, which is what sending pages as images means",
