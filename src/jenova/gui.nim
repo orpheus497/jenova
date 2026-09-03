@@ -2083,6 +2083,16 @@ proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
     # chip falls back to its name and type.
     return nil
 
+## The intent prefixes as a sentence. Distinct because two prefixes share an
+## intent and only one of them needs naming.
+proc intentHint(): string =
+  var seen: seq[string]
+  for (prefix, _) in pipeline.IntentPrefixes:
+    if prefix notin seen: seen.add prefix
+  for i, p in seen:
+    if i > 0: result.add (if i == seen.len - 1: " or " else: ", ")
+    result.add p
+
 proc attachmentsOf(m: Message): seq[PendingAttachment] =
   attachMemo.attachmentsFor(m.id, m.extra)
 
@@ -3662,11 +3672,20 @@ proc mainArea(app: AppState): Widget =
             # height, and two replies in a tall window each become half a
             # screen. That is the "weirdly huge" bubbles. A transcript sizes
             # to its content and scrolls; it never divides the space up.
-            Label {.expand: false.}:
-              text = (if app.openNote.len > 0: ""
-                      elif app.messages.len == 0: "Ask Jenova something."
-                      else: "")
-              style = [StyleClass("dim-note")]
+            # A Box with one varying child rather than a conditional widget in
+            # the transcript's own child list: owlkettle matches states
+            # positionally, and the message loop below shifts by one for every
+            # turn. The Box keeps this slot constant whatever is inside it.
+            Box(orient = OrientY) {.expand: false.}:
+              if app.openNote.len == 0 and app.messages.len == 0:
+                StatusPage:
+                  iconName = "user-available-symbolic"
+                  title = "Ask Jenova something"
+                  # Read from the classifier's own table rather than restated,
+                  # so a prefix cannot be added there and go unmentioned here.
+                  # Nothing on either surface has ever shown these (P-E8).
+                  description = "Attach a file, or start a message with " &
+                                intentHint() & " to steer it."
             for i, m in (if app.openNote.len > 0: @[] else: app.messages):
               Frame {.expand: false.}:
                 # A-70: a system turn is neither the user's nor the model's, and

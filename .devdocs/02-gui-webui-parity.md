@@ -409,7 +409,7 @@ approved — listed for the plan's Phase 5.
 | P-E5 | Pipeline inspector: the rewritten body, intent, RAG hit count, trimmed-turn count | `Prepared` (`src/jenova/pipeline.nim:44-52`) already carries all of it and it is discarded |
 | P-E6 | Backend log viewer inside the window | the GUI already reads the tail for errors |
 | P-E7 | Multi-window / detached conversation | native only |
-| P-E8 | Intent-prefix picker in the composer, so the five prefixes are discoverable | see report 01, G-02 |
+| P-E8 | Intent-prefix picker in the composer, so the five prefixes are discoverable | see report 01, G-02. **Half done**: the empty transcript's `StatusPage` now names them, read from `pipeline.IntentPrefixes` rather than restated. A picker in the composer is what remains |
 
 **P-E4 and P-E5 are the strongest**: the data already exists and is thrown away, the cost
 is a channel message and a panel, and no other surface can show it.
