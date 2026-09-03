@@ -10,7 +10,6 @@
 ## data, so adding one costs a table entry rather than a widget, and no container
 ## acquires a positional constraint.
 
-import std/tables
 import owlkettle
 import owlkettle/widgetutils
 import owlkettle/bindings/gtk
@@ -20,11 +19,35 @@ type
   GtkShortcutFunc = proc (widget: GtkWidget, args: GVariantPtr,
                           data: pointer): cbool {.cdecl.}
 
-# GTK's own callback action, absent from owlkettle's bindings. Declared through
-# the header so a changed signature is a C compile error.
+# GTK's own callback action, absent from owlkettle's bindings.
+#
+# **No `header:` pragma, and that is not an oversight.** A `header:` makes Nim
+# `#include` it in this module's C file, and owlkettle's bindings declare every
+# GTK function they bind *without* one — as bare prototypes over `void*`. Both
+# then land in the same translation unit, and the C compiler sees
+# `gtk_box_new` declared twice with different types:
+#
+#     error: conflicting types for 'gtk_box_new';
+#            have 'void *(int, int)'
+#     note:  previous declaration ... 'GtkWidget *(GtkOrientation, int)'
+#
+# The first version of this module carried `header: "gtk/gtk.h"` for the good
+# reason that a changed signature would then be a compile error. The effect was
+# that it always was one: `bin/jenova` did not build at all, and `nim check`
+# could not say so because it never runs a C compiler. `sourceview.nim` and
+# `vte.nim` get away with their headers only because neither uses a GTK function
+# owlkettle also binds; this module uses three (`gtk_box_new`, `gtk_box_append`,
+# `gtk_box_remove`), so it cannot.
+#
+# The signature is therefore guaranteed by reading `gtk/gtkshortcutaction.h`,
+# the way every other hand-declared prototype in `gui.nim` and `theme.nim` is:
+#
+#     GtkShortcutAction *gtk_callback_action_new (GtkShortcutFunc callback,
+#                                                 gpointer        data,
+#                                                 GDestroyNotify  destroy);
 proc gtk_callback_action_new(callback: GtkShortcutFunc, data: pointer,
                              destroy: GDestroyNotify): GtkShortcutAction
-  {.importc, cdecl, header: "gtk/gtk.h".}
+  {.importc, cdecl.}
 
 type
   Action* = proc () {.closure.}
@@ -71,7 +94,18 @@ renderable ShortcutHost of BaseWidget:
       # `cdecl` procs and a GtkBox needs both calls in one step anyway.
       proc replace(widget, oldChild, newChild: GtkWidget) =
         if not oldChild.isNil: gtk_box_remove(widget, oldChild)
-        if not newChild.isNil: gtk_box_append(widget, newChild)
+        if not newChild.isNil:
+          # **Both expands, and this is what makes the window fill.** A GtkBox
+          # gives a child its *natural* size and hands the leftover only to
+          # children that asked for it; owlkettle's own containers set this from
+          # the `{.expand.}` adder annotation, and nothing sets it here because
+          # this renderable is the parent. Without the two calls the whole window
+          # collapsed to the natural height of its content — the canvas
+          # disappeared and the composer sat a fifth of the way down an empty
+          # window, on every page.
+          gtk_widget_set_hexpand(newChild, cbool(1))
+          gtk_widget_set_vexpand(newChild, cbool(1))
+          gtk_box_append(widget, newChild)
       state.updateChild(state.child, widget.valChild, replace)
 
   hooks bindings:
