@@ -244,53 +244,75 @@ window_geometry() {
 
 ## Prove the transcript rendered the seeded conversation.
 ##
-## **The assertion is the message's own text, not a picture of it.** Every
-## pixel measure tried first failed to separate the two states: the empty
-## transcript draws a large speech-bubble icon and a bold heading over the same
-## canvas artwork the cards sit on, so its greyscale mean (0.971) and deviation
-## (0.130) bracket the seeded one (0.982 / 0.103) from the wrong side. A
-## threshold there would have been a number picked after seeing both answers,
-## which is the defect this file already records for the composer test.
+## **The assertion is the message's own text, not a picture of it.** Every pixel
+## measure tried first failed to separate the two states: the empty transcript
+## draws a large icon and a bold heading over the same canvas artwork the cards
+## sit on, so its greyscale mean (0.971) and deviation (0.130) bracket the
+## seeded one (0.982 / 0.103) from the wrong side. A threshold there would have
+## been a number picked after seeing both answers, which is the defect this file
+## already records for the composer test.
 ##
-## So it clicks the Copy button on the first card and reads the clipboard. The
-## text either is message 1's or it is not, and nothing about a blank card, a
-## missing card or a transposed order can produce a match.
+## So it clicks Copy on the first card and reads the clipboard back. The text
+## either is message 1's or it is not, and no blank card, missing card or
+## transposed order can produce a match.
 ##
-## The click point is measured, not derived, and there is no way around that:
-## `xdotool` has no notion of a widget. `COPY_X` is deliberately the leftmost
-## icon of the action row — **the row also ends in Delete**, and a blind scan
-## for the button could destroy a message rather than fail a test. At the left
-## edge the worst outcome is an assertion that fails.
-COPY_X=50
-CARD1_Y=195   # the first card's action row, with the backend-down banner above
+## **Nothing here is a measured screen coordinate.** The first version pinned
+## the button at 50,195 and was broken within the hour by a `Clamp` and an
+## `Avatar` — ordinary work on the very widget being tested. Instead the card's
+## left edge is found from the image (it is the only strongly saturated column
+## in the transcript: the role-coloured accent border), and the row is found by
+## clicking down the column until something lands on the clipboard.
+##
+## `CARD_COPY_DX` is the one offset left, and it is measured from the card's own
+## edge rather than the window's, so it survives anything that moves the card.
+## It is deliberately small: the action row runs copy, fork, edit, delete at
+## roughly +29, +67, +105 and +143 from that edge, so **staying near the left
+## keeps the scan away from Delete**, which a search for a button must never
+## reach.
+CARD_COPY_DX=29
+SCAN_STEP=10
+
+## The screen x of the leftmost card edge, or nothing if no card is drawn.
+card_accent_x() { # image wx wy ww wh
+  convert "$1" -crop "$(($4 - 40))x$(($5 / 2))+$(($2 + 20))+$(($3 + $5 / 8))" +repage \
+    -colorspace HSL -channel G -separate -resize "$(($4 - 40))x1!" -depth 8 txt:- 2>/dev/null |
+    sed -n 's/^\([0-9]*\),0: .*gray(\([0-9]*\)).*/\1 \2/p' |
+    awk -v ox=$(($2 + 20)) '$2 > 40 { print $1 + ox; exit }'
+}
+
 transcript_renders() {
   set -- $(window_geometry)
   [ $# -eq 4 ] || { echo "gui_build: no window to read the transcript from"; return 1; }
-  wx=$3; wy=$4
+  ww=$1; wh=$2; wx=$3; wy=$4
 
-  # `-i` with /dev/null: owning the selection is the app's job here, and this
-  # only clears any value left by an earlier step so a stale hit cannot pass.
-  printf '' | xclip -i -selection clipboard >/dev/null 2>&1 || true
+  import -window root "$OUT/transcript.png" 2>/dev/null || return 1
+  ax=$(card_accent_x "$OUT/transcript.png" "$wx" "$wy" "$ww" "$wh")
+  if [ -z "$ax" ]; then
+    TRANSCRIPT_FAILED=nocards
+    return 1
+  fi
 
-  xdotool mousemove $((wx + COPY_X)) $((wy + CARD1_Y)) click 1
-  sleep 2
-  got=$(xclip -o -selection clipboard 2>/dev/null || true)
+  cx=$((ax + CARD_COPY_DX))
   want=$(seed_text 1)
-
-  if [ "$got" = "$want" ]; then
-    return 0
-  fi
-  # The two failures are different and the reader needs to know which: an empty
-  # clipboard means the click reached no Copy button at all, which a layout
-  # change would do; a mismatch means it reached one and the transcript is
-  # showing something other than the first seeded message.
-  if [ -z "$got" ]; then
-    TRANSCRIPT_FAILED=nobutton
-  else
-    TRANSCRIPT_FAILED=wrongtext
-    echo "gui_build:   wanted: $want"
-    echo "gui_build:   got:    $got"
-  fi
+  y=$((wy + wh / 7))
+  ylast=$((wy + wh / 2))
+  while [ "$y" -le "$ylast" ]; do
+    # Cleared before every click, so a value left by an earlier one cannot be
+    # mistaken for this one's.
+    printf '' | xclip -i -selection clipboard >/dev/null 2>&1 || true
+    xdotool mousemove "$cx" "$y" click 1
+    sleep 0.4
+    got=$(xclip -o -selection clipboard 2>/dev/null || true)
+    if [ -n "$got" ]; then
+      [ "$got" = "$want" ] && return 0
+      TRANSCRIPT_FAILED=wrongtext
+      echo "gui_build:   wanted: $want"
+      echo "gui_build:   got:    $got"
+      return 1
+    fi
+    y=$((y + SCAN_STEP))
+  done
+  TRANSCRIPT_FAILED=nobutton
   return 1
 }
 
@@ -448,14 +470,19 @@ if ! kill -0 "$GPID" 2>/dev/null; then
   cat "$OUT/run.log"
   rc=1
 elif ! transcript_renders; then
-  if [ "${TRANSCRIPT_FAILED:-}" = "wrongtext" ]; then
-    echo "gui_build: the transcript is drawing something other than the seeded"
-    echo "gui_build: conversation's first message. $OUT is kept for inspection."
-  else
-    echo "gui_build: nothing copied. Either the transcript drew no message cards,"
-    echo "gui_build: or the action row moved out from under COPY_X/CARD1_Y and the"
-    echo "gui_build: offsets need re-measuring. $OUT is kept for inspection."
-  fi
+  case "${TRANSCRIPT_FAILED:-}" in
+    wrongtext)
+      echo "gui_build: a Copy button answered, but with something other than the"
+      echo "gui_build: seeded conversation's first message." ;;
+    nocards)
+      echo "gui_build: no card edge in the transcript — the accent border every"
+      echo "gui_build: message card carries is not there, so no message drew." ;;
+    *)
+      echo "gui_build: cards are drawn but no Copy button answered anywhere down"
+      echo "gui_build: the column. Either the action row is gone or CARD_COPY_DX"
+      echo "gui_build: no longer lands on it." ;;
+  esac
+  echo "gui_build: $OUT is kept for inspection."
   KEEP=1
   rc=1
 elif composer_reachable; then
