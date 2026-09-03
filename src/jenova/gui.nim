@@ -541,23 +541,47 @@ proc setLanState(p: Paths, enabled: bool): bool =
 ##
 ## That ordering is only safe while the output stays under one pipe buffer —
 ## `osproc.waitForExit` warns that a child without `poParentStreams` can fill
-## its output buffer and deadlock. Both callers here produce a single short
-## line, so the child always completes its write and exits without a reader.
-proc runCapture(cmd: string, args: openArray[string],
-                timeoutMs = 5000): string =
+## its output buffer and deadlock. `route`, `ifconfig` and `xdg-open` all print
+## a few lines, so the child completes its write and exits without a reader.
+proc runOutput(cmd: string, args: openArray[string],
+               timeoutMs = 5000): string =
   try:
     let p = startProcess(cmd, args = args, options = {poUsePath, poStdErrToStdOut})
     defer: p.close()
     if p.waitForExit(timeoutMs) < 0:
       p.kill()
       discard p.waitForExit()
-    let outp = p.outputStream.readAll()
-    for line in outp.splitLines():
-      if line.strip.len > 0:
-        return line.strip
-    ""
+    p.outputStream.readAll()
   except CatchableError:
     ""
+
+proc runCapture(cmd: string, args: openArray[string],
+                timeoutMs = 5000): string =
+  for line in runOutput(cmd, args, timeoutMs).splitLines():
+    if line.strip.len > 0:
+      return line.strip
+  ""
+
+## The interface named by `route -n get default`, whose output is a block of
+## `key: value` lines.
+proc defaultInterface(routeOutput: string): string =
+  const Key = "interface:"
+  for line in routeOutput.splitLines():
+    let t = line.strip
+    if t.startsWith(Key):
+      return t[Key.len .. ^1].strip
+  ""
+
+## The first `inet` address in an `ifconfig` block, skipping loopback when asked.
+## `ifconfig` prints `inet 10.0.0.5 netmask ...`, so the address is the second
+## field of a line whose first is `inet`.
+proc inetAddress(ifconfigOutput: string, skipLoopback: bool): string =
+  for line in ifconfigOutput.splitLines():
+    let f = line.strip.splitWhitespace()
+    if f.len > 1 and f[0] == "inet":
+      if skipLoopback and f[1] == "127.0.0.1": continue
+      return f[1]
+  ""
 
 ## Function purpose: the address shown when LAN mode is on, reproducing
 ## `ui.get_status_info` (`ui.lua:186-219`) — the default-route interface's
@@ -565,15 +589,16 @@ proc runCapture(cmd: string, args: openArray[string],
 ##
 ## The original ran `ip route get`, an iproute2 command that does not exist on
 proc lanAddress(): string =
-  let iface = runCapture("sh", ["-c",
-    "route -n get default 2>/dev/null | awk '/interface:/{print $2}'"])
+  # No shell, so there is no pipeline: `p.kill()` on a timeout reaches the whole
+  # of what was started, and the parsing that `awk` did is two procs above that
+  # can be read. The argv claim in this module's header is now true of every
+  # call rather than most of them.
+  let iface = defaultInterface(runOutput("route", ["-n", "get", "default"]))
   if iface.len > 0:
-    let addr4 = runCapture("sh", ["-c",
-      "ifconfig " & quoteShell(iface) & " 2>/dev/null | awk '/inet /{print $2; exit}'"])
+    let addr4 = inetAddress(runOutput("ifconfig", [iface]), skipLoopback = false)
     if addr4.len > 0:
       return addr4
-  runCapture("sh", ["-c",
-    "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
+  inetAddress(runOutput("ifconfig", []), skipLoopback = true)
 
 type
   ## G-21. `kind` is the table name `api.restoreEntity` takes; `label` is what
