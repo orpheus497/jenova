@@ -115,8 +115,19 @@ echo "gui_build: jenova --check"
 # `gdk_display_manager_get`, which is why it is inside the display block below
 # on a host with no X server of its own.
 run_check() {
+  # Redirected, not piped. A pipeline reports the *last* command's status, so
+  # `| tee` discarded `jenova`'s: a `--check` that crashed after printing its
+  # line still satisfied the `grep` below and the whole step passed. POSIX `sh`
+  # has no `pipefail` to lean on, so the pipe is removed instead.
+  rc=0
   JENOVA_ROOT="$RT" JENOVA_NO_BACKENDS=1 CANVAS=0 \
-    "$OUT/jenova" --check 2>"$OUT/check.err" | tee "$OUT/check.out"
+    "$OUT/jenova" --check >"$OUT/check.out" 2>"$OUT/check.err" || rc=$?
+  cat "$OUT/check.out"
+  if [ "$rc" -ne 0 ]; then
+    echo "gui_build: jenova --check exited $rc"
+    cat "$OUT/check.err"
+    return 1
+  fi
   # GTK writes its complaints to stderr and still exits 0, so the exit status is
   # not the whole answer. A CSS parse error is the one this catches most often:
   # owlkettle takes the stylesheet at `brew` and a bad property is a warning,
@@ -214,7 +225,46 @@ composer_reachable() {
       -format "%[fx:maxima]" info: 2>/dev/null)
   [ -n "$d" ] || return 1
   echo "gui_build: largest pixel change in the composer row = $d"
-  awk -v v="$d" 'BEGIN { exit !(v > 0.05) }'
+  awk -v v="$d" 'BEGIN { exit !(v > 0.05) }' || { PROBE_FAILED=typing; return 1; }
+
+  # The shortcut, asserted the only way it can be: by its effect. `<Ctrl>n`
+  # starts a new conversation, which empties the composer — so the same band
+  # that just proved typing works now has to change back.
+  #
+  # This is the one property `gui_check.sh` explicitly could not reach.
+  # `ShortcutHost` installs a controller at `GTK_SHORTCUT_SCOPE_MANAGED` and
+  # whether GTK routes that to the window from a widget several levels down is a
+  # runtime fact, not a type.
+  # **A control shot first, and it is not optional.** The first version of this
+  # measured the peak difference and passed with the binding deleted: a blinking
+  # caret moves one pixel to maximum, which is indistinguishable from a cleared
+  # line by that measure. So the noise is measured rather than assumed — two
+  # shots with nothing happening between them — and the shortcut has to beat it.
+  sleep 2
+  import -window root "$OUT/idle.png"
+  convert "$OUT/idle.png" -crop "$crop" +repage "$OUT/idle-band.png"
+  noise=$(convert "$OUT/after-band.png" "$OUT/idle-band.png" \
+          -compose difference -composite -colorspace Gray \
+          -format "%[fx:mean]" info: 2>/dev/null)
+
+  xdotool key ctrl+n
+  sleep 2
+  import -window root "$OUT/newchat.png"
+  convert "$OUT/newchat.png" -crop "$crop" +repage "$OUT/newchat-band.png"
+  n=$(convert "$OUT/idle-band.png" "$OUT/newchat-band.png" \
+      -compose difference -composite -colorspace Gray \
+      -format "%[fx:mean]" info: 2>/dev/null)
+  [ -n "$n" ] && [ -n "$noise" ] || return 1
+  echo "gui_build: composer mean change — idle $noise, after <Ctrl>n $n"
+  # Mean, not peak: clearing a line of text moves hundreds of pixels and a caret
+  # moves a handful, which only a mean can tell apart. Four times the measured
+  # idle noise, and above a floor so a perfectly still window cannot divide by
+  # nothing.
+  awk -v v="$n" -v b="$noise" 'BEGIN { exit !(v > 0.0004 && v > b * 4) }' || {
+    PROBE_FAILED=shortcut
+    return 1
+  }
+  echo "gui_build: window-wide shortcuts fire"
 }
 
 if [ "${JENOVA_GUI_NO_RUN:-}" = "1" ]; then
@@ -242,8 +292,8 @@ if [ -z "${DISPLAY:-}" ]; then
   sleep 2
 fi
 
-have import && have convert && have xwininfo || {
-  echo "gui_build: ImageMagick's import/convert and xwininfo are needed to prove the window works"
+have import && have convert && have xwininfo && have xdotool || {
+  echo "gui_build: ImageMagick's import/convert, xwininfo and xdotool are needed to prove the window works"
   echo "gui_build: FAIL"
   exit 1
 }
@@ -269,6 +319,13 @@ if ! kill -0 "$GPID" 2>/dev/null; then
   rc=1
 elif composer_reachable; then
   echo "gui_build: the composer is at the bottom of the window and takes typing"
+elif [ "${PROBE_FAILED:-}" = "shortcut" ]; then
+  echo "gui_build: <Ctrl>n did not reach the window. The composer takes typing,"
+  echo "gui_build: so the window is laid out — what failed is the shortcut"
+  echo "gui_build: controller in shortcuts.nim reaching it from where it is"
+  echo "gui_build: installed. $OUT is kept for inspection."
+  KEEP=1
+  rc=1
 else
   echo "gui_build: typing at the bottom of the window changed nothing there."
   echo "gui_build: either the content did not fill the window — the shape of the"
