@@ -689,6 +689,44 @@ asserts and crashes, not type errors. The first FreeBSD *build and run* remains 
 
 ---
 
+## The GUI became buildable and runnable · session 7
+
+The section above was right that a type check is not a build, and it named the gap correctly. The
+gap turned out to be reachable on this host after all: **GTK 4.14.5, libadwaita 1.5.0,
+GtkSourceView 5.12.0, VTE 0.76 and D-Bus 1.14 are all stock Ubuntu packages**, and with Nim 2.2.11
+and owlkettle 3.0.0 both binaries compile, link and run. The window maps under `Xvfb`, all
+seventeen `-selftest` subcommands pass against the real `jenova-core`, and `jenova --check`
+initialises GTK and builds the whole widget tree.
+
+This is not the FreeBSD build — Phase 1 of report 05 still wants that, and the paragraph at the
+end of this section states what a Linux run cannot answer. It is, however, three whole classes
+further than a type check, and **each class caught a live defect in this branch on its first run:**
+
+| Class | Defect found | Why the type check could not see it |
+|---|---|---|
+| C compile + link | `shortcuts.nim` declared `gtk_callback_action_new` with `header: "gtk/gtk.h"`, so Nim `#include`d the real header into a translation unit that also carried owlkettle's header-less `void*` prototypes for `gtk_box_new`, `gtk_box_append` and `gtk_box_remove`. **`bin/jenova` did not build at all** | `nim check` never runs a C compiler |
+| Mapped window | `ShortcutHost` wrapped the window in a GtkBox and never set the child's expand flags, so the entire content collapsed to its natural height — canvas gone, composer a fifth of the way down an empty window, **on every page** | a property of the allocation GTK performs at runtime |
+| Live input | the accelerators were confirmed by pressing them: Ctrl+B reveals the sidebar, Ctrl+comma opens and closes settings, Ctrl+N adds a conversation, F11 flips the control — and Ctrl+A still selects inside the composer | no static analysis reaches a keystroke |
+
+`tests/gui_build.sh` is that harness. It builds both binaries with the shipped switches, runs
+`--check`, then maps the window and **types into the bottom of it**, requiring those pixels to
+change.
+
+The assertion is behavioural on purpose. The first version measured the greyscale standard
+deviation of the window's bottom band and called a flat band a collapsed window — and **run
+against the defect it was written for, it passed**: a collapsed window still leaves its own
+rounded border in that band, giving 0.009 rather than 0, separable from the healthy 0.075 only by
+a threshold chosen after seeing both numbers. Typing gives a binary answer instead: 0.96 on the
+fixed build, exactly 0 on the broken one, with no threshold to tune. Both numbers were produced by
+reintroducing the defect and re-running, which is the only way to know a test can fail.
+
+**What a Linux run still does not answer:** FreeBSD's `sysctl` hardware probe, `kqueue`, the
+`fork`/`setsid`/`execv` backend path against FreeBSD's process semantics, the D-Bus
+`StatusNotifierItem` tray (no watcher runs under Xvfb), the embedded Neovim page, and any
+behaviour that differs between GTK 4.14 and the target's 4.20.4. Phase 1 of report 05 stands.
+
+---
+
 ## How session 2's changes were verified
 
 Neither binary can be built on the audit host: the project targets Nim 2.2.10 on FreeBSD with
