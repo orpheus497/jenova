@@ -103,7 +103,7 @@ the right widget, not a bigger lid.
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
 | Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
-| Transient notification | `ToastOverlay` — **absent from owlkettle**, bound in `src/jenova/toast.nim`, session 7 | ~~A one-line notice label~~ — confirmations toast; errors keep the row, which is now only errors |
+| Transient notification | `ToastOverlay` (`adw.nim:1374`, ungated) | ~~A one-line notice label~~ — confirmations toast; errors keep the row, which is now only errors |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
@@ -131,29 +131,30 @@ Where owlkettle lacks a widget, you declare one. `owlkettle.nim:25` exports `wid
 **"owlkettle does not have widget X" is therefore never a wall.** It is roughly forty lines of
 `renderable` plus `importc`, and the author has written it four times already.
 
-What owlkettle genuinely does not expose (verified absent from `owlkettle/` entirely at
-`v3.0.0` — `adw.nim` and `bindings/adw.nim` both): `NavigationView`, `TabView`,
-`AdwDialog`/`AlertDialog`, `BottomSheet`, **`ToolbarView`**, **`ToastOverlay` and `Toast`**, and
-**`BreakpointBin`**/`AdwBreakpoint`. All are reachable by the same hatch if wanted.
+What owlkettle genuinely does not expose (`adw.nim` declares 23 renderables at `v3.0.0`;
+these are not among them): `NavigationView`, `TabView`, `AdwDialog`/`AlertDialog`,
+`BottomSheet`, and `BreakpointBin`/`AdwBreakpoint`. All are reachable by the same hatch if
+wanted.
 
-**The last three are needed by the plan, and were listed as though they were available:**
+### Correction, session 8: two of those were never absent
 
-* `ToolbarView` — report 05's Phase 3 and §2 above both named it. It is not gated; it is not
-  there. Its job (header / content / footer with adaptive styling) is what `gui.nim`'s chat
-  column does with a `Box`, so nothing is broken — but "switch to `ToolbarView`" is a binding
-  job, not a substitution.
-* `ToastOverlay` — **done, session 7**, in `src/jenova/toast.nim`: five `importc`s and one
-  `renderable`, by this hatch. The design problem was real and is solved by a `serial` the window
-  bumps per message, which the widget compares against the last one it raised — because **a toast
-  is an event and a `renderable` property is a state**, so firing on a non-empty `notice` raises
-  one per frame and firing on a changed *string* swallows the second of two identical messages.
-  Verified by saving settings twice: the same text raises a second toast.
+An earlier pass in this session listed `ToolbarView`, `ToastOverlay` and `Toast` as missing and
+bound `AdwToastOverlay` by hand in `src/jenova/toast.nim`. Checked against the source, all three
+are in `owlkettle/adw.nim` at `v3.0.0` and `bindings/adw.nim` carries 23 `adw_toast_*` symbols.
+The hand-written module is removed; the window uses upstream's widget.
 
-  It carries **no button and no event**, deliberately. `AdwToast` can have one and Retry is the
-  obvious candidate, but a toast outlives several redraws while owlkettle replaces a state's
-  `EventObj` on every update and ARC frees the old one — a handler bound to a live toast is the
-  `DraftView.submit` SIGBUS again. So **P-B1 is not closed by this**: errors keep the inline row,
-  where the widget and its handler have the same lifetime, and that row is now errors only.
+* `ToolbarView` — `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}`. Invisible without
+  `-d:adwminor=4`, which is §2's finding, not an absence.
+* `ToastOverlay` — `adw.nim:1374`, ungated. Its answer to *a toast is an event and a
+  `renderable` property is a state* is better than the `serial` counter written against it:
+  `ToastQueue` is a `ref` the widget **drains** on each update, so a message raises exactly one
+  toast and the same text twice raises two, by construction rather than by comparison.
+* A toast **can** carry a button. `newToast` takes `buttonLabel` and `clickedHandler`, and
+  `connectSignal` (`adw.nim:1314`) puts the closure in its own shared cell and disconnects on
+  fire — it is not the per-update `EventObj` that ARC frees underneath a live toast, so the
+  `DraftView.submit` hazard does not apply here. **P-B1 stays open on different grounds**:
+  a message you have to act on must not time out, and it needs the server's own detail. Errors
+  keep the inline row.
 * `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
   folds itself on a narrow window through `FlapFoldAuto`, which is what
   `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that

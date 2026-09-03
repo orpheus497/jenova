@@ -103,8 +103,8 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 > |---|---|
 > | `StatusPage` | **done.** Empty transcript (session 6), plus the models panel's not-installed state, its new no-matches state, and the trash's |
 > | `Banner` | **done.** Backend-down with a Start button, and the LAN flag/socket disagreement — which the header subtitle had been reporting backwards |
-> | `ToolbarView` | **does not exist in owlkettle 3.0.0.** Not gated by `AdwVersion`; simply absent. This is a binding job, not a swap, and nothing is broken without it |
-> | `ToastOverlay` | **does not exist either** — and is now bound, in `src/jenova/toast.nim`. Confirmations toast and time out; errors keep the inline row with Retry. **P-B1 stays open**: a toast cannot carry the Retry button (owlkettle frees the `EventObj` under a live toast), and a one-line message that times out is not the dialog with the server's own detail that P-B1 asks for |
+> | `ToolbarView` | available at `adw.nim:1010`, `{.since: AdwVersion >= (1, 4).}` — invisible only without `-d:adwminor=4`, which Phase 0 sets. Untouched |
+> | `ToastOverlay` | **done**, using owlkettle's own (`adw.nim:1374`, ungated). Confirmations enqueue on `ToastQueue`, which the widget drains; errors keep the inline row with Retry. **P-B1 stays open**: a message you have to act on must not time out, and it needs the server's own detail — not because a toast cannot carry a button, which it can |
 > | `OverlaySplitView` | available, but **larger than it looks**: `Flap` folds itself through `FlapFoldAuto` and `OverlaySplitView.collapsed` is a plain `bool` something must drive. libadwaita's answer is `AdwBreakpoint`, which owlkettle does not bind either — so plan the pair, or the swap trades a deprecated widget for a sidebar that stops adapting |
 > | `PopoverMenu` + `ContextMenu`, `SplitButton` | available and untouched |
 

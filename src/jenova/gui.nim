@@ -56,7 +56,6 @@ import ./sha256
 import ./hardware
 import ./composer
 import ./shortcuts
-import ./toast
 import ./convmd
 
 type
@@ -1009,13 +1008,20 @@ proc hwWorker() {.thread.} =
 ## problem.
 ##
 ## Everything that makes a notice a *message* rather than a *string* lives here
-## and only here: the serial that turns it into an event for `ToastOverlay`, and
-## the two flags whose stale values were a defect (see `noticeRetryable`).
+## and only here: the enqueue that turns it into an event, and the two flags
+## whose stale values were a defect (see `noticeRetryable`).
+##
+## A toast is an event and owlkettle is declarative, which is the tension. The
+## answer is upstream's: `ToastQueue` is a `ref` the widget *drains* on each
+## update, so a message raises exactly one toast and the same text twice raises
+## two. Errors are not enqueued — they keep the inline row, where the Retry
+## button shares the widget's lifetime.
 template setNotice(target, text: untyped) =
   target.noticeMsg = text
   target.noticeIsError = false
   target.noticeRetryable = false
-  inc target.noticeSerial
+  if target.toasts != nil and text.len > 0:
+    target.toasts.add newToast(text)
 
 viewable App:
   ## Application state. `paths` and `cfg` are resolved once at startup rather
@@ -1074,13 +1080,12 @@ viewable App:
   streaming: bool
   ## **Written through `notice=` below, never directly.** The field is spelled
   ## differently from the property so that `app.notice = "…"` resolves to the
-  ## setter, which is where the serial is bumped and the two flags below are
+  ## setter, which is where the toast is enqueued and the two flags below are
   ## reset — see `setNotice`.
   noticeMsg: string
-  ## Bumped once per message the window wants shown. `ToastOverlay` compares
-  ## this against the last serial it raised, which is what lets the same text
-  ## raise a second toast: saving a note twice confirms it twice.
-  noticeSerial: int
+  ## The messages waiting to be raised. Owned here and drained by the widget on
+  ## the next update, which is what makes the same text confirm twice.
+  toasts: ToastQueue
   ## Whether this notice is a failure. **Errors stay on the inline row and
   ## confirmations become toasts**, because a message you have to act on should
   ## not time out — and the Retry button has to have the same lifetime as its
@@ -1528,7 +1533,7 @@ viewable App:
 ##
 ## **The point of the pair is that the fifty-odd `app.notice = "…"` sites did not
 ## have to change.** With no field of that name, each one resolves to the setter
-## below, so the serial and the flags are maintained at every one of them rather
+## below, so the queue and the flags are maintained at every one of them rather
 ## than at the handful somebody remembered. That is what made the stale-Retry
 ## defect possible: `noticeRetryable` was documented as "cleared by every other
 ## writer" and was in fact cleared by one of them.
@@ -5095,19 +5100,10 @@ method view(app: AppState): Widget =
       ShortcutHost:
         bindings = app.keyBindings()
 
-        # `AdwToastOverlay` is not in owlkettle at all — see `toast.nim` — so
-        # this is report 06 §5's escape hatch, and it wraps the whole window
-        # because that is where libadwaita floats a toast: bottom centre, over
-        # everything, out of the layout.
-        #
-        # `message` is emptied for an error rather than the widget being made
-        # conditional: an error keeps the inline row below, which is where the
-        # Retry button lives. The serial is passed regardless, so the widget
-        # still consumes it and the *next* confirmation is not mistaken for a
-        # repeat of this one.
+        # Wraps the whole window because that is where libadwaita floats a
+        # toast: bottom centre, over everything, out of the layout.
         ToastOverlay:
-          message = (if app.noticeIsError: "" else: app.noticeMsg)
-          serial = app.noticeSerial
+          toastQueue = app.toasts
 
           # The canvas is the Overlay's main child, so it fills the window and every
           # widget below is stacked over it — the GTK equivalent of the Web UI's
@@ -5687,6 +5683,8 @@ proc run*(withTray = true, checkOnly = false) =
   let widget = gui(App(p = p,
                        cfg = c,
                        lc = lc,
+                       # The widget drains this; it only has to exist.
+                       toasts = newToastQueue(),
                        status = bsDown,
                        lanEnabled = initialLan,
                        # From `host`, which is what `server.start` was actually
