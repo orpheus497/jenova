@@ -177,11 +177,7 @@ type
     umHardware,
     ## 12d-3: this turn was answered from the response cache. Sent once, on the
     ## response head, before any token.
-    umCacheHit,
-    ## the address LAN mode publishes. Reading it shells out to `route`
-    ## and `ifconfig`, so it is computed on the control worker and arrives here
-    ## — the same shape `umHardware` uses for `--list-devices`.
-    umLanAddr
+    umCacheHit
 
   UiMsg = object
     kind: UiMsgKind
@@ -889,17 +885,6 @@ proc ctlWorker() {.thread.} =
         uiChan.send(UiMsg(kind: umNotice, text: "switch failed: " & e.msg))
     of "web":
       discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
-    of "lan_addr":
-      # This is three `sh -c` invocations and it used to run on the GTK
-      # thread, straight from the LAN toggle and from the three-second poll
-      # that notices the flag changed underneath it. `route -n get default` is
-      # usually instant and is not always: on a host whose routing lookup is
-      # slow or wedged, the window froze for as long as it took, holding the
-      # frame that was meant to show the address.
-      #
-      # It goes here rather than to `hwWorker` because it is short and bounded,
-      # which is exactly what that worker exists to keep off this queue.
-      uiChan.send(UiMsg(kind: umLanAddr, text: lanAddress()))
     of "poll":
       let up = j.lc.healthy(beLlama, timeoutMs = 300)
       # Action purpose: `running`, not `pid > 0`. `state` already resolves
@@ -1069,6 +1054,18 @@ viewable App:
   ## and `view` runs on every token of a stream. `ui.poll_status` forking
   ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
   ## and recomputing this in `view` would be a worse version of it.
+  ## **The address the socket answers on, resolved once.** Not a property of the
+  ## LAN *flag*, which is what it used to be: it was cleared and re-resolved on
+  ## every flip of the flag, on the theory that the flag decided where the
+  ## server listens. It does not — `run` binds before this window exists and
+  ## nothing in this process moves the socket — so the flip dropped a true
+  ## address and asked a worker to resolve one for a mode the socket was not in.
+  ##
+  ## With that gone, the only moment it can be resolved is startup, which is
+  ## where E-06 already put the one synchronous call it allows: there is no
+  ## frame to block before the window exists. The `lan_addr` control job and
+  ## `umLanAddr` that carried the answer asynchronously went with the refetch
+  ## they existed for.
   lanAddr: string
   convId: string
   streaming: bool
@@ -1262,11 +1259,13 @@ viewable App:
         let newLan = isLanEnabled(st.p)
         if newLan != st.lanEnabled:
           st.lanEnabled = newLan
-          # asked for, not computed here. The title bar shows the mode
-          # immediately and gains the address when the worker answers.
-          st.lanAddr = ""
-          if newLan:
-            ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
+          # **The address is not touched here, and that is the correction.**
+          # It was cleared and re-fetched on every flip of the flag, as though
+          # the flag decided where the server listens. It does not: `run` bound
+          # the socket before this window existed, and nothing in this process
+          # can move it. Clearing it here dropped a true address for a false
+          # one and then asked a worker to resolve an address for a mode the
+          # socket was not in.
           discard st.redraw()
         true
       )
@@ -1340,8 +1339,8 @@ viewable App:
                             st.p.state & " — it is unchanged")
             else:
               st.lanEnabled = next
-              st.lanAddr = ""
-              if next: ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
+              # As in the poll above: the flag moved, the socket did not, so the
+              # address this window shows is unchanged.
               tray.setItems(trayMenu(next))
               setNotice(st, if next: "LAN enabled - restart to bind 0.0.0.0"
                             else: "LAN disabled - restart to bind 127.0.0.1")
@@ -1432,11 +1431,6 @@ viewable App:
               st.messages.delete(st.messages.len - 1)
           of umNotice:
             setNotice(st, m.text)
-          of umLanAddr:
-            # Only kept while LAN is on: a reply that arrives after the
-            # user switched it back off would put an address in the title bar
-            # for a mode the window is no longer in.
-            if st.lanEnabled: st.lanAddr = m.text
           of umHardware:
             st.hw = m.hw
             st.hwScores = m.scores
@@ -4938,7 +4932,20 @@ proc topBar(app: AppState): Widget =
                    # address is shown, not just the fact of LAN mode, because
                    # the address is the thing you need in order to connect a
                    # phone or second machine to it.
-                   (if app.lanEnabled:
+                   #
+                   # **`lanBound` and not `lanEnabled`, and the difference is
+                   # the whole point of this line.** It read the *flag*, which
+                   # the menu and the tray can change at any moment, while what
+                   # this line claims is where the server can be reached — and
+                   # that is fixed by the bind `run` performed before the window
+                   # existed. So a user who switched LAN off was shown
+                   # "local 127.0.0.1" over a socket the whole network could
+                   # still reach, and one who switched it on was given a LAN
+                   # address that answered nothing.
+                   #
+                   # The Banner in the chat column reports the disagreement and
+                   # says what resolves it. This line reports the socket.
+                   (if app.lanBound:
                       "  ·  LAN " & (if app.lanAddr.len > 0: app.lanAddr
                                      else: "0.0.0.0")
                     else: "  ·  local 127.0.0.1")
