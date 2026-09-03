@@ -1711,6 +1711,11 @@ proc openNoteGuarded(app: AppState, id: string) =
 
 proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   if app.streaming: return
+  # It clears `openNote` below, so an edited note would be replaced by its
+  # persisted row the next time it is opened. The guard is here rather than at
+  # the callers because there are three of them — the tree, the button and the
+  # `<Ctrl>n` binding — and only one had it.
+  if not app.confirmLoseNoteEdits(): return
   let id = newConversation()
   if wsId.len > 0 or projId.len > 0 or folderId.len > 0:
     db.exec("UPDATE conversations SET workspaceId=?, projectId=?, folderId=? WHERE id=?",

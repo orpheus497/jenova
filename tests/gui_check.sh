@@ -13,6 +13,14 @@
 # scratch directory and neutralises the two `when not defined(freebsd)` guards,
 # because those are the only thing that stops the module set from resolving.
 #
+# **This is not a build, and the difference has already cost one.** No C
+# compiler runs, so nothing here sees a conflict between an `importc` carrying a
+# `header:` and owlkettle's own header-less prototypes for the same function —
+# which is a hard build failure that passes this check silently. It also sees no
+# owlkettle runtime invariant: the `Button.shortcut` update assert, `Paned`
+# refusing a child that changes type, or a container that hands its child the
+# wrong size. `nimble gui` on FreeBSD remains the only thing that proves those.
+#
 # Usage: sh tests/gui_check.sh
 #   NIM       — compiler to use (default: nim; must be 2.x)
 #   OWLKETTLE — path to an owlkettle checkout, if it is not on the nimble path
@@ -20,14 +28,14 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NIM=${NIM:-nim}
-FLAGS="-d:gtkminor=10 -d:gtk48 -d:adwminor=4 --mm:arc --hints:off"
+set -- -d:gtkminor=10 -d:gtk48 -d:adwminor=4 --mm:arc --hints:off
 
 case $("$NIM" --version | head -1) in
   *"Version 2."*) ;;
   *) echo "gui_check: needs Nim 2 (owlkettle's =destroy signatures)"; exit 1 ;;
 esac
 
-[ -n "${OWLKETTLE:-}" ] && FLAGS="$FLAGS --path:$OWLKETTLE"
+[ -n "${OWLKETTLE:-}" ] && set -- "$@" "--path:$OWLKETTLE"
 
 if [ "$(uname -s)" = "FreeBSD" ]; then
   SRC=$ROOT
@@ -44,7 +52,7 @@ else
 fi
 
 cd "$SRC"
-out=$("$NIM" check $FLAGS --path:src src/jenova_gui.nim 2>&1) || true
+out=$("$NIM" check "$@" --path:src src/jenova_gui.nim 2>&1) || true
 echo "$out" | grep -vE "^Hint|UnusedImport" || true
 
 if echo "$out" | grep -q "Error:"; then

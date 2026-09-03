@@ -1,26 +1,23 @@
-## Script function and purpose: The `/api/db/*` routes the Web UI calls,
-## replacing the database-routing half of `lib/proxy.lua` (`:687-1005`).
+## Script function and purpose: the database, filesystem and storage routes, and
+## the in-process entry points the window uses for the same operations. Route
+## shapes, query parameters and response bodies are a fixed contract: the Web UI
+## is frozen and cannot be changed to match a tidier one.
 ##
-## The contract is reproduced from the existing implementation rather than
-## designed afresh: `jca_web` is a shipped client that must keep working
-## unchanged while it is deprecated (D-L), so route shapes, query parameters and
-## response bodies match what `proxy.lua` answers today.
-##
-## The seven entity tables share one shape — a TEXT `id`, some columns, and an
+## The seven entity tables share one shape — a text id, some columns and an
 ## `is_deleted` flag — so they are described once as data and served by generic
-## handlers. `proxy.lua` wrote each of the twenty routes by hand, which is why
-## its cascade deletes drifted apart from one another.
+## handlers. Writing twenty routes by hand is how cascade deletes drift apart
+## from one another.
 ##
-## Deletes are soft throughout: rows are flagged, never removed, which is what
-## makes the trash view and restore possible.
+## Deletes are soft throughout: rows are flagged and never removed, which is
+## what makes the trash view and restore possible at all.
 
 import std/[algorithm, json, strutils, tables, os, oids, times]
 import ./db
 import ./http
 import ./fssync
 import ./rag
-# 12d-4: for `cacheStore`, so this file's cache route cannot bypass the cap.
-# No cycle — nothing in `pipeline`'s transitive imports reaches back here.
+# For `cacheStore`, so this file's cache route cannot bypass the cap. No cycle:
+# nothing in the pipeline's transitive imports reaches back here.
 import ./pipeline
 
 type
@@ -32,17 +29,19 @@ type
     name: string
     cols: seq[Column]
 
+# Two-letter constructors because the entity table below is a wall of them and
+# the column names are what a reader is scanning for.
 proc c(n: string): Column = Column(name: n, isInt: false)
 proc i(n: string): Column = Column(name: n, isInt: true)
 
-## Action purpose: integer columns are declared, not guessed. SQLite returns
-## every value as text through this driver, and emitting a timestamp as "1730..."
-## instead of 1730... would change the JSON type the Web UI receives and break
-## date handling and sorting in a way that is tedious to trace back to here.
-## It is `const`, not `let`, for a concrete reason: a `let` table of this shape is
-## reference-counted memory read concurrently by every worker thread, which the
-## compiler correctly rejects as not GC-safe. Compile-time data has no refcount
-## to race on.
+## Action purpose: integer columns are declared rather than guessed. The driver
+## returns every value as text, so emitting a timestamp as a JSON string instead
+## of a number changes the type the client receives and breaks its date handling
+## in a way that is tedious to trace back here.
+##
+## `const` rather than `let`, because a `let` table of this shape is refcounted
+## memory read concurrently by every worker thread. Compile-time data has no
+## refcount to race on.
 const Entities = {
   "conversations": Entity(name: "conversations", cols: @[
     c"id", c"name", i"lastModified", c"currNode", c"folderId", c"projectId",
@@ -61,9 +60,9 @@ const Entities = {
     c"type", i"uploadDate", c"content"]),
 }.toTable
 
-## Action purpose: cascade deletes are expressed as set-based UPDATEs rather than
-## by fetching children and looping over them, which is what `proxy.lua` did.
-## One statement per child table touches every descendant regardless of count.
+## Action purpose: cascades are set-based updates rather than a fetch-and-loop,
+## so one statement per child table touches every descendant regardless of how
+## many there are.
 const Cascades = {
   "workspaces": @[
     "UPDATE projects SET is_deleted=1 WHERE workspaceId=?",
@@ -84,17 +83,14 @@ const Cascades = {
     "UPDATE messages SET is_deleted=1 WHERE convId=?"],
 }.toTable
 
-## Function purpose: how many live rows a delete would take with it, so the
-## desktop application's confirmation can say "and 12 items inside it" (G-36)
-## rather than asking a question the user cannot answer.
+## Function purpose: how many live rows a delete would take with it, so a
+## confirmation can name the number rather than asking a question the user
+## cannot answer.
 ##
-## Action purpose: **the counts are derived from `Cascades` itself** rather than
-## written out a second time. A hand-written count and the cascade would drift —
-## and a confirmation that under-reports what it is about to delete is worse
-## than no confirmation at all, because it is trusted. Each `UPDATE t SET
-## is_deleted=1 WHERE <pred>` becomes `SELECT COUNT(*) FROM t WHERE <pred> AND
-## is_deleted=0`, so the rows counted are exactly the rows that statement is
-## about to flag.
+## Action purpose: the counts are derived from the cascade statements themselves
+## rather than written out a second time. A confirmation that under-reports what
+## it is about to delete is worse than none, because it is trusted — and two
+## independent lists would drift.
 proc cascadeCount*(entity, id: string): int =
   if not Cascades.hasKey(entity): return 0
   for sql in Cascades[entity]:
@@ -106,32 +102,38 @@ proc cascadeCount*(entity, id: string): int =
     for row in db.query("SELECT COUNT(*) FROM " & table & " WHERE " & pred &
                         " AND is_deleted=0", id):
       if row.len > 0:
-        # E-03: the header above says an under-reported count is worse than no
-        # confirmation, so the silence here needs its reason stated. `COUNT(*)`
-        # is guaranteed by SQLite to yield an integer, and this driver renders
-        # every value as text — so the only way to reach this branch is a driver
-        # returning something `COUNT(*)` cannot produce. It is a total-function
+        # Action purpose: silence needs its reason stated here, given what the
+        # count is used for. `COUNT(*)` always yields an integer and this driver
+        # renders every value as text, so reaching this branch means a driver
+        # returning something the aggregate cannot produce — a total-function
         # guard on an unreachable case, not a swallowed failure.
         try: result += parseInt(row[0]) except ValueError: discard
 
 type ApiResult* = object
   status*: int
   body*: string
-  ## Empty means application/json, which every route but a storage download
-  ## returns. Carried explicitly rather than inferred from the body: a stored
-  ## file whose first byte is `[` would otherwise be mistaken for a JSON array.
+  ## Empty means JSON, which every route but a storage download returns. Carried
+  ## explicitly rather than inferred from the body, because a stored file whose
+  ## first byte is a bracket would otherwise be mistaken for a JSON array.
   contentType*: string
 
+## Function purpose: every handler answers a result rather than writing to the
+## socket, so the same code serves an HTTP route and an in-process caller.
 proc ok(body: string): ApiResult = ApiResult(status: 200, body: body)
+## Function purpose: the error body is JSON like every other, so a client parses
+## one shape whatever the status.
 proc err(status: int, msg: string): ApiResult =
   ApiResult(status: status, body: $(%*{"error": msg}))
 
+## Function purpose: the select list, built from the declared columns so a
+## query cannot name one the row mapper does not expect.
 proc colList(e: Entity): string =
   var names: seq[string]
   for col in e.cols: names.add col.name
   names.join(", ")
 
-## Function purpose: turn a result row into JSON with the declared column types.
+## Function purpose: applies the declared column types, which is the only place
+## a stored text value becomes a JSON number.
 proc rowToJson(e: Entity, row: seq[string]): JsonNode =
   result = newJObject()
   for idx, col in e.cols:
@@ -141,11 +143,14 @@ proc rowToJson(e: Entity, row: seq[string]): JsonNode =
     else:
       result[col.name] = %row[idx]
 
+## Function purpose: the array form, used by every list route.
 proc rowsToJson(e: Entity, rows: seq[seq[string]]): JsonNode =
   result = newJArray()
   for r in rows:
     result.add rowToJson(e, r)
 
+## Function purpose: one query shape for every list route, with the filter
+## column named by the caller rather than built into a per-entity query.
 proc listEntity(e: Entity, filterCol, filterVal: string, deleted = false): ApiResult =
   let flag = if deleted: "1" else: "0"
   var sql = "SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=" & flag
@@ -154,15 +159,16 @@ proc listEntity(e: Entity, filterCol, filterVal: string, deleted = false): ApiRe
     return ok($rowsToJson(e, db.query(sql, filterVal)))
   ok($rowsToJson(e, db.query(sql)))
 
+## Function purpose: a missing row is a 404 rather than an empty object, so a
+## caller can tell "not there" from "there and empty".
 proc getOne(e: Entity, id: string): ApiResult =
   let rows = db.query("SELECT " & e.colList & " FROM " & e.name &
                       " WHERE id=? AND is_deleted=0", id)
   if rows.len == 0: err(404, "not found") else: ok($rowToJson(e, rows[0]))
 
-## Function purpose: read one row as a name→value table, for the cases that need
-## the *previous* state of a row before overwriting it — a note that moved has to
-## have its old file trashed, and that old path can only be built from the old
-## row.
+## Function purpose: for the cases that need a row's *previous* state before
+## overwriting it — a note that moved has to have its old file trashed, and that
+## path can only be built from the row as it was.
 proc rowFields(e: Entity, id: string): Table[string, string] =
   let rows = db.query("SELECT " & e.colList & " FROM " & e.name & " WHERE id=?", id)
   if rows.len == 0: return
@@ -170,6 +176,8 @@ proc rowFields(e: Entity, id: string): Table[string, string] =
     if idx >= rows[0].len: break
     result[col.name] = rows[0][idx]
 
+## Function purpose: an absent field reads as empty rather than raising, because
+## the client posts partial objects and means them.
 proc f(node: JsonNode, name: string): string =
   if node.hasKey(name) and node[name].kind != JNull:
     let v = node[name]
@@ -177,22 +185,20 @@ proc f(node: JsonNode, name: string): string =
   else:
     ""
 
+## Function purpose: the same rule for a row already read back as a table.
 proc field(t: Table[string, string], name: string): string =
   if t.hasKey(name): t[name] else: ""
 
-## Function purpose: mirror an upserted row onto disk, reproducing the ten
-## `fs_sync` call sites in `lib/proxy.lua`'s `/api/db/*` handlers (N-27).
+## Function purpose: mirrors an upserted row onto disk. Two behaviours here are
+## easy to miss and both are load-bearing.
 ##
-## Two behaviours here are easy to miss and both are load-bearing:
+## A failed filesystem write rolls the database back: letting the row stand while
+## the file is missing is what produces a workspace the client lists and the disk
+## does not have.
 ##
-## * **A failed filesystem write rolls the database back.** `proxy.lua` deletes a
-##   newly inserted row, or rewrites the previous one, and answers 500. Letting
-##   the row stand while the file is missing is what produces a workspace the UI
-##   lists and the disk does not have.
-## * **A note or asset that moved has its old file trashed.** When `folderId`,
-##   `projectId`, `workspaceId` or the title/name changes, the new path is
-##   written first and the *old* path is then trashed — otherwise a rename leaves
-##   the previous copy behind and the RAG index sees the file twice.
+## A note or asset that moved has its old file trashed — the new path is written
+## first and the old one trashed after, or a rename leaves the previous copy
+## behind and retrieval sees the same content twice.
 proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
                   existed: bool): bool =
   case e.name
@@ -202,15 +208,13 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
   of "projects":
     # Action purpose: a project's directory is named after the project and sits
     # inside its workspace's, so both a rename and a move to another workspace
-    # relocate it. Until this branch existed both fell through to `else: true`
-    # and every note and asset under the project was stranded on disk (T-14).
+    # relocate it. Without this every note and asset under it is stranded.
     #
-    # The name and parent are compared *before* calling, because resolving a
-    # container's directory costs a database lookup per ancestor and the Web UI
-    # re-posts whole rows: an upsert that changed neither must not pay for four
-    # queries and two path builds to discover it has nothing to move. An insert
-    # has nothing to move either — the directory appears when the first note or
-    # asset is written into it, which `physicalPath` already handles.
+    # The name and parent are compared before calling, because resolving a
+    # container's directory costs a lookup per ancestor and the client re-posts
+    # whole rows — an upsert that changed neither must not pay four queries to
+    # discover it has nothing to move. An insert has nothing to move either: the
+    # directory appears when the first item is written into it.
     if existed and (prior.field("name") != node.f("name") or
                     prior.field("workspaceId") != node.f("workspaceId")):
       fssync.renameContainer("projects", prior.field("name"),
@@ -256,6 +260,8 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
   else:
     true
 
+## Function purpose: insert-or-replace over every declared column, which is why
+## a caller with a partial object has to merge first — see `putEntity`.
 proc writeRow(e: Entity, node: JsonNode) =
   var placeholders: seq[string]
   var values: seq[string]
@@ -265,36 +271,29 @@ proc writeRow(e: Entity, node: JsonNode) =
   db.exec("INSERT OR REPLACE INTO " & e.name & " (" & e.colList & ", is_deleted) VALUES (" &
           placeholders.join(", ") & ", 0)", values)
 
-## Function purpose: insert-or-replace from a JSON body. Missing fields become
-## empty rather than failing, matching what `proxy.lua` accepted — the Web UI
-## posts partial objects for several entities.
-##
-## `mirror` is false for bulk import, which is the one path in the original that
-## writes rows without touching the filesystem (`db.import_data`).
-## Function purpose: run a retrieval-index update without letting it fail the
+## Function purpose: runs a retrieval-index update without letting it fail the
 ## write it is attached to.
 ##
-## Action purpose: **indexing is best-effort everywhere in this codebase except
-## at its own call sites, which is where it mattered.** `rag.indexContent`
-## begins by deleting the path's existing rows, and `db.exec` raises — so a
-## database without the `rag_*` tables, a locked index, or any other `DbError`
-## propagated out of `upsert` and turned a **successful note save into a 500**.
-## The row was already written and mirrored to disk by then, so the client was
-## told the save failed while it had in fact succeeded: the worst shape a
-## failure can take.
+## Action purpose: indexing begins by deleting the path's existing rows, and
+## that raises — so a database without the retrieval tables, or a locked index,
+## would propagate out of a successful save and answer 500. The row is already
+## written and mirrored by then, so the client is told a save failed that in
+## fact succeeded, which is the worst shape a failure can take.
 ##
-## This was not introduced by the workspace indexing below — the message path
-## (`rag.indexExchange`, three call sites) has had the same exposure since it
-## was wired. One guard covers all of them.
-##
-## Retrieval degrading is not worth a user's note. `backfillWorkspace` and
-## `backfillChats` repair a skipped index at the next start.
+## Retrieval degrading is not worth a user's note, and the backfills repair a
+## skipped index at the next start.
 template indexing(body: untyped) =
   try:
     body
   except CatchableError:
     discard
 
+## Function purpose: insert-or-replace from a JSON body, with a missing field
+## becoming empty rather than an error — the client posts partial objects for
+## several entities and means them.
+##
+## `mirror` is false only for bulk import, the one path that writes rows without
+## touching the filesystem.
 proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
   if node.kind != JObject or not node.hasKey("id"):
     return err(400, "body must be an object with an id")
@@ -302,10 +301,10 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
   let prior = if mirror: rowFields(e, id) else: initTable[string, string]()
   let existed = prior.len > 0
 
-  # Action purpose: `is_deleted` is not one of `e.cols`, so `rowFields` cannot
-  # carry it and `writeRow` always writes 0. Captured here, before the row is
-  # overwritten, so a rollback restores the flag the row actually had — otherwise
-  # a failed upsert against a soft-deleted row silently resurrects it.
+  # Action purpose: the deleted flag is not one of the declared columns, so the
+  # writer always sets it to zero. Captured here before the row is overwritten,
+  # so a rollback restores the flag the row actually had — otherwise a failed
+  # upsert against a soft-deleted row silently resurrects it.
   var priorDeleted = "0"
   if mirror and existed:
     let flagRows = db.query("SELECT is_deleted FROM " & e.name & " WHERE id=?", id)
@@ -315,7 +314,7 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
   writeRow(e, node)
 
   if mirror and not mirrorUpsert(e, node, prior, existed):
-    # Restore the previous state rather than leaving a row with no file.
+    # Restore the previous state rather than leave a row with no file.
     if existed:
       var restoreNode = newJObject()
       for col in e.cols:
@@ -326,24 +325,15 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
       db.exec("DELETE FROM " & e.name & " WHERE id=?", id)
     return err(500, "filesystem sync failed for " & e.name)
 
-  # Action purpose: **W-06. The retrieval index held chats and nothing else.**
-  # `rag.indexContent` was exported, correct, and called by no production code
-  # anywhere; the only writers were the chat path. So a note
-  # the user wrote and a document they uploaded — the two things someone puts in
-  # a workspace *in order to find again* — were not searchable by keyword or by
-  # vector at all. They still reached the model through `workspace.contextFor`,
-  # but that is scope rather than relevance: everything in the conversation's
-  # branch, whole, ranked by nothing.
-  #
-  # **It is hooked here and not in the two surfaces' own save paths**, which is
-  # also W-03: `upsert` is the one layer the Web UI's `/api/db/*` route and the
-  # window's in-process `putEntity` both pass through, so a third client is
-  # covered by construction rather than by remembering.
+  # Action purpose: hooked here rather than in each surface's own save path,
+  # because this is the one layer the HTTP route and the window's in-process
+  # write both pass through — so a third client is covered by construction
+  # rather than by someone remembering.
   #
   # Only when the indexed text actually changed. Indexing costs an embedding
-  # round trip, `prior` already holds the row as it was, and a note is saved far
-  # more often than it is rewritten — re-embedding an unchanged note on every
-  # save would put that round trip on the save button.
+  # round trip, the prior row is already in hand, and a note is saved far more
+  # often than it is rewritten; re-embedding an unchanged one would put that
+  # round trip behind the save button.
   if mirror:
     case e.name
     of "notes":
@@ -371,20 +361,15 @@ WITH RECURSIVE descendants AS (
 )
 """
 
-## Action purpose: conversation deletion has two distinct behaviours in the
-## original (`db.delete_conversation`) and both matter for the fork tree.
-##
-## * **With forks:** a *recursive* descendant walk, so nested forks are removed
-##   too. Matching only direct children — which an earlier revision of this file
-##   did — silently orphans grandchildren.
-## * **Without forks:** children are **reparented onto the deleted
-##   conversation's own parent** before it is flagged, so the fork tree stays
-##   connected instead of leaving children pointing at a deleted node.
+## Action purpose: two behaviours, both of which matter for the fork tree. With
+## forks the descendant walk is recursive, because matching only direct children
+## orphans grandchildren silently; without them, children are reparented onto the
+## deleted conversation's own parent before it is flagged, so the tree stays
+## connected rather than pointing at a deleted node.
 proc deleteConversation(id: string, withForks: bool): ApiResult =
-  # Action purpose: the conversations whose messages this call is about to flag,
-  # collected **before** the transaction and forgotten from the retrieval index
-  # **after** it commits (T-17). A conversation's messages are flagged in one
-  # statement, so there is no per-row site to hook, and doing it inside the
+  # Action purpose: collected before the transaction and forgotten from the
+  # index after it commits. A conversation's messages are flagged in one
+  # statement, so there is no per-row site to hook, and unfiling inside the
   # transaction would strip the index for a delete that then rolled back.
   var affected = @[id]
   if withForks:
@@ -411,19 +396,14 @@ proc deleteConversation(id: string, withForks: bool): ApiResult =
   for c in affected: indexing: rag.forgetConversation(c)
   ok("""{"status":"ok"}""")
 
-## Action purpose: A-20. The flag and its cascade are **one transaction**, so a
-## container cannot end up deleted with its children still live.
+## Action purpose: the flag and its cascade are one transaction, so a container
+## cannot end up deleted with its children still live. As a bare sequence of
+## statements a throw part-way leaves the earlier ones standing and the rest
+## unrun — a workspace gone from the sidebar whose conversations are still served.
 ##
-## It was a bare sequence of up to five statements: a workspace flagged, then
-## projects, folders, notes, file assets and conversations flagged in turn. A
-## throw part-way left the earlier ones standing and the later ones unrun — a
-## workspace gone from the sidebar whose conversations were still being served.
-## `deleteConversation`, `importData` and the messages bulk-delete all wrap for
-## exactly this reason; the three container entities were the ones left out.
-##
-## **The exception is re-raised, not swallowed.** `softDelete`'s project and
-## folder branches catch it to move the directory back out of the trash — a
-## compensating undo that only works if it still hears about the failure.
+## The exception is re-raised rather than swallowed: the caller catches it to
+## move a directory back out of the trash, and that undo only works if it still
+## hears about the failure.
 proc dbSoftDelete(e: Entity, id: string) =
   db.begin()
   try:
@@ -436,20 +416,16 @@ proc dbSoftDelete(e: Entity, id: string) =
     db.rollback()
     raise
 
-## Action purpose: deletion mirrors to the trash tree, and **the order differs by
-## entity because `proxy.lua`'s does** — this is reproduced, not tidied.
+## Action purpose: the order differs by entity and is deliberate. For a
+## container the filesystem move happens first, so a failure leaves the row
+## alone and the database never claims a deletion the disk did not perform;
+## projects and folders additionally move the directory back out of the trash if
+## the database step then fails, which is the only compensating undo here.
 ##
-## * **Workspaces, projects, folders:** the filesystem move happens *first*. If it
-##   fails, the row is left alone and the request 500s, so the database never
-##   claims a deletion the disk did not perform. For projects and folders, if the
-##   database step then fails, **the directory is moved back out of the trash** —
-##   a compensating undo, and the only place in the contract that has one.
-## * **Notes and file assets:** the row is flagged first and the file trashed
-##   after, because the old path is rebuilt from the row that is still readable
-##   (soft delete leaves it in place).
-##
-## Tidying these into one order would be a silent behaviour change to a contract
-## the frozen client depends on (D-Z).
+## For a note or asset the row is flagged first and the file trashed after,
+## because the old path is rebuilt from the row — and a soft delete leaves it
+## readable. Unifying the two orders would silently change a contract the frozen
+## client depends on.
 proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
   if e.name == "conversations":
     return deleteConversation(id, withForks)
@@ -490,8 +466,8 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 
   of "notes":
     dbSoftDelete(e, id)
-    # W-06: a deleted note must stop being recalled, for the reason a deleted
-    # message must (T-17). Three DELETEs, no embedding server, safe anywhere.
+    # A deleted note must stop being recalled. Three deletes, no embedding
+    # server, so this is safe to run from any thread.
     indexing: rag.forgetNote(id)
     if prior.len > 0:
       discard fssync.trashNote(id, prior.field "title", prior.field "folderId",
@@ -508,24 +484,22 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 
   else:
     dbSoftDelete(e, id)
-    # Action purpose: a deleted turn must stop being recalled (T-17). Reachable
-    # from both surfaces — the window's per-message delete goes through
-    # `deleteEntity`, which is this proc — and safe on the GTK thread, because
-    # forgetting a path is three DELETEs and never touches the embedding server.
+    # Action purpose: a deleted turn must stop being recalled. Reachable from
+    # both surfaces, and safe on the GTK thread because forgetting a path is
+    # three deletes and never touches the embedding server.
     if e.name == "messages": indexing: rag.forgetMessage(id)
 
   ok("""{"status":"ok"}""")
 
-## Action purpose: restoring cascades *upward* as well as down. Reviving a note
-## whose folder, project or workspace is still flagged would leave it invisible
-## in the UI — present in the table but inside a deleted container — so the
-## original restores the ancestry first. The depth guard exists because this
-## walks parent links read from data, and a cycle there would otherwise recurse
-## without end.
-## A-18-1. `outcome` reports what happened to **this** item's file, not to its
-## ancestors' — the recursion restores parents on the way in and their results
-## are deliberately dropped, because the user asked about the thing they clicked
-## and a folder that was already on disk is not news.
+## Action purpose: restoring cascades upward as well as down. Reviving a note
+## whose folder or workspace is still flagged leaves it present in the table and
+## invisible in the interface, so the ancestry is restored first. The depth guard
+## exists because this walks parent links read from data, and a cycle there would
+## recurse without end.
+##
+## The outcome reports what happened to *this* item's file and not its
+## ancestors'. Their results are dropped deliberately: the user asked about the
+## thing they clicked, and a folder that was already on disk is not news.
 proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
                  depth = 0): ApiResult =
   if depth > 8 or not Entities.hasKey(entityName):
@@ -540,7 +514,7 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
     if idx >= row.len: break
     let v = row[idx]
     if v.len == 0 or v == "null": continue
-    # An ancestor's own outcome goes nowhere on purpose — see the note above.
+    # An ancestor's own outcome goes nowhere on purpose.
     var ancestor: fssync.RestoreOutcome
     case col.name
     of "folderId": discard restoreItem("folders", v, ancestor, depth + 1)
@@ -549,38 +523,29 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
     else: discard
 
   db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
-  # Action purpose: A-16. The row comes back and **so does the file now.**
-  # Deletion mirrors into a trash tree beside a sidecar written so a restore can
-  # undo it, and this proc contained no `fssync` call at all — so a restored
-  # note's `.md`, a restored asset's bytes and a restored container's whole
-  # directory all stayed in the trash, under a confirmation dialog that told the
-  # user it could be restored from there.
+  # Action purpose: the file comes back with the row. Deletion moves it into a
+  # trash tree beside a sidecar written for exactly this, and without the call
+  # the sidecar is never read — leaving a note's markdown, an asset's bytes and
+  # a container's whole directory in the trash under a dialog that told the user
+  # they could be restored from there.
   #
-  # The ancestors above are restored first by the recursion, so a directory is
+  # The ancestors are restored first by the recursion above, so a directory is
   # back before anything is moved into it.
   #
-  # **A-18-1: the answer is now carried out rather than discarded.** It was a
-  # bool, and a bool said two different things — "this kind never had a file",
-  # which is ordinary and must stay silent, and "this kind has files and this
-  # one did not come back", which is a restore the user asked for that only
-  # half happened. `RestoreOutcome` separates them so the window can tell the
-  # user about the second without crying wolf over the first.
+  # The answer is carried out rather than discarded, because a bool says two
+  # different things: "this kind never had a file", which is ordinary and must
+  # stay silent, and "this kind has files and this one did not come back", which
+  # is a restore that only half happened.
   outcome = fssync.restoreMirror(e.name, id)
-  # Action purpose: deletion forgets (D-BI) and nothing undid it, so a restored
-  # turn came back everywhere except in what the model recalls. It looked
-  # repaired because `rag.backfillChats` picks it up at the *next* start — which
-  # is worse than plainly broken: the gap closes itself before anyone can
-  # reproduce it. Restoring re-indexes here, immediately, opposite
-  # `rag.forgetMessage` in `softDelete` above.
+  # Action purpose: deletion forgets, so restoring has to re-index or the turn
+  # comes back everywhere except in what the model recalls. Immediately, and not
+  # left to the backfill at the next start: a gap that closes itself before
+  # anyone can reproduce it is worse than one that stays open.
   if e.name == "messages":
     indexing: discard rag.indexExchange(id, withParent = false)
-  # W-06: the same for the two entities that now carry index entries. Without
-  # this a restored note comes back everywhere except in what the model recalls,
-  # and — worse — `rag.backfillWorkspace` closes the gap at the next start, so
-  # it repairs itself before anyone can reproduce it.
-  # `row` here is positional (`Row`), not the name/value table `softDelete`
-  # holds — so the columns are read back through `rowFields`, which is the one
-  # place the column order is turned into names.
+  # The same for the two entities that carry index entries. The row here is
+  # positional rather than the name/value table the delete path holds, so the
+  # columns are read back through the one place that turns order into names.
   if e.name == "notes":
     let n = rowFields(e, id)
     indexing: discard rag.indexNote(id, n.field "title", n.field "content")
@@ -588,38 +553,37 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
     let fa = rowFields(e, id)
     indexing: discard rag.indexFileAsset(id, fa.field "name", fa.field "content")
   if e.name == "conversations":
-    # Faithful to db.restore_item: every message of the conversation is revived,
-    # including any deleted individually beforehand. Recorded as N-21 — it is a
-    # pre-existing behaviour of the shipped client's contract, not a new one.
+    # Every message of the conversation is revived, including any deleted
+    # individually beforehand. That is the shipped contract, not a choice made
+    # here.
     db.exec("UPDATE messages SET is_deleted=0 WHERE convId=?", id)
-    # And every revived assistant turn goes back into the index with them, for
-    # the reason above. Only assistant rows: `indexExchange` takes a reply and
-    # pulls in the turn it answers, so walking user rows too would index each
-    # exchange twice.
+    # Every revived assistant turn goes back into the index with them. Only
+    # assistant rows: indexing takes a reply and pulls in the turn it answers,
+    # so walking user rows too would index each exchange twice.
     for r in db.query("SELECT id FROM messages WHERE convId=? AND role=? " &
                       "AND is_deleted=0", id, "assistant"):
       indexing: discard rag.indexExchange(r[0])
   ok("""{"status":"ok"}""")
 
+## Function purpose: the route-shaped wrapper over the recursive restore, so the
+## HTTP surface does not have to handle an outcome it cannot report.
 proc restore(e: Entity, id: string): ApiResult =
-  # The HTTP route has nowhere to put the outcome — its response shape is the
-  # frozen client's (D-Z) — so it is dropped here and carried only to the
-  # window, which is the surface A-18 is about.
+  # The HTTP route has nowhere to put the outcome, since its response shape is
+  # the frozen client's, so it is carried only to the window.
   var outcome: fssync.RestoreOutcome
   restoreItem(e.name, id, outcome)
 
+## Function purpose: a malformed body answers nil rather than raising, so every
+## route can turn it into a 400 rather than a 500.
 proc parseBodyJson(body: string): JsonNode =
   try: parseJson(body) except CatchableError: nil
 
-## Function purpose: write only the message columns the caller actually supplied.
-## `writeRow` is INSERT OR REPLACE over every column, so upserting a message to
-## change its text alone would blank its `convId`, `role` and `timestamp` — which
-## is why editing a message needs this and not `putEntity`.
+## Function purpose: writes only the columns the caller supplied. The generic
+## writer is insert-or-replace over every column, so changing a message's text
+## alone would blank its conversation, role and timestamp.
 ##
-## It is a proc rather than inline in the route because the GUI's edit action
-## needs exactly this behaviour, and a second copy in `gui.nim` would be two
-## definitions of one contract. `POST /api/db/messages/update` and the window now
-## call the same code.
+## A proc rather than route-inline because the window's edit action needs exactly
+## this, and a second copy there would be two definitions of one contract.
 proc updateMessage(node: JsonNode): ApiResult =
   if node.isNil or not node.hasKey("id"):
     return err(400, "id required")
@@ -636,37 +600,34 @@ proc updateMessage(node: JsonNode): ApiResult =
   db.exec("UPDATE messages SET " & sets.join(", ") & " WHERE id=?", vals)
   ok("""{"status":"ok"}""")
 
-## Function purpose: the GUI's entry point to the partial message update above,
-## shaped like `putEntity`/`deleteEntity` so the window keeps going through this
-## module rather than writing message SQL of its own.
+## Function purpose: shaped like the other in-process entry points, so the window
+## keeps going through this module rather than writing message SQL of its own.
 proc patchMessage*(node: JsonNode): bool =
   updateMessage(node).status == 200
 
 # ---------------------------------------------------------------------------
-# The message tree (G-29)
+# The message tree
 # ---------------------------------------------------------------------------
 #
-# A conversation is a tree, not a list. Editing a turn or regenerating a reply
-# produces an *alternative version* of it — a sibling — and what the reader sees
-# is one path from the root down to whichever leaf they last landed on. The
-# `messages.parent` column has always existed to hold this and nothing wrote it.
+# A conversation is a tree rather than a list: editing a turn or regenerating a
+# reply produces an alternative version of it, a sibling, and the reader sees one
+# path from the root down to whichever leaf they last landed on.
 #
-# These three are **pure functions over (id, parent) pairs**, deliberately. They
-# are the part of branching most likely to be silently wrong — an off-by-one in a
-# sibling counter looks fine and misleads — and pure functions over data can be
-# asserted against a known fork shape without a database or a window, which is
-# what `jenova-core tree-selftest` does. The window calls them over the messages
-# it already holds, so this costs it no extra queries.
+# Action purpose: these three are pure functions over (id, parent) pairs,
+# deliberately. Branching is the part most likely to be silently wrong — an
+# off-by-one in a sibling counter looks fine and misleads — and pure functions
+# over data can be asserted against a known fork shape with no database and no
+# window. The window calls them over messages it already holds, so they cost it
+# no extra queries.
 
 type MsgEdge* = tuple[id, parent: string]
 
-## Function purpose: the chain from the conversation root down to `leaf`, oldest
-## first — the conversation as it is currently being read.
+## Function purpose: the conversation as it is currently being read — root to
+## leaf, oldest first.
 ##
-## The depth guard is not defensive padding: `parent` is data, a row can be
-## edited through the API, and a cycle would otherwise hang the window rather
-## than draw a wrong transcript. `restoreItem` guards its parent walk for the
-## same reason.
+## Action purpose: the depth guard is not padding. `parent` is data a row can be
+## edited into, and a cycle there hangs the window rather than drawing a wrong
+## transcript.
 proc pathTo*(edges: openArray[MsgEdge], leaf: string): seq[string] =
   if leaf.len == 0: return
   var parentOf = initTable[string, string]()
@@ -682,11 +643,11 @@ proc pathTo*(edges: openArray[MsgEdge], leaf: string): seq[string] =
   reverse(result)
 
 ## Function purpose: every version of one turn, in the order they were made —
-## what a "2 of 3" counter counts and what prev/next steps through.
+## what a "2 of 3" counter counts and what the arrows step through.
 ##
-## A message is its own sibling, so a turn that was never branched returns a list
-## of one. That is what lets the caller ask for siblings unconditionally and show
-## the control only when there is more than one.
+## A message is its own sibling, so a turn that was never branched answers a list
+## of one. That is what lets a caller ask unconditionally and show the control
+## only when there is more than one.
 proc siblingsIn*(edges: openArray[MsgEdge], id: string): seq[string] =
   var parent = ""
   var found = false
@@ -700,11 +661,11 @@ proc siblingsIn*(edges: openArray[MsgEdge], id: string): seq[string] =
     if e.parent == parent: result.add e.id
 
 ## Function purpose: where the reader lands after switching to a sibling — the
-## deepest message under `id`, always following the newest branch.
+## deepest message under it, following the newest branch at each step.
 ##
-## "Newest" is last in `edges`, which the caller supplies in timestamp order, so
-## switching to an older version of a turn shows the reply that was made *for
-## that version* rather than stranding the reader at the switch point.
+## Newest is last in the edges the caller supplies, which arrive in timestamp
+## order, so switching to an older version shows the reply made *for that
+## version* rather than stranding the reader at the switch point.
 proc deepestFrom*(edges: openArray[MsgEdge], id: string): string =
   result = id
   var guard = 0
@@ -716,9 +677,8 @@ proc deepestFrom*(edges: openArray[MsgEdge], id: string): string =
     if next.len == 0: break
     result = next
 
-## Function purpose: bulk import, reproducing `db.import_data`. Wrapped in a
-## transaction so a partial dump cannot leave the database half-populated —
-## the original rolled back on any failure and so does this.
+## Function purpose: one transaction, so a partial dump cannot leave the
+## database half-populated.
 proc importData(node: JsonNode): ApiResult =
   if node.isNil or node.kind != JObject:
     return err(400, "body must be an object")
@@ -729,9 +689,8 @@ proc importData(node: JsonNode): ApiResult =
     for name in order:
       if node.hasKey(name) and node[name].kind == JArray:
         for item in node[name]:
-          # mirror = false: `db.import_data` writes rows only. A bulk import of
-          # thousands of notes must not run a git add per row, and the files are
-          # expected to arrive with the dump.
+          # Rows only: a bulk import of thousands of notes must not run a git
+          # add per row, and the files arrive with the dump.
           let r = upsert(Entities[name], item, mirror = false)
           if r.status != 200:
             db.rollback()
@@ -742,15 +701,14 @@ proc importData(node: JsonNode): ApiResult =
     return err(500, "import failed: " & getCurrentExceptionMsg())
   ok("""{"status":"ok"}""")
 
-## Function purpose: the `children` column of a copied turn, remapped and
-## filtered to the copied path.
+## Function purpose: nothing here reads the children column — the tree is built
+## from parents — but it is the frozen client's, and a fork carrying the
+## *source's* ids would hand that surface a turn claiming children in another
+## conversation.
 ##
-## Nothing in this program reads `children` — the tree is built from `parent`
-## (`MsgEdge`) — but the column is the frozen Web UI's and a fork that carried
-## the *source's* ids would hand that surface a turn claiming children in another
-## conversation. It is stored as a JSON array there, so it is re-emitted as one;
-## a comma-separated value is accepted too, because the column is TEXT and this
-## has no way to insist.
+## Action purpose: re-emitted as a JSON array because that is how the client
+## stores it, and a comma-separated value is accepted too since the column is
+## text and this has no way to insist.
 proc remapChildren(raw: string, idMap: Table[string, string]): string =
   var ids: seq[string]
   try:
@@ -765,25 +723,20 @@ proc remapChildren(raw: string, idMap: Table[string, string]): string =
     if idMap.hasKey(k): kept.add %idMap[k]
   $kept
 
-## Function purpose: copy one branch of a conversation into a new conversation
-## (`PLANS.md` Step 13b) — the Web UI's `DatabaseService.forkConversation`.
+## Function purpose: copies one branch of a conversation into a new one, and is
+## the only writer of the fork relationship the delete cascade already maintains.
 ##
-## **The column and its delete cascade already existed and nothing ever wrote
-## one.** `conversations.forkedFromConversationId` is in the schema,
-## `deleteConversation` walks the fork tree through it and `softDelete`
-## re-points orphans at their grandparent — a whole maintenance path for a
-## relationship no surface could create. This is the writer that was missing.
+## Action purpose: the copy is the path down to the named message and not the
+## whole tree, because a fork means "continue from here, down this line" — the
+## branches beside it are deliberately left behind.
 ##
-## **The copy is the path to `atMessageId`, not the whole tree**: a fork means
-## "continue from here, down this line", so the branches beside it are
-## deliberately left behind. Ids are remapped through one table, so a copied
-## parent points at the copy and never back at the original — a `parent` that
-## escaped the remap would attach the new conversation's history to the old
-## one's rows and each would then edit the other.
+## Ids are remapped through one table, so a copied parent points at the copy and
+## never back at the original. A parent that escaped the remap would attach the
+## new conversation's history to the old one's rows, and each would then edit the
+## other.
 ##
-## Written through `importData` rather than row by row, so the whole fork is one
-## transaction and a failure part way leaves nothing behind (rule 5: the
-## guarantee already existed).
+## Written through the bulk import rather than row by row, so the whole fork is
+## one transaction and a failure part way leaves nothing behind.
 proc forkConversation*(sourceId, atMessageId, newName: string):
     tuple[ok: bool, id, msg: string] =
   let convs = Entities["conversations"]
@@ -801,8 +754,8 @@ proc forkConversation*(sourceId, atMessageId, newName: string):
     edges.add (id: r[0], parent: r[5])
     byId[r[0]] = r
 
-  # An empty `atMessageId` forks from the conversation's own read position,
-  # which is what "fork this conversation" means with no message selected.
+  # An empty message id forks from the conversation's own read position, which
+  # is what forking means with no message selected.
   let leaf = if atMessageId.len > 0: atMessageId else: src.field("currNode")
   let path = pathTo(edges, leaf)
   if path.len == 0:
@@ -832,8 +785,8 @@ proc forkConversation*(sourceId, atMessageId, newName: string):
                    else: src.field("name") & " (fork)")
   conv["currNode"] = %idMap[path[^1]]
   conv["forkedFromConversationId"] = %sourceId
-  # Milliseconds, which is what `lastModified` holds everywhere else — the Web
-  # UI writes `Date.now()` and the column is sorted on.
+  # Milliseconds, which is what this column holds everywhere else and what the
+  # sidebar sorts on.
   conv["lastModified"] = %(epochTime() * 1000).int64
 
   var convArr = newJArray()
@@ -845,29 +798,20 @@ proc forkConversation*(sourceId, atMessageId, newName: string):
   if r.status != 200: return (false, "", r.body)
   (true, newId, "")
 
-## Function purpose: route one `/api/fs/*` request — the last surface `lib/proxy.lua`
-## still served (N-20). Four routes, reproduced from `proxy.lua:647-672`.
-## Entity writes for in-process callers (the GUI sidebar). Goes through the same
-## upsert/softDelete the HTTP routes use, so cascades and the filesystem mirror
+## Function purpose: entity writes for in-process callers, through the same
+## upsert and delete the HTTP routes use, so cascades and the filesystem mirror
 ## apply identically whichever surface the user is on.
 ##
-## Action purpose: **the node is merged onto the stored row before it is
-## written, and that is the one deliberate difference from the HTTP path.**
-## `writeRow` is INSERT OR REPLACE over every column, so a caller that omits one
-## blanks it. That is *correct* for `/api/db/*`, where the Web UI posts partial
-## objects and means them; it is wrong for the window, which builds its node from
-## whatever fields the open screen happens to hold. **The class has now bitten
-## twice** — a file-asset rename blanked `content` and `fssync.syncFileAsset`
-## then wrote a zero-byte file over the real one (T-13), and a note save blanked
-## `isFocusNote`, silently demoting a FOCUS note so it stopped reaching the model
-## from anywhere but its own level (G-49). Both were repaired at the call site,
-## and the second one proved that repairing call sites does not hold: there are
-## six of them and each new one inherits the trap. Merging at the boundary every
-## window write already passes through fixes the class instead of the instance,
-## and leaves the HTTP contract untouched (D-CC).
+## Action purpose: the node is merged onto the stored row before it is written,
+## and that is the one deliberate difference from the HTTP path. The generic
+## writer is insert-or-replace over every column, so a caller that omits one
+## blanks it — correct for a client that posts partial objects and means them,
+## wrong for a window that builds its node from whatever fields the open screen
+## happens to hold. Left to each call site the trap is inherited by every new
+## one; merged at the boundary they all pass through, it is closed once.
 ##
-## **A create is unaffected**: a row that does not exist yet has no stored fields
-## to merge, so the node is written exactly as given.
+## A create is unaffected: a row that does not exist yet has no stored fields to
+## merge, so the node is written exactly as given.
 proc putEntity*(entity: string, node: JsonNode): bool =
   if entity notin Entities: return false
   if node.kind != JObject or not node.hasKey("id"): return false
@@ -882,26 +826,26 @@ proc putEntity*(entity: string, node: JsonNode): bool =
       merged[col.name] = %prior[col.name]
   upsert(e, merged).status == 200
 
+## Function purpose: the in-process delete, through the same soft delete and
+## cascade the HTTP route uses.
 proc deleteEntity*(entity, id: string): bool =
   entity in Entities and softDelete(Entities[entity], id).status == 200
 
-## Function purpose: undo a soft delete for an in-process caller — the window's
-## trash view (G-21). Goes through the same `restoreItem` the HTTP route uses, so
-## the upward cascade and the retrieval re-index apply whichever surface the user
-## restored from. A window that wrote `is_deleted=0` itself would skip both.
+## Function purpose: goes through the same restore the HTTP route uses, so the
+## upward cascade and the re-index apply whichever surface the user restored
+## from. A window that cleared the flag itself would skip both.
 proc restoreEntity*(entity, id: string): bool =
   var outcome: fssync.RestoreOutcome
   entity in Entities and restoreItem(entity, id, outcome).status == 200
 
-## Function purpose: restore, and say what actually happened to the file — the
-## signal the Trash view needs to stop claiming a restore it did not perform
-## (A-18-1).
+## Function purpose: restore, and say what happened to the file — which is what
+## the trash view needs in order not to claim a restore it did not perform.
 ##
-## Separate from `restoreEntity` rather than replacing it: the HTTP route and
-## the tests want the plain answer, and a caller that cannot act on the outcome
-## should not be made to handle one. **`rmNoPhysicalForm` is not a failure** —
-## a conversation or a message never had a file, and a window that reported
-## something there would cry wolf on the commonest restore of all.
+## Separate from the plain version rather than replacing it: the HTTP route and
+## the tests want the bare answer, and a caller that cannot act on an outcome
+## should not have to handle one. No physical form is not a failure — a
+## conversation never had a file, and reporting there would cry wolf on the
+## commonest restore of all.
 proc restoreEntityOutcome*(entity, id: string):
     tuple[ok: bool, outcome: fssync.RestoreOutcome] =
   if entity notin Entities: return (false, fssync.rmNoPhysicalForm)
@@ -909,26 +853,18 @@ proc restoreEntityOutcome*(entity, id: string):
   let r = restoreItem(entity, id, outcome)
   (r.status == 200, outcome)
 
-## Function purpose: reconcile every live note against its file on disk — the
-## `pull` half of the Web UI's `SyncService` (`PLANS.md` Step 13b).
+## Function purpose: reconciles every live note against its file, which is what
+## makes an edit written outside the note editor return rather than being
+## overwritten by the next save.
 ##
-## **The mirror was one-way.** `fssync.syncNote` writes a note's `.md` on every
-## save and nothing ever read one back, so an edit made in the embedded Neovim,
-## in another editor, or over `/api/storage` lived on disk while the database
-## kept the old text — and the next save in the window overwrote it without a
-## word. This is what makes those edits return.
+## Action purpose: disk wins, and only when the file differs — a file matching
+## the row is skipped so nothing is rewritten and no commit is made for a no-op.
+## A missing file is left alone rather than read as a deletion: an absent mirror
+## means the note has not been saved since the tree was made, and deleting one is
+## not inferred from the filesystem.
 ##
-## **Disk wins, and only when the file differs.** A file that matches the row is
-## skipped so nothing is rewritten and no git commit is made for a no-op; a file
-## that is missing is left alone rather than treated as a deletion, because an
-## absent mirror means the note was never saved since the tree was made, not
-## that the user removed it. Deleting a note is `softDelete`'s job and is not
-## inferred from the filesystem.
-##
-## Written through `putEntity`, so the merge D-CC put at that boundary applies
-## and a column this does not mention — `isFocusNote` above all — is carried
-## forward rather than blanked. That is the G-49 class, and going through the
-## boundary is what keeps it fixed rather than re-fixing it here.
+## Written through the in-process entry point, so the merge at that boundary
+## carries forward every column this does not mention.
 proc pullNotes*(): tuple[updated: int, failed: int] =
   let e = Entities["notes"]
   for r in db.query("SELECT " & e.colList & " FROM notes WHERE is_deleted=0"):
@@ -944,28 +880,23 @@ proc pullNotes*(): tuple[updated: int, failed: int] =
     else:
       inc result.failed
 
-## Function purpose: the soft-deleted rows of one table, newest first where the
-## table has anything to order by. The trash view's source, and deliberately not
-## a new query shape — it is `Entities`' own column list with the flag inverted.
+## Function purpose: the trash view's source — the entity's own column list with
+## the deleted flag inverted, rather than a second query shape that could drift
+## from it.
 ##
-## **A-24: the ordering was documented and never applied.** The docstring above
-## promised newest-first and the SQL carried no `ORDER BY`, so the trash rendered
-## in whatever order SQLite returned — receipt order in practice, which puts the
-## oldest deletion at the top of a long trash, the opposite of the contract.
-## *(The docstring had also drifted away from this proc entirely: Step 13b
-## inserted `pullNotes` between the two, leaving it attached to the wrong
-## function. It is restored here with the fix.)*
-##
-## The column is named per entity because there is no common one, and it is
-## checked against `Entities`' own list before use — a renamed column then
-## degrades to unordered rather than throwing a SQL error at the trash view.
-## Workspaces, projects and folders carry only an id and a name, which is the
-## "nothing to order by" the contract allows for.
+## Action purpose: newest first, because receipt order puts the oldest deletion
+## at the top of a long trash. The ordering column is named per entity since
+## there is no common one, and is checked against the declared list before use so
+## a renamed column degrades to unordered rather than throwing SQL at the trash
+## view. Three entities carry only an id and a name and are legitimately
+## unordered.
 const TrashOrder = {
   "conversations": "lastModified", "messages": "timestamp",
   "notes": "updatedAt", "fileAssets": "uploadDate",
 }.toTable
 
+## Function purpose: rows rather than JSON, because the window renders them into
+## widgets and would only have to parse its own output back.
 proc deletedRows*(entity: string): seq[seq[string]] =
   if entity notin Entities: return
   let e = Entities[entity]
@@ -978,10 +909,9 @@ proc deletedRows*(entity: string): seq[seq[string]] =
         break
   db.query(sql)
 
-## Function purpose: every live row, in the shape `importData` reads (G-32).
-## Exported for the desktop application's Export button, which must not build a
-## dump of its own: a hand-rolled writer and this reader would drift, and the
-## column list is already declared once in `Entities`.
+## Function purpose: every live row in the shape the importer reads, so export
+## and import cannot drift — and so the window's Export button does not build a
+## dump of its own from a second copy of the column list.
 proc exportAll*(): JsonNode =
   const order = ["conversations", "messages", "workspaces", "projects",
                  "folders", "notes", "fileAssets"]
@@ -991,15 +921,13 @@ proc exportAll*(): JsonNode =
     result[name] = rowsToJson(e, db.query(
       "SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=0"))
 
-## Function purpose: the import behind the desktop application's Import button,
-## over the same transactional `importData` the HTTP route uses (G-32).
+## Function purpose: the window's Import, over the same transactional importer
+## the HTTP route uses.
 ##
-## Action purpose: **two input shapes are accepted, because there are two
-## writers.** This build exports the keyed object `importData` consumes; the
-## frozen Web UI (D-Z) exports `[{conv, messages}, …]`, one entry per
-## conversation. Converting the second here rather than adding a route keeps one
-## transactional implementation and makes a file from either surface readable by
-## the other.
+## Action purpose: two input shapes are accepted because there are two writers —
+## this build's keyed object and the frozen client's per-conversation array.
+## Converting the second here rather than adding a route keeps one transactional
+## implementation and makes a file from either surface readable by the other.
 proc importAll*(node: JsonNode): tuple[ok: bool, msg: string] =
   if node.isNil: return (false, "the file is not valid JSON")
   var payload = node
@@ -1018,6 +946,8 @@ proc importAll*(node: JsonNode): tuple[ok: bool, msg: string] =
   let r = importData(payload)
   if r.status == 200: (true, "") else: (false, r.body)
 
+## Function purpose: the trash surface — list, restore, empty and the tree — kept
+## apart from the entity routes because it addresses files rather than rows.
 proc handleFs*(req: Request): ApiResult =
   if not req.path.startsWith("/api/fs/"):
     return err(404, "not found")
@@ -1047,18 +977,16 @@ proc handleFs*(req: Request): ApiResult =
 
   err(404, "not found")
 
-## Function purpose: route one `/api/storage/*` request — raw file access under
-## the workspaces root, reproducing `lib/proxy.lua:1009,1041,1068,1126`.
+## Function purpose: raw file access under the workspaces root — the one surface
+## that takes a client-supplied path and reads, writes and deletes with it, so
+## containment is the whole risk. Every path goes through one resolver, which
+## refuses on a literal `..`, on lexical escape, on a directory-boundary
+## mismatch, and on a symlinked component
+## pointing out of the tree. A refusal is a 403 and never a 404, because a 404
+## would tell a caller whether a path outside the root exists.
 ##
-## This is the one surface that takes a client-supplied path and reads, writes
-## and deletes with it, so containment is the whole risk. Every path goes through
-## `fssync.resolveStoragePath`, which refuses on a literal `..`, on lexical
-## escape, on a directory-boundary mismatch, and on a symlinked component
-## pointing out of the tree. **A refusal is a 403, never a 404** — a 404 would
-## tell a caller whether a path outside the root exists.
-##
-## `storage.service.ts` in the frozen Web UI calls all four verbs (D-Z), so the
-## response shapes are matched rather than improved.
+## All four verbs are called by the frozen client, so the response shapes are
+## matched rather than improved.
 proc handleStorage*(req: Request): ApiResult =
   # A bare prefix match accepts `/api/storagefoo` and then decodes `oo` as the
   # relative path, so the boundary is required: the route is the exact path or a
@@ -1141,18 +1069,14 @@ proc handleDb*(req: Request): ApiResult =
     let node = parseBodyJson(req.body)
     if node.isNil or not node.hasKey("key") or not node.hasKey("response"):
       return err(400, "key and response required")
-    # Action purpose: 12d-4. **This route was a second writer into `llm_cache`
-    # that bypassed `pipeline.cacheStore` entirely**, so the cap and eviction
-    # 12d adds to that proc could be walked straight past on day one. It goes
-    # through the same door as the completion path now, and there is exactly one
-    # place where a cache entry is written.
+    # Action purpose: through the same door as the completion path, so there is
+    # exactly one place a cache entry is written and the cap and eviction cannot
+    # be bypassed by writing here instead.
     #
-    # **The SSE-shape guard is deliberately NOT here and not in `cacheStore`.**
-    # That a stored body must carry `data:` lines and a `[DONE]` is a property
-    # of what the completion path produces, not of the store; it lives on that
-    # path. `tests/test_api_db.sh:185` posts a bare string through this route,
-    # so a shape test in the shared proc would turn that suite red, and test
-    # work is last (A-68).
+    # The stream-shape guard is deliberately not here and not in the shared
+    # writer. That a stored body must carry event lines is a property of what
+    # the completion path produces, not of the store, so it belongs on that
+    # path — this route legitimately accepts a bare string.
     pipeline.cacheStore(node["key"].getStr, node["response"].getStr)
     return ok("""{"status":"ok"}""")
 
@@ -1185,17 +1109,18 @@ proc handleDb*(req: Request): ApiResult =
       except CatchableError:
         db.rollback()
         return err(500, "bulk delete failed")
-      # After the commit, for the reason `deleteConversation` does it after its
-      # own: a rolled-back delete must not leave the index stripped (T-17).
+      # After the commit: a rolled-back delete must not leave the index
+      # stripped of rows that are still live.
       for idNode in node["ids"]: indexing: rag.forgetMessage(idNode.getStr)
       return ok("""{"status":"ok"}""")
     of "update":
-      # Action purpose: an edited message whose index entry still holds the old
-      # text is recalled by its old words and quoted back with its new ones.
-      # Re-indexed here, on the route, and **not inside `updateMessage`** —
-      # `patchMessage` shares that proc and is called by the window on the GTK
-      # thread, where an embedding round trip would freeze the transcript. The
-      # window feeds the index from its own control worker instead (T-17).
+      # Action purpose: an edited message whose index entry holds the old text
+      # is recalled by its old words and quoted back with its new ones.
+      #
+      # Re-indexed on the route rather than inside the shared update, because
+      # the window calls that on the GTK thread and an embedding round trip
+      # there would freeze the transcript — it feeds the index from its own
+      # control worker instead.
       #
       # No parent: the turn this one answers has not changed.
       let node = parseBodyJson(req.body)
@@ -1232,12 +1157,10 @@ proc handleDb*(req: Request): ApiResult =
     let node = parseBodyJson(req.body)
     if node.isNil: return err(400, "invalid JSON body")
     let r = upsert(e, node)
-    # Action purpose: feed the retrieval index from the surface the Web UI and
-    # any LAN client write through (T-17). **Only on an assistant row**, which
-    # indexes the reply and the turn it answers together — see
-    # `rag.indexExchange` for why a user turn is not indexed the moment it
-    # arrives. This is the same rule the window applies, so the two surfaces
-    # cannot build different indexes.
+    # Action purpose: feeds the index from the surface every network client
+    # writes through. Only on an assistant row, which indexes the reply and the
+    # turn it answers together — the same rule the window applies, so the two
+    # surfaces cannot build different indexes.
     if r.status == 200 and head == "messages" and node.f("role") == "assistant":
       indexing: discard rag.indexExchange(node.f "id")
     return r
