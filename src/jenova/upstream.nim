@@ -146,8 +146,12 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
   var chunk = newString(RelayChunk)
   var relayed = 0
   # Action purpose: bytes held back while the status line is still incomplete.
-  # Both are inert unless the caller asked for headers — with `extraHeaders`
-  # empty, `splicing` is false from the outset and no byte is ever buffered.
+  # **Active for every response**, whether or not there is anything to splice
+  # in: the accumulation runs until the line completes or reaches
+  # `MaxStatusLineProbe`, and only then does the head go out. This comment used
+  # to say the opposite — that both were inert with no headers to add — which
+  # was true of the gating below until it was found to skip the head contract
+  # on the commonest path, and is the reason that gating is gone.
   var pending = ""
   # Action purpose: **always, and not only when there is something to splice in.**
   # Gating this on `extraHeaders` made the head contract conditional: with no

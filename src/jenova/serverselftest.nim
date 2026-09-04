@@ -440,8 +440,15 @@ proc relayPhase(): int =
 
   block noHeadersIsByteIdentical:
     # The path every request without diagnostics takes, and the one a mistake in
-    # the splice is most likely to damage invisibly: with nothing to insert,
-    # `forward` must not so much as buffer a byte.
+    # the splice is most likely to damage invisibly: with nothing to insert, the
+    # client must receive the upstream's bytes exactly.
+    #
+    # **Not the same as "buffers nothing".** The status-line probe runs for
+    # every response now — that is what stops a fragment being forwarded as a
+    # reply — so the head is accumulated here as well and `spliceHeaders`
+    # hands it back untouched. What is asserted is the output, which is the
+    # property that matters; the note that used to claim no byte was buffered
+    # described the gating that had to go.
     let reply = head & body
     let run = driveRelay(reply, "", head.len)
     check("with no headers to add the client gets the upstream's bytes " &
