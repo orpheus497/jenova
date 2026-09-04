@@ -68,14 +68,19 @@ fourteen is one thing — the apparatus that checks this project had not itself 
 * Report 05's Phase 1 list stands unchanged: the `sysctl` probe, the `fork`/`setsid`/`execv`
   backend path, the D-Bus tray (no `StatusNotifierWatcher` runs under Xvfb), and the embedded
   Neovim page are FreeBSD-only and untested here.
-* **`--check` builds the startup tree, and that is less than it looks.** The five overlay panels
-  are inserted unconditionally (`src/jenova/gui.nim:6163-6167`), which makes it tempting to say
-  they are constructed. **Only their shells are.** Each panel's body sits behind
-  `if app.<x>Open:` — `trashPanel` at `:4813` is the pattern — so the `beforeBuild` hook of every
-  widget *inside* four panels has never run, on any host, under any gate. Two agents found this
-  independently in session 9; one worked around it by compiling variants whose `AppState`
-  defaults open each state and `--check`ing all eight, which is the shape the gate itself should
-  take. Recorded as **V-14**.
+* **`--check` builds the startup tree, and that is less than it looks.** The overlay panels are
+  inserted unconditionally — **seven** of them at `src/jenova/gui.nim:6902-6908`, not five —
+  which makes it tempting to say they are constructed. **Only their shells are.** Each panel's
+  body sits behind `if app.<x>Open:`, `trashPanel` at `:5129` being the pattern, so the
+  `beforeBuild` hook of every widget *inside* them had never run, on any host, under any gate.
+  Two agents found this independently in session 9. Recorded as **V-14**, and **now closed**:
+  `tests/gui_build.sh` compiles a variant with those guards forced open and `--check`s it, at a
+  cost of 21 s on a 90 s gate. It found a real defect on its first run — see V-16.
+
+  *(The line numbers in this bullet were wrong when first written — "five overlay panels" at
+  `:6163-6167` and a guard at `:4813` — and are corrected above. A report whose whole argument is
+  that claims must be checked does not get to cite drifted line numbers; they are cheap to
+  re-derive and were not re-derived.)*
 
 ---
 
@@ -345,13 +350,14 @@ as a code defect.
 | V-06 | A shared nimcache makes a clean tree fail to link | build robustness | XS | **done** |
 | V-07 | Unhandled Nim exception printed on a passing gate run | noise | XS | **done** |
 | V-08 | The gate bound the real port; the script contradicted itself | isolation | XS | **done** |
-| V-09 | Report 03's E-05 verification cannot be reproduced | audit trail | S | open |
+| V-09 | Report 03's E-05 verification cannot be reproduced | audit trail | S | **done** |
 | V-10 | Every attached image leaves a zero-byte file in the workspace mirror | data | S | **done** |
-| V-11 | The gate is not concurrency-safe | isolation | XS | open |
-| V-12 | `tests/gui_check.sh:31` still passes `-d:gtk48` | stale | XS | open |
+| V-11 | The gate is not concurrency-safe | isolation | XS | **done** |
+| V-12 | `tests/gui_check.sh:31` still passes `-d:gtk48` | stale | XS | **done**, and the claim is now self-enforcing |
 | V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
-| V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | open |
+| V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | **done** |
 | V-15 | A renamed file asset can restore the wrong copy and report success | **data** | M | open |
+| V-16 | A settings help string containing markup blanks its own row | display | XS | string fixed; **general form open** |
 
 ### V-02's exception: `AutoScroll` stays, and not out of caution
 
@@ -374,6 +380,7 @@ the pinned revision, and the mechanism kept because the *new* reading also says 
 | **V-10** | **Every image attached in the window leaves a zero-byte file in the workspace mirror, and `git add`s it.** An image's `content` column is left empty *deliberately and correctly* (`gui.nim:2335-2339`: base64 must not enter a column that `workspace.contextFor` renders and `rag.indexFileAsset` embeds). But `api.putEntity` → `fssync.syncFileAsset(id, name, "", …)` → `writeFile(path, "")`. The *rename* form of this trap was found and closed (`gui.nim:653-657`); the *creation* form is open. Fixing it means choosing between writing the real bytes from the attachment cache and writing no file at all — a design decision, which is why session 9 recorded it rather than picking one. It is also why `assetview.classify` needs `avEmpty` as its own answer: "nothing stored" and "no viewer for this type" are different claims. |
 | **V-11** | **The gate is not concurrency-safe.** `DISPLAY=:87` and fixed ports mean two gates on one host fight; it cost one agent three red runs that read as code defects. It matters more now that `suites` runs the gate. Deriving both from `$$` closes it. |
 | **V-12** | **`tests/gui_check.sh:31` still passes `-d:gtk48`** — V-01's residue, in the one file that claims to mirror the `.nimble` flags and now does not. Inert, but the claim is false. |
+| **V-16** | **A settings help string containing markup blanks its own row in the shipped window.** Every `help` in `settings.nim` is drawn as an `AdwActionRow`/`SwitchRow`/`ComboRow` subtitle — a Pango markup property (`gui.nim:4872`, `:4885`, `:4905`, `:4918`) — and Pango rejects a whole string it cannot parse, so the row draws **empty** rather than drawing the text plainly. `useThinking`'s help read *"inside `<think>` tags"* and was blank in the window. Found by V-14's panel variant on its **first run**, which is the argument for V-14 in one sentence. The string is fixed; **the general form is open** — nothing stops the next help text containing a `<` or a bare `&`. The fix is not escaping (these strings are authored in-tree, not user input) but an assertion that walks `settings.Defs` and refuses raw markup characters, so a future one fails the build instead of silently blanking a row. |
 | **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:246-259` → `fssync.trashFileAsset`); deleting later writes a *second* sidecar with the same id (`api.nim:526`). `restoreMirror` (`fssync.nim:715-728`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert`. The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
 | **V-14** | **`--check` never builds anything behind an `if …Open`** — see §0. The gate should compile the panel-open variants rather than leaving each agent to do it by hand. |
 
