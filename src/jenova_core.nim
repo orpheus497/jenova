@@ -4944,6 +4944,29 @@ proc main() =
         # `boolDefault: true` field as OFF. Two ship on: the statistics line and
         # the sidebar on a new chat. Asserted against a bare `Settings()`,
         # because that is the only value that reaches the fallback at all.
+        # Action purpose: **a help string that Pango cannot parse blanks its own
+        # row in the shipped window** (report 07, V-16). Every `help` and
+        # `label` here is drawn as an `AdwActionRow`/`SwitchRow`/`ComboRow`
+        # subtitle, which is a Pango markup property — and Pango does not
+        # degrade on a string it cannot parse, it discards the whole thing. So
+        # `useThinking`'s help, which read "inside <think> tags", rendered as an
+        # empty row: not mangled, blank.
+        #
+        # Escaping at the call site would be the wrong fix. These strings are
+        # authored in this file, not supplied by a user, so the defect is a typo
+        # class and belongs where a typo is caught — here, at build time. A
+        # future help string containing a `<` or a bare `&` now fails this
+        # assertion instead of silently emptying a settings row that nothing
+        # tests and nobody would think to look at.
+        block helpTextIsSafeAsMarkup:
+          var offenders: seq[string]
+          for d in settings.Defs:
+            for s in [d.label, d.help]:
+              if '<' in s or '>' in s or '&' in s:
+                offenders.add d.key
+          check("no settings label or help contains raw Pango markup",
+                offenders.len == 0, $offenders)
+
         block boolDefaults:
           let bare = settings.Settings()
           check("a field declared on reads as on when nothing is stored",

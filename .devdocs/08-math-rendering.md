@@ -226,9 +226,31 @@ window is better than it was.**
 
 | Phase | Delivers | Gate |
 |---|---|---|
-| **M-1** | Inline Tier 1: Greek and operator names to Unicode, `^`/`_` to sup/sub, italic variables, upright function names. Delimiter detection with the `(?<!\\)` rule, code-span exclusion, and streaming half-open handling | `markdown-selftest` — assertions for every negative case in §4, plus the streaming ones |
-| **M-2** | `mathtex.nim`: parse to a tree, lay out to boxes over TeXbook Appendix G rules. **No drawing at all.** Fractions, scripts, radicals, big operators, matrices, stretchy delimiters | new `math-selftest`, registered in **both** `jenova_core.nimble`'s `SelfTests` and `jenova_core.nim`'s `usage()`. Assert box positions and sizes as numbers |
-| **M-3** | `mathfont.nim` and the Cairo draw: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
+| **M-1** ✅ | Inline Tier 1: Greek and operator names to Unicode, `^`/`_` to sup/sub, italic variables, upright function names. Delimiter detection with the `(?<!\\)` rule, code-span exclusion, and streaming half-open handling | `markdown-selftest` — assertions for every negative case in §4, plus the streaming ones |
+| **M-2** ✅ | `mathtex.nim`: parse to a tree, lay out to boxes over TeXbook Appendix G rules. **No drawing at all.** Fractions, scripts, radicals, big operators, matrices, stretchy delimiters | new `math-selftest`, registered in **both** `jenova_core.nimble`'s `SelfTests` and `jenova_core.nim`'s `usage()`. Assert box positions and sizes as numbers |
+
+> **Three corrections from implementing M-2. All three are errors in this report.**
+>
+> 1. **`\int` does not take limits above and below, and saying it did would have made every
+>    integral in every reply look wrong.** The M-2 row above lists it beside `\sum` and
+>    `\prod`. TeX sets it `\nolimits` — plain TeX defines `\int` as `\intop\nolimits` — so
+>    an integral's bounds sit *beside* the sign, not stacked on it, and KaTeX follows TeX.
+>    Implemented TeX's way, with `\limits`/`\nolimits` overrides, asserted in both directions.
+> 2. **The MATH table does not supply matrix column and row spacing.** §1 implies every layout
+>    constant comes from the font; there is no such constant, because TeX takes these from
+>    `\arraycolsep` and `\baselineskip` rather than from a font. They are two extra
+>    `MathConstants` fields, documented as *not* font values, and M-3 must choose them.
+> 3. **This report never says what a refused formula renders as.** `renderMath` returns
+>    `ok = false` with an **empty** box, so M-3's `bkMath` branch must fall back to the original
+>    source string the caller still holds. An unstated fallback is an empty block on screen.
+>
+> The M-2 interface, since M-3 draws with it: `MathBox` is `{x, y, width, ascent, descent,
+> italicCorrection}` plus `bxGlyph` / `bxRule` / `bxList`. **y grows down, the origin is the left
+> edge on the baseline, and ascent/descent are positive distances.** One container kind, because
+> a child carrying both `x` and `y` needs no second packing rule — drawing is translate and
+> recurse. `MathFont` is `MathConstants` plus two closures, `measure` and `variants`, so the
+> module imports only `std/[strutils, tables]` and stays assertable without a font.
+| **M-3** (font half ✅) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw remains: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
 | **M-4** | Polish: display-math alignment, `\begin{align}`, spacing classes (ord/op/bin/rel), and `docs/usage.md` stating exactly which LaTeX subset is supported | assertions per feature; **the doc must name what is *not* supported**, per §4.4 |
 
 **M-1 is the whole of the visible win for most replies.** M-2 is the real engineering and it is
