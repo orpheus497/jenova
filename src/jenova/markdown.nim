@@ -16,30 +16,120 @@ type
     ## alignment without re-parsing anything.
     rows*: seq[seq[string]]
     aligns*: seq[float]
+    ## False only for a fenced code block whose closing fence has not arrived,
+    ## which is every code block while the reply is still streaming. The widget
+    ## layer refuses to copy one: half a snippet on the clipboard looks whole
+    ## and pastes as something that does not run.
+    complete*: bool
+
+const CodeCapLines* = 24
+  ## Above this many lines a code block is capped in place and scrolls inside
+  ## itself, so one long answer cannot push the rest of the transcript off
+  ## screen. Roughly a screenful, which is the point at which scrolling the
+  ## block beats scrolling the conversation. Here rather than beside the widget
+  ## that applies it, so which blocks are too long to read in place is decidable
+  ## — and asserted — with no window.
+
+## Function purpose: whether a code block is longer than can be read where it
+## sits, which is what the preview surface exists for.
+proc isLongCode*(b: Block): bool =
+  b.kind == bkCode and b.text.countLines > CodeCapLines
 
 ## Function purpose: runs before every other pass, because Pango markup and
 ## the source text share these three characters.
 proc escape(s: string): string =
   s.multiReplace(("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"))
 
-## Function purpose: an unpaired delimiter is left as literal text, because a
-## reply is read while it streams and a half-typed run must not swallow the rest
-## of the line.
-proc inlineSpan(s: string, delim: string, tag: string): string =
-  result = ""
+## Function purpose: the general form behind every emphasis pass, so a delimiter
+## that opens two tags at once can share the scanning rules with one that opens
+## a single tag.
+##
+## Action purpose: three rules, each for a defect seen in real replies. A run
+## only opens where a non-blank follows it and only closes where a non-blank
+## precedes it, so `2 * 3 * 4` is arithmetic rather than an italic `3`. An empty
+## run is not emphasis, so a `**` the bold pass has already declined survives as
+## the two characters the model wrote instead of being consumed here as an empty
+## italic. An unpaired delimiter is left as literal text, because a reply is
+## read while it streams and a half-typed run must not swallow the rest of the
+## line.
+proc inlineWrap(s, delim, open, close: string): string =
+  result = newStringOfCap(s.len)
   var i = 0
   while i < s.len:
-    let start = s.find(delim, i)
+    var start = s.find(delim, i)
+    while start >= 0 and (start + delim.len >= s.len or
+                          s[start + delim.len] in {' ', '\t'}):
+      start = s.find(delim, start + delim.len)
     if start < 0:
       result.add s[i .. ^1]
       break
-    let stop = s.find(delim, start + delim.len)
+    var stop = s.find(delim, start + delim.len)
+    while stop > 0 and s[stop - 1] in {' ', '\t'}:
+      stop = s.find(delim, stop + delim.len)
     if stop < 0:
       result.add s[i .. ^1]
       break
+    if stop == start + delim.len:
+      result.add s[i ..< stop]
+      i = stop
+      continue
     result.add s[i ..< start]
-    result.add "<" & tag & ">" & s[start + delim.len ..< stop] & "</" & tag & ">"
+    result.add open & s[start + delim.len ..< stop] & close
     i = stop + delim.len
+
+proc inlineSpan(s: string, delim: string, tag: string): string =
+  inlineWrap(s, delim, "<" & tag & ">", "</" & tag & ">")
+
+## The characters this renderer acts on, and therefore the ones a backslash has
+## to be able to take back. `[` and `]` are deliberately absent: `\[` opens
+## display math in every model that writes any, and consuming the backslash here
+## would destroy the delimiter before anything can decide what to do with it.
+const Escapable = {'*', '_', '~', '`', '\\'}
+
+## Function purpose: whether the markup handed to Pango is one Pango will
+## accept. Pango's parser is XML-shaped and rejects the whole string on a single
+## mismatched tag or unknown entity — the label then draws nothing, so one
+## crossed `**`/`~~` pair loses the entire line rather than its emphasis.
+##
+## Action purpose: the emphasis passes run one delimiter at a time and cannot
+## see each other, so `*a~~b*c~~` produces correctly-paired tags in the wrong
+## order and no ordering of the passes fixes it. This is the check that catches
+## what the passes cannot, so the fallback below is reachable rather than
+## theoretical.
+proc markupBalanced*(s: string): bool =
+  var stack: seq[string] = @[]
+  var i = 0
+  while i < s.len:
+    case s[i]
+    of '<':
+      let shut = s.find('>', i + 1)
+      if shut < 0: return false
+      var j = i + 1
+      let closing = j < s.len and s[j] == '/'
+      if closing: j.inc
+      var name = ""
+      while j < shut and s[j] notin {' ', '/'}: name.add s[j]; j.inc
+      if name.len == 0: return false
+      if closing:
+        if stack.len == 0 or stack[^1] != name: return false
+        stack.setLen(stack.len - 1)
+      else:
+        stack.add name
+      # An unbalanced quote inside a tag lets the attribute run past its own
+      # `>`, which is how a href would escape into markup.
+      if s[i + 1 ..< shut].count('"') mod 2 != 0: return false
+      i = shut + 1
+    of '>':
+      # `escape` turns every `>` in the source into `&gt;`, so one here is a
+      # tag this scan did not open.
+      return false
+    of '&':
+      let semi = s.find(';', i + 1)
+      if semi < 0 or s[i + 1 ..< semi] notin ["amp", "lt", "gt", "quot", "apos"]:
+        return false
+      i = semi + 1
+    else: i.inc
+  stack.len == 0
 
 const LinkSchemes = ["http://", "https://"]
 
@@ -64,7 +154,25 @@ proc allowedHref(href: string): bool =
 ## span exists to prevent. The NUL placeholder cannot occur in escaped text and
 ## carries no emphasis delimiter of its own.
 proc inlineMarkup*(line: string): string =
-  let escaped = escape(line)
+  # Action purpose: a backslash escape is lifted before anything else, because
+  # its whole job is to hide the character from every pass below. The
+  # placeholder is a control byte for the reason the code-span one is: it
+  # cannot occur in the source and carries no delimiter of its own. A backslash
+  # in front of anything outside the set is not an escape and stays as written,
+  # which is what keeps a Windows path readable.
+  var literals: seq[char] = @[]
+  var unescaped = newStringOfCap(line.len)
+  var e = 0
+  while e < line.len:
+    if line[e] == '\\' and e + 1 < line.len and line[e + 1] in Escapable:
+      literals.add line[e + 1]
+      unescaped.add "\x03" & $(literals.len - 1) & "\x03"
+      e += 2
+    else:
+      unescaped.add line[e]
+      e.inc
+
+  let escaped = escape(unescaped)
   var codes: seq[string]
   var protected = newStringOfCap(escaped.len)
   var i = 0
@@ -130,6 +238,13 @@ proc inlineMarkup*(line: string): string =
     j = shut + 1
 
   result = linked
+  # Action purpose: the triple runs go first, and they are not a convenience.
+  # Left to the passes below, `***both***` opened bold on the first two stars
+  # and italic on the third, then closed bold before italic — `<b><i>x</b></i>`,
+  # which Pango rejects outright, so the line drew as nothing. Emitting both
+  # tags from one pass is what keeps them nested.
+  result = result.inlineWrap("***", "<b><i>", "</i></b>")
+  result = result.inlineWrap("___", "<b><i>", "</i></b>")
   result = result.inlineSpan("**", "b")
   result = result.inlineSpan("__", "b")
   # Between the double- and single-asterisk passes: earlier and the double pass
@@ -144,6 +259,15 @@ proc inlineMarkup*(line: string): string =
     result = result.replace("\x01" & $idx & "\x01",
                             "<a href=\"" & href.replace("\"", "&quot;") & "\">")
   result = result.replace("\x02", "</a>")
+  for idx, ch in literals:
+    result = result.replace("\x03" & $idx & "\x03", escape($ch))
+
+  # Action purpose: the last line of defence, and the reason it is here rather
+  # than at the widget. Emphasis delimiters can cross — `*a~~b*c~~` pairs both
+  # runs correctly and nests them wrongly — and Pango answers malformed markup
+  # by drawing nothing at all. Falling back to the source line escaped costs
+  # that line its emphasis; not falling back costs the reader the line.
+  if not markupBalanced(result): result = escape(line)
 
 ## Function purpose: indentation has to be measured before the line is stripped,
 ## or a nested item and a top-level one are indistinguishable by the time any
@@ -284,11 +408,11 @@ proc parse*(content: string): seq[Block] =
     inCode = false
     lang = ""
 
-  proc flush(kind: BlockKind, l = "") =
+  proc flush(kind: BlockKind, l = "", complete = true) =
     if cur.len > 0:
       let body = cur.join("\n").strip(leading = false)
       if body.len > 0:
-        blocks.add Block(kind: kind, text: body, lang: l)
+        blocks.add Block(kind: kind, text: body, lang: l, complete: complete)
       cur.setLen(0)
 
   for line in content.splitLines():
@@ -304,7 +428,9 @@ proc parse*(content: string): seq[Block] =
       continue
     cur.add line
 
-  flush(if inCode: bkCode else: bkText, lang)
+  # Only the trailing block can be unfinished, and it is unfinished exactly when
+  # the fence that opened it never closed.
+  flush(if inCode: bkCode else: bkText, lang, not inCode)
 
   # Action purpose: tables are lifted out here rather than inside the fence loop
   # above, so the streaming behaviour of a fence is untouched and a pipe inside
@@ -324,7 +450,7 @@ proc parse*(content: string): seq[Block] =
       if pending.len > 0:
         var marked: seq[string] = @[]
         for l in pending: marked.add lineMarkup(l)
-        outp.add Block(kind: bkText, text: marked.join("\n"))
+        outp.add Block(kind: bkText, text: marked.join("\n"), complete: true)
         pending.setLen(0)
 
     var i = 0
@@ -334,7 +460,7 @@ proc parse*(content: string): seq[Block] =
       if i + 1 < lines.len and lines[i].contains('|') and
          isTableSeparator(lines[i + 1]):
         flushText()
-        var tbl = Block(kind: bkTable)
+        var tbl = Block(kind: bkTable, complete: true)
         let header = tableCells(lines[i])
         var marked: seq[string] = @[]
         for cell in header: marked.add inlineMarkup(cell)
