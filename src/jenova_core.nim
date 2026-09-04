@@ -1932,6 +1932,131 @@ proc main() =
 
         db.exec("DELETE FROM notes WHERE id=?", [nid])
 
+      # Action purpose: the creation half of the trap `commitRename` describes.
+      # An image filed from a chat carries an empty `content` deliberately, and
+      # mirroring that row wrote a zero-byte file into the workspace and staged
+      # it — one for every image attached. `fssync.syncFileAsset` writes nothing
+      # for a row with no bytes and still reports success, and both halves of
+      # that sentence are load-bearing: an answer of false makes `api.upsert`
+      # delete the row it has already written.
+      #
+      # Asserted over real files through `api.putEntity`, the exact call the
+      # attachment path makes, and by varying the DATA rather than the code —
+      # the same call with bytes, without bytes, and then across the transition
+      # in each direction. A skip that never wrote anything would fail the
+      # second; a writer that always wrote would fail the first.
+      block anAssetWithNoBytesIsNotMirrored:
+        # A repository, because staging is half of what the write does and a
+        # plain directory cannot show whether it happened. `git` is not optional
+        # here: the mirror is a git repository by design, so a host without it
+        # fails rather than skipping.
+        check("the scratch workspace is a repository",
+              fssync.syncWorkspace("WS"))
+        let wsDir = wsScratch / "WS"
+        proc staged(path: string): bool =
+          execShellCmd("git -C " & quoteShell(wsDir) & " ls-files --error-unmatch " &
+                       quoteShell(path) & " >/dev/null 2>&1") == 0
+
+        # Real UUIDs, for the reason the note fixture above gives: anything else
+        # is refused by `fssync.physicalPath` and the row is rolled back.
+        let empty = fssync.newUuid()
+        let emptyPath = wsDir / "shot.png_" & empty
+        # Exactly the node `fileAttachmentsAsArtefacts` builds for an image.
+        check("an image with no content is filed",
+              api.putEntity("fileAssets", %*{
+                "id": empty, "workspaceId": "wst-ws", "name": "shot.png",
+                "size": 0, "type": "image/*", "uploadDate": 0, "content": ""}))
+        check("...and no file is written for it",
+              not fileExists(emptyPath), "found " & emptyPath)
+        # The half that cost every attachment a "could not file" notice once:
+        # skipping the write is a success, so the row has to still be there.
+        check("...and the row survives, which a mirror failure would delete",
+              db.query("SELECT id FROM fileAssets WHERE id=?", empty).len == 1)
+
+        let real = fssync.newUuid()
+        let realPath = wsDir / "readme.txt_" & real
+        check("an asset with bytes is filed",
+              api.putEntity("fileAssets", %*{
+                "id": real, "workspaceId": "wst-ws", "name": "readme.txt",
+                "size": 5, "type": "text/plain", "uploadDate": 0,
+                "content": "hello"}))
+        check("...and its file holds the bytes",
+              fileExists(realPath) and readFile(realPath) == "hello", realPath)
+        check("...and the file is staged, so the user sees what the mirror did",
+              staged(realPath))
+
+        # The transition into having bytes. A row that gains content later must
+        # gain its file with it, or the skip is permanent.
+        check("an empty asset given bytes is accepted",
+              api.putEntity("fileAssets",
+                            %*{"id": empty, "content": "now there are bytes"}))
+        check("...and its file appears at that point",
+              fileExists(emptyPath) and
+                readFile(emptyPath) == "now there are bytes", emptyPath)
+
+        # The other direction, which is where the rename trap lives: a node that
+        # omits the content is merged onto the stored row by `putEntity`, so the
+        # file moves with its bytes. Renaming through a path that did not merge
+        # wrote a zero-byte file over the real one and trashed the original.
+        let renamedPath = wsDir / "renamed.txt_" & real
+        check("a rename that omits the content is accepted",
+              api.putEntity("fileAssets",
+                            %*{"id": real, "name": "renamed.txt"}))
+        check("...and the renamed file still holds its bytes",
+              fileExists(renamedPath) and readFile(renamedPath) == "hello",
+              renamedPath)
+        check("...and the original was moved away rather than left behind",
+              not fileExists(realPath))
+
+        # A restore has to tell the truth about a file that never existed. The
+        # delete had nothing to move and so left no sidecar, and a bare
+        # "the file is missing" would claim a loss on every chat image restored.
+        # Its own fixture, because the one above has bytes by now.
+        let bare = fssync.newUuid()
+        check("a second image with no content is filed",
+              api.putEntity("fileAssets", %*{
+                "id": bare, "workspaceId": "wst-ws", "name": "second.png",
+                "size": 0, "type": "image/*", "uploadDate": 0, "content": ""}))
+        check("...and deleting it reports success",
+              api.deleteEntity("fileAssets", bare))
+        # Called once and held: the outcome is the state of the trash, so asking
+        # twice asks about a tree the first answer already changed.
+        let bareBack = api.restoreEntityOutcome("fileAssets", bare)
+        check("...and restoring it does not claim its file went missing",
+              bareBack.ok and bareBack.outcome == fssync.rmNoPhysicalForm,
+              $bareBack.outcome)
+
+        # The other side of the same answer, so it cannot pass by saying "no
+        # physical form" to everything: an asset that does have a file is still
+        # reported as having brought it back, and the bytes really are back.
+        #
+        # Its own fixture and not the renamed one above, because a rename trashes
+        # the pre-rename copy under a sidecar carrying the same row id — so a
+        # renamed asset has two sidecars and which one `restoreMirror` meets
+        # first is directory order. That is a defect in the restore lookup and
+        # not in anything asserted here; asserting through it would make this
+        # block fail at random and blame the mirror.
+        let kept = fssync.newUuid()
+        let keptPath = wsDir / "kept.txt_" & kept
+        check("an asset that is never renamed is filed with its bytes",
+              api.putEntity("fileAssets", %*{
+                "id": kept, "workspaceId": "wst-ws", "name": "kept.txt",
+                "size": 5, "type": "text/plain", "uploadDate": 0,
+                "content": "kept!"}) and fileExists(keptPath))
+        check("...and deleting it reports success",
+              api.deleteEntity("fileAssets", kept))
+        check("...and takes the file off disk into the trash",
+              not fileExists(keptPath))
+        let keptBack = api.restoreEntityOutcome("fileAssets", kept)
+        check("...and restoring it reports the file back with the row",
+              keptBack.ok and keptBack.outcome == fssync.rmRestored,
+              $keptBack.outcome)
+        check("...and the bytes really are back",
+              fileExists(keptPath) and readFile(keptPath) == "kept!", keptPath)
+
+        for assetId in [empty, real, bare, kept]:
+          db.exec("DELETE FROM fileAssets WHERE id=?", [assetId])
+
       # Action purpose: `deletedRows` is the trash view's source and its
       # docstring promised "newest first"; the SQL carried no `ORDER BY`, so a
       # long trash showed the OLDEST deletion at the top — the opposite of the
