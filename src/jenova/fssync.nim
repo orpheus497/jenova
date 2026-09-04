@@ -365,30 +365,79 @@ proc readNoteMirror*(id, title, folderId, projectId, workspaceId: string):
   except IOError, OSError:
     (false, "")
 
-## Function purpose: file assets arrive as `data:` URIs, so the payload is
-## decoded back to bytes before writing — otherwise every uploaded image is
-## stored as its own text encoding. A payload whose length is not a multiple of
-## four is rejected rather than written truncated.
+## Function purpose: the bytes a stored asset belongs on disk as. Assets arrive
+## as `data:` URIs, so the payload is decoded here — otherwise every uploaded
+## image is mirrored as its own text encoding. A payload whose length is not a
+## multiple of four is refused rather than written truncated, which is what the
+## flag distinguishes from a payload that is legitimately empty.
+proc assetPayload(content: string): tuple[ok: bool, bytes: string] =
+  const marker = "base64,"
+  if not content.startsWith("data:"): return (true, content)
+  let idx = content.find(marker)
+  if idx < 0: return (true, content)
+  var clean = newStringOfCap(content.len)
+  for ch in content[(idx + marker.len) .. ^1]:
+    if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}:
+      clean.add ch
+  if clean.len mod 4 != 0: return (false, "")
+  try:
+    (true, base64.decode(clean))
+  except ValueError:
+    (false, "")
+
+## Function purpose: whether an asset row has any bytes to have a file at all,
+## which is what separates "its file is gone" from "it never had one". Read from
+## the row and not from the filesystem, because an absent file is precisely the
+## state being explained.
+##
+## Action purpose: a row that cannot be read answers yes, which keeps the louder
+## of the two answers — the quiet one says there was nothing to lose, and an
+## unanswerable question must not become that claim. Guarded at all because
+## `restoreMirror` is reachable with no database open, which is how `fs-selftest`
+## drives it; `restoreTrash` guards its own write against the same thing.
+proc hasAssetBytes(id: string): bool =
+  var rows: seq[Row]
+  try:
+    rows = db.query("SELECT content FROM fileAssets WHERE id=?", id)
+  except CatchableError:
+    return true
+  if rows.len == 0 or rows[0].len == 0: return false
+  assetPayload(rows[0][0]).bytes.len > 0
+
+## Function purpose: the write half for a file asset, staging the file in git so
+## the user can see what the mirror did.
+##
+## Action purpose: an asset with no bytes gets no file. The window files every
+## chat image as a row whose `content` is deliberately empty — base64 must not
+## enter a column `workspace.contextFor` renders into a prompt and
+## `rag.indexFileAsset` embeds — and mirroring that row wrote a zero-byte file
+## into the workspace and `git add`ed it, one for every image attached.
+##
+## Skipping is a success with nothing written, and that distinction is the whole
+## of it: `api.upsert` deletes the row it has already written when the mirror
+## answers false, which is what made every attachment report "could not file"
+## once already.
+##
+## It closes the truncating half of the same trap from underneath. An update
+## that carries no content can no longer shorten a real file to nothing, so the
+## rename that blanked `content` and wrote a zero-byte file over the bytes now
+## costs at worst a stale mirror. `api.putEntity` merging the stored row before
+## it writes is what keeps the mirror current; this is the floor under that.
+##
+## Nothing sweeps up the zero-byte files already on disk. They are inert — the
+## viewer reads the row when the mirror is zero-length, so it answers the same
+## with or without one — and they sit in a repository whose history is the
+## user's to write: `gitAdd` stages and never commits, so deleting them here
+## would author a change into the user's own tree that the user did not make.
 proc syncFileAsset*(id, name, content, folderId, projectId,
                     workspaceId: string): bool =
   let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)
   if path.len == 0: return false
   let (workspaces, _) = roots()
 
-  var payload = content
-  let marker = "base64,"
-  if content.startsWith("data:"):
-    let idx = content.find(marker)
-    if idx >= 0:
-      var clean = newStringOfCap(content.len)
-      for ch in content[(idx + marker.len) .. ^1]:
-        if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}:
-          clean.add ch
-      if clean.len mod 4 != 0: return false
-      try:
-        payload = base64.decode(clean)
-      except ValueError:
-        return false
+  let (decoded, payload) = assetPayload(content)
+  if not decoded: return false
+  if payload.len == 0: return true
 
   try:
     ensureDir(path.parentDir)
@@ -729,6 +778,12 @@ proc restoreMirror*(table, id: string): RestoreOutcome =
   # No sidecar anywhere, for a kind that has files — deleted before the mirror
   # existed, or the sidecar was lost. Nothing to look up and nothing to say
   # except that the row is back and the file is not.
+  #
+  # Unless the row has no bytes, in which case there is no file and never was:
+  # `syncFileAsset` writes none for an empty asset, so the delete had nothing to
+  # move and left no sidecar. Reporting a file missing there would tell the user
+  # something was lost every time they restore an image filed from a chat.
+  if table == "fileAssets" and not hasAssetBytes(id): return rmNoPhysicalForm
   rmFileMissing
 
 ## Function purpose: entries are removed directly rather than through a shell,

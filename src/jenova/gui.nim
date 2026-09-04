@@ -2433,7 +2433,9 @@ proc fileAttachmentsAsArtefacts(app: AppState) =
     # model can be shown, and `workspace.contextFor` renders an empty one as
     # "(Binary file, content not available for direct reading)" — which is the
     # Web UI's own wording for exactly this case. The bytes are already in
-    # `messages.extra` and go to the model as an image part.
+    # `messages.extra` and go to the model as an image part, and
+    # `fssync.syncFileAsset` writes no file for a row with no bytes — so this
+    # files a name into the workspace rather than a zero-byte file beside it.
     let isText = a.kind != "IMAGE"
     # The id must be a real UUID for the same reason `createNote` above
     # says so: `fssync.physicalPath` refuses a 24-character `genOid`, so

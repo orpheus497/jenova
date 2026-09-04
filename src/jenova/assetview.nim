@@ -12,6 +12,11 @@ type
     ## file asset filed from a chat image stores its bytes with the message and
     ## leaves this column empty on purpose, so the two states have to be
     ## distinguishable or the window reports a deliberate design as a failure.
+    ##
+    ## It is the answer for the row alone. `fssync.syncFileAsset` writes no file
+    ## for an asset with no bytes, so there is no mirror to read back and this
+    ## is the only thing the viewer can be told: the workspace records the file
+    ## and holds no content for it, which is what the panel says.
     avEmpty
     avImage
     avText
