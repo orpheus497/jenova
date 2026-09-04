@@ -86,8 +86,42 @@ proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
   while sfx < prev.len - p and sfx < next.len - p and
         prev[prev.len - 1 - sfx] == next[next.len - 1 - sfx]: inc sfx
 
+  # Action purpose: **both offsets are walked back to a character boundary, and
+  # a draft is unusable without it.** The scans above compare bytes, which is
+  # right — they are looking for where two strings stop being identical — but
+  # the answer is a byte offset that need not fall between characters. Two
+  # strings differing in an accent share the lead byte of that accent, so the
+  # prefix stops *inside* it, and the split then hands `inserted` a dangling
+  # continuation byte and `remaining` a lead byte with nothing after it.
+  #
+  # Neither is valid UTF-8, and both go somewhere that requires it: `remaining`
+  # is written back into the `TextBuffer`, which rejects the whole string rather
+  # than the broken part, and `inserted` becomes a file. A continuation byte is
+  # `10xxxxxx`, so backing each offset up over continuation bytes reaches the
+  # lead byte of the character being split — at most three bytes, and only ever
+  # on text that has any.
+  # A position is a boundary when it is the end of the string, or the byte at it
+  # is not a continuation byte. Both guards carry that "or the end" case
+  # explicitly: `p` can reach `next.len` when the whole of `next` is a common
+  # prefix, and the suffix starts at `next.len` whenever `sfx` is zero — reading
+  # the byte at either would be one past the end.
+  while p > 0 and p < next.len and
+        (next[p].uint8 and 0b1100_0000'u8) == 0b1000_0000'u8: dec p
+  while sfx > 0 and sfx < next.len - p and
+        (next[next.len - sfx].uint8 and 0b1100_0000'u8) == 0b1000_0000'u8:
+    inc sfx
+
   let inserted = next[p ..< next.len - sfx]
-  if inserted.len < threshold: return
+  # Action purpose: measured in characters, not bytes, because the setting this
+  # threshold comes from is spelled as a length a user counts. At a byte count
+  # the same 500-character paste diverts in Japanese and stays inline in
+  # English, which is a rule nobody could predict from the settings screen. A
+  # lead byte is anything that is not a continuation byte, so counting them is
+  # the character count without decoding anything.
+  var runes = 0
+  for ch in inserted:
+    if (ch.uint8 and 0b1100_0000'u8) != 0b1000_0000'u8: inc runes
+  if runes < threshold: return
 
   result.divert = true
   result.inserted = inserted

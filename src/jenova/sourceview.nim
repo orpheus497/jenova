@@ -263,6 +263,20 @@ proc setSourceLanguage(buffer: GtkSourceBuffer, label: string) =
 renderable SourceCode of BaseWidget:
   code: string
   language: string
+  ## Action purpose: **the palette's scheme id, carried as a property so a theme
+  ## change reaches blocks that already exist.** `applyScheme` runs in
+  ## `beforeBuild` and reads the palette in force, which is right for a block
+  ## being built and does nothing for one already on screen — owlkettle keeps
+  ## widget state across a redraw, so switching the theme at runtime left every
+  ## code block coloured for the palette it was born under, on a transcript that
+  ## had otherwise changed colour around it.
+  ##
+  ## The value is the trigger and not the mechanism: `applyScheme` still walks
+  ## the preference ladder itself, because which schemes a GtkSourceView build
+  ## ships is not guaranteed and the first id is only the preferred one. What
+  ## this property does is *change* when the palette changes, which is what makes
+  ## owlkettle re-run the hook below.
+  scheme: string
   buffer {.private, onlyState.}: GtkSourceBuffer
 
   hooks:
@@ -278,3 +292,7 @@ renderable SourceCode of BaseWidget:
   hooks language:
     property:
       setSourceLanguage(state.buffer, state.language)
+
+  hooks scheme:
+    property:
+      applyScheme(state.buffer)

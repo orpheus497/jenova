@@ -1286,6 +1286,14 @@ viewable App:
   ## runs on every canvas frame.
   filesOpen: bool
   fileRows: seq[FileRow]
+  ## Action purpose: `fileRows` after the filter, held rather than recomputed.
+  ## `viewItem` runs per **cell** — four columns times every bound row, on every
+  ## frame — and each call was re-scanning and re-allocating the whole list, so
+  ## the Files screen did work quadratic in the number of file assets on the
+  ## thread that draws it. That is exactly what this file's own `view` comment
+  ## forbids. Refreshed by `refreshVisibleFiles`, from every writer of
+  ## `fileRows` and of `fileFilter` — the three of them.
+  fileShown: seq[FileRow]
   fileFilter: string
   ## Which of `FileSorts` the list is in, as an index because that is what a
   ## `DropDown` selects with. The ordering is applied to `fileRows` when it
@@ -3521,6 +3529,9 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
                   SourceCode:
                     code = b.text
                     language = b.lang
+                    # Changes when the palette does, which is what re-applies the
+                    # highlighting scheme to a block already on screen.
+                    scheme = theme.active().sourceScheme
                     style = [StyleClass("code-body")]
             # Action purpose: an unterminated fence is half a snippet, and half
             # a snippet on the clipboard is indistinguishable from a whole one
@@ -3554,6 +3565,7 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
               SourceCode:
                 code = b.text
                 language = b.lang
+                scheme = theme.active().sourceScheme
                 style = [StyleClass("code-body")]
           else:
             SourceCode {.expand: false.}:
@@ -4015,6 +4027,20 @@ proc sortFiles(app: AppState) =
     app.fileRows.sort(proc (a, b: FileRow): int =
       cmp(a.name.toLowerAscii, b.name.toLowerAscii))
 
+## Function purpose: the list as it is shown. Filter only — the ordering is
+## already in `fileRows` — so what runs on every frame is one pass.
+proc refreshVisibleFiles(app: AppState) =
+  if app.fileFilter.len == 0:
+    app.fileShown = app.fileRows
+    return
+  let q = app.fileFilter.toLowerAscii
+  var shown: seq[FileRow]
+  for f in app.fileRows:
+    if q in f.name.toLowerAscii or q in f.workspace.toLowerAscii or
+       q in assetview.rowTypeLabel(f.name, f.kind).toLowerAscii:
+      shown.add f
+  app.fileShown = shown
+
 ## Function purpose: read every live file asset into `fileRows`. Its own query
 ## rather than `listFiles`, because the tree wants placement and the list wants
 ## type, size and date — and a per-row lookup for those would be a query per
@@ -4039,16 +4065,8 @@ proc refreshFiles(app: AppState) =
                       size: size, uploaded: uploaded,
                       folderId: r[5], projectId: r[6], workspaceId: r[7])
   app.sortFiles()
+  app.refreshVisibleFiles()
 
-## Function purpose: the list as it is shown. Filter only — the ordering is
-## already in `fileRows` — so what runs on every frame is one pass.
-proc visibleFiles(app: AppState): seq[FileRow] =
-  if app.fileFilter.len == 0: return app.fileRows
-  let q = app.fileFilter.toLowerAscii
-  for f in app.fileRows:
-    if q in f.name.toLowerAscii or q in f.workspace.toLowerAscii or
-       q in assetview.rowTypeLabel(f.name, f.kind).toLowerAscii:
-      result.add f
 
 ## Function purpose: where a file asset sits in the tree, which the mirror path
 ## needs. Both caches are consulted because the viewer is reachable from the
@@ -4170,6 +4188,8 @@ proc openAsset(app: AppState, id, name: string) =
 proc openFiles(app: AppState) =
   app.closeAsset()
   app.fileFilter = ""
+  # `refreshFiles` refreshes the filtered view, and the filter was cleared
+  # immediately above it, so the order here is what makes the cache right.
   app.refreshFiles()
   app.filesOpen = true
 
@@ -5825,7 +5845,9 @@ proc filesPanel(app: AppState): Widget =
               SearchEntry {.expand: true.}:
                 text = app.fileFilter
                 placeholderText = "Search files"
-                proc changed(t: string) = app.fileFilter = t
+                proc changed(t: string) =
+                  app.fileFilter = t
+                  app.refreshVisibleFiles()
               DropDown {.expand: false.}:
                 items = @FileSorts
                 selected = app.fileSort
@@ -5835,6 +5857,7 @@ proc filesPanel(app: AppState): Widget =
                 proc select(item: int) =
                   app.fileSort = item
                   app.sortFiles()
+                  app.refreshVisibleFiles()
 
             ScrolledWindow {.expand: true.}:
               # The `ColumnView` has to be the `ScrolledWindow`'s own child to
@@ -5851,7 +5874,7 @@ proc filesPanel(app: AppState): Widget =
                   description = "Files attached to a chat are filed into the " &
                     "workspace that chat belongs to. A chat with no workspace, " &
                     "project or folder files nothing at all."
-              elif app.visibleFiles().len == 0:
+              elif app.fileShown.len == 0:
                 StatusPage:
                   iconName = "system-search-symbolic"
                   title = "No matches"
@@ -5859,7 +5882,7 @@ proc filesPanel(app: AppState): Widget =
                                 "\u201C" & app.fileFilter & "\u201D."
               else:
                 ColumnView:
-                  rows = app.visibleFiles().len
+                  rows = app.fileShown.len
                   columns = @[
                     initColumnViewColumn("File", expand = true),
                     initColumnViewColumn("Type", fixedWidth = 150),
@@ -5871,7 +5894,7 @@ proc filesPanel(app: AppState): Widget =
                   # found by guessing is the defect this file argues against
                   # everywhere else.
                   proc activate(index: int) =
-                    let shown = app.visibleFiles()
+                    let shown = app.fileShown
                     if index >= 0 and index < shown.len:
                       app.openAsset(shown[index].id, shown[index].name)
                   # The bounds check the models list carries, for the same
@@ -5880,7 +5903,7 @@ proc filesPanel(app: AppState): Widget =
                   # for a row that is gone — inside a `cdecl` callback, where an
                   # `IndexDefect` has nowhere to go.
                   proc viewItem(row, column: int): Widget =
-                    let shown = app.visibleFiles()
+                    let shown = app.fileShown
                     if row < 0 or row >= shown.len: return gui: Box()
                     let f = shown[row]
                     if column == 0:
@@ -6379,18 +6402,33 @@ proc keyBindings(app: AppState): seq[shortcuts.Binding] =
   # Added one at a time rather than as a literal: a seq literal takes its type
   # from its first element, and the first of these has no side effects while the
   # rest do.
+  # Action purpose: **each handler that only changes state asks for the redraw
+  # itself, and that is not the usual rule here.** Every other callback in this
+  # window arrives through owlkettle's own event dispatch, which redraws after
+  # it returns; these arrive from a `GtkShortcutController` callback, which
+  # owlkettle knows nothing about. So a binding that flipped a field and stopped
+  # there changed the state and left the window drawing the old one — the
+  # sidebar stayed shut until some unrelated event happened to repaint.
+  #
+  # `newChat` and the settings opener already redraw through the work they do,
+  # and asking twice is harmless; the three that only assign are the ones that
+  # need it. `<Ctrl>Escape` is deliberately not among them: cancelling a stream
+  # changes nothing a frame shows, and the completion that follows redraws.
   result.add (accel: "F11",
               action: shortcuts.Action(proc () =
-                app.fullscreen = not app.fullscreen))
+                app.fullscreen = not app.fullscreen
+                discard app.redraw()))
   result.add (accel: "<Ctrl>n",
               action: shortcuts.Action(proc () = app.newChat()))
   result.add (accel: "<Ctrl>b",
               action: shortcuts.Action(proc () =
-                app.sidebarOpen = not app.sidebarOpen))
+                app.sidebarOpen = not app.sidebarOpen
+                discard app.redraw()))
   result.add (accel: "<Ctrl>comma",
               action: shortcuts.Action(proc () =
                 if app.settingsOpen: app.settingsOpen = false
-                else: app.openSettings()))
+                else: app.openSettings()
+                discard app.redraw()))
   # Stop a generation. Plain Escape belongs to GTK for popovers and dialogs.
   result.add (accel: "<Ctrl>Escape",
               action: shortcuts.Action(proc () =

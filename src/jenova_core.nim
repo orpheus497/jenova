@@ -4609,6 +4609,68 @@ proc main() =
           check("a paste into an empty draft is diverted", r.divert)
           check("and leaves the draft empty", r.remaining == "")
 
+        # Action purpose: **the split must land between characters.** The
+        # prefix and suffix scans compare bytes, which is right, but the offsets
+        # they produce need not fall on a character boundary — two strings
+        # differing in an accent share that accent's lead byte, so the scan stops
+        # inside it. Both halves then go somewhere that requires valid UTF-8:
+        # `remaining` back into the `TextBuffer`, which rejects a whole string it
+        # cannot decode, and `inserted` into a file.
+        #
+        # Asserted by counting lead bytes rather than by eye: a string is valid
+        # here only if it neither begins with a continuation byte nor ends
+        # mid-sequence, and the two halves must still reassemble into `next`.
+        block theSplitLandsBetweenCharacters:
+          proc wellFormed(s: string): bool =
+            var i = 0
+            while i < s.len:
+              let b = s[i].uint8
+              let n = (if b < 0x80: 1 elif b >= 0xF0: 4
+                       elif b >= 0xE0: 3 elif b >= 0xC0: 2 else: 0)
+              if n == 0: return false          # a continuation byte led
+              if i + n > s.len: return false   # truncated at the end
+              for k in 1 ..< n:
+                if (s[i + k].uint8 and 0b1100_0000'u8) != 0b1000_0000'u8:
+                  return false
+              i += n
+            true
+
+          # A long accented run pasted over an accented selection: every offset
+          # the scans can produce is inside a two-byte sequence.
+          let acc = repeat("é", 400)
+          let prev = "café" & repeat("è", 200) & "fin"
+          let next = "café" & acc & "fin"
+          let r = composer.classifyInsertion(prev, next, T)
+          check("an accented paste is diverted", r.divert,
+                "inserted " & $r.inserted.len & " bytes")
+          check("the inserted run is well-formed UTF-8",
+                wellFormed(r.inserted), r.inserted[0 ..< min(8, r.inserted.len)])
+          check("and so is what the draft is left holding",
+                wellFormed(r.remaining), r.remaining)
+          check("the two halves still account for the whole draft",
+                r.remaining.len + r.inserted.len == next.len)
+
+          # The same shape one byte at a time: a single accented character
+          # replaced by another shares a lead byte, which is the smallest case
+          # that used to produce a lone continuation byte.
+          let one = composer.classifyInsertion("aéb", "aèb", 1)
+          check("a one-character accent swap splits cleanly",
+                wellFormed(one.inserted) and wellFormed(one.remaining),
+                "inserted=" & one.inserted & " remaining=" & one.remaining)
+
+        # Action purpose: the threshold counts characters, because the setting it
+        # comes from is spelled as a length a user counts. At a byte count the
+        # same paste would divert in one language and stay inline in another.
+        block theThresholdCountsCharactersNotBytes:
+          # 10 characters, 20 bytes. A byte threshold of 15 would divert it; a
+          # character threshold of 15 must not.
+          let ten = repeat("é", 10)
+          check("ten characters do not meet a fifteen-character threshold",
+                not composer.classifyInsertion("", ten, 15).divert)
+          check("...though they are twenty bytes", ten.len == 20)
+          check("and twenty characters do",
+                composer.classifyInsertion("", repeat("é", 20), 15).divert)
+
         block naming:
           let a = composer.pastedFileName(1)
           let b = composer.pastedFileName(2)

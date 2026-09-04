@@ -260,6 +260,17 @@ proc queryBlob*(sql: string, params: varargs[string]):
 ## Function purpose: the ordinary write path. A statement that unexpectedly
 ## returns a row is accepted rather than refused, because `INSERT … RETURNING`
 ## is still a write.
+##
+## Action purpose: **`sqlite3_reset` reports too, and its answer was discarded.**
+## SQLite's contract is that when a statement's most recent `step` failed, the
+## error code is repeated by `reset` — so a write whose failure surfaces there
+## was returning from this proc as a success, and the caller wrote a row it
+## never got. The `step` codes above are still what accepts or refuses the
+## statement; this only stops a second, later report of the same failure from
+## being thrown away.
+##
+## Deferred constraints are deliberately not this proc's business: they are
+## raised at `COMMIT`, which goes through `execScript` and is checked there.
 proc exec*(sql: string, params: varargs[string]) =
   let c = conn()
   let s = c.prepared(sql)
@@ -268,7 +279,10 @@ proc exec*(sql: string, params: varargs[string]) =
   if rc != SQLITE_DONE and rc != SQLITE_ROW:
     raise newException(DbError, "exec failed: " & $sqlite3_errmsg(c.h) &
                        " [" & sql & "]")
-  discard sqlite3_reset(s)
+  let rrc = sqlite3_reset(s)
+  if rrc != SQLITE_OK:
+    raise newException(DbError, "exec failed at reset: " &
+                       $sqlite3_errmsg(c.h) & " [" & sql & "]")
 
 ## Function purpose: prepared statements handle one statement at a time, so
 ## schema and migrations need this path. It takes no parameters, which is what

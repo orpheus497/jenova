@@ -47,6 +47,12 @@ const
   ## that wait is paid on every shutdown and on nothing else.
   AcceptPollMs = 200
 
+  ## How long `peekPath` waits for a request line that arrived split, and how
+  ## often it looks. Their product — 40 ms — is the whole budget, and it is not
+  ## the socket's 30-second receive timeout; `peekPath` says why the two differ.
+  PeekRetries = 8
+  PeekRetryMs = 5
+
 # Action purpose: values shared with threads are plain buffers and integers,
 # never `string` globals — a shared refcounted string read by every worker is
 # itself a data race.
@@ -120,9 +126,20 @@ proc setTimeouts(fd: SocketHandle) =
 
 ## Function purpose: peeks rather than reads, so the worker that ends up owning
 ## the connection still parses the request from its first byte.
+##
+## Action purpose: **the retry bound is `PeekRetryMs` and not `ClientTimeoutSec`,
+## and the difference is deliberate.** A client that has sent *nothing* is bounded
+## by the socket's receive timeout, because `recv` blocks in it — thirty seconds,
+## paid by the kernel. A client that has sent a *partial* request line is a
+## different case: `recv` returns those bytes at once, so the wait is this loop's
+## own, and it is short on purpose. There are two acceptor threads and nothing
+## else accepts connections; letting one spin for thirty seconds on a trickling
+## client would let two such clients stop the server accepting anything at all.
+## Forty milliseconds is many round trips on a loopback or a LAN, which is where
+## this server is reachable from.
 proc peekPath(fd: SocketHandle): string =
   var buf = newString(PeekBytes)
-  for attempt in 0 ..< 8:
+  for attempt in 0 ..< PeekRetries:
     let n = posix.recv(fd, addr buf[0], PeekBytes, MSG_PEEK)
     if n <= 0:
       return ""
@@ -130,7 +147,7 @@ proc peekPath(fd: SocketHandle): string =
     if path.len > 0:
       return path
     # Request line not complete yet: the client is still sending.
-    sleep(5)
+    sleep(PeekRetryMs)
   ""
 
 ## Function purpose: deliberate database load for the concurrency self-test, and
@@ -471,7 +488,9 @@ proc acceptor(arg: AcceptorArg) {.thread.} =
     setTimeouts(cfd)
     let path = peekPath(cfd)
     if path.len == 0:
-      # The client never sent a usable request line within the timeout.
+      # Either the client sent nothing until the socket's receive timeout, or it
+      # sent a partial request line and did not finish it within `peekPath`'s own
+      # much shorter budget. Neither is a request this server can route.
       nativesockets.close(cfd)
       continue
     queues[routes.classify(path)].send(cfd)
