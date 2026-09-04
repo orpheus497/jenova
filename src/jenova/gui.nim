@@ -4123,6 +4123,31 @@ proc openAsset(app: AppState, id, name: string) =
                                               place.workspaceId)
       if mirror.found: content = mirror.content
 
+  # Action purpose: **the ceiling has to cover the column too, and it did not.**
+  # The guard above measures the mirror, which is the file — but a row with no
+  # mirror falls back to `stored.content`, and that path had no ceiling at all.
+  # An asset with no file on disk (one filed before the mirror existed, or one
+  # whose bytes live only in the column) went to `classify` at whatever size it
+  # happened to be, on the GTK thread, which is the exact cost `MaxOpenBytes`
+  # exists to bound — the read is paid for by the frame the user is waiting for.
+  #
+  # Measured against `MaxStoredBytes` and not `MaxOpenBytes`, because the column
+  # holds base64 for anything uploaded as a `data:` URI; see the constant, which
+  # says why using the raw ceiling here would refuse a file this same window had
+  # just accepted.
+  if content.len > assetview.MaxStoredBytes:
+    const Mib = 1024 * 1024
+    # Reported as the size it decodes to rather than the column's own length,
+    # because the encoding is this program's business and the file's size is
+    # the user's. Rounded up, as above.
+    let approx = content.len div 4 * 3
+    app.assetProblem = name & " is about " &
+      $((approx + Mib - 1) div Mib) & " MB, and the viewer reads at most " &
+      $(assetview.MaxOpenBytes div Mib) &
+      " MB — the read happens on the thread that draws the window. " &
+      "Export it to open it elsewhere."
+    return
+
   app.assetView = assetview.classify(name, stored.kind, content)
   if app.assetView.viewer == assetview.avImage:
     # Re-encoded rather than decoded a second way. `attachmentPixbuf` takes a

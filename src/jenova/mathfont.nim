@@ -226,10 +226,23 @@ proc defaultConstants*(): MathConstants =
 ## Function purpose: how many pre-drawn larger versions of a glyph the font
 ## carries, growing downward. Zero means a delimiter can never be stretched to
 ## fit, which is one of the three questions `usable` asks.
+##
+## Action purpose: `variantsCount` is an IN/OUT parameter — on the way in it is
+## how many entries `variants` has room for, on the way out how many were
+## written — and the total is the return value either way. A real variable
+## holding 0 says "room for none, tell me the total", which is what this wants
+## and is well defined by that contract. Passing `nil` relies instead on
+## HarfBuzz treating a null count as "skip the copy", which is a reading of its
+## implementation rather than of its interface; there is no maths font on the
+## machine this was written on, so that reading could not be tested. The
+## variable costs nothing and needs no such assumption. `variants` stays `nil`
+## because with room for none there is nothing to write.
 proc verticalVariantCount*(f: MathFont, ch: int): int =
   var g: HbCodepoint
   if hb_font_get_nominal_glyph(f.font, HbCodepoint(ch), g) == 0: return 0
-  int(hb_ot_math_get_glyph_variants(f.font, g, HbDirectionTtb, 0, nil, nil))
+  var count: cuint = 0
+  int(hb_ot_math_get_glyph_variants(f.font, g, HbDirectionTtb, 0,
+                                    addr count, nil))
 
 proc constant*(f: MathFont, c: MathConstant): int =
   int(hb_ot_math_get_constant(f.font, cint(ord(c))))

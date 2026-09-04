@@ -238,6 +238,11 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
     if req.body.len > 0:
       let prepared = pipeline.prepare(req.body)
       cacheKey = prepared.cacheKey
+      # Built before the cache is consulted, because a hit needs them too: they
+      # describe *this* request, and a cached reply that carried the previous
+      # request's would be reporting another conversation's trimming as this
+      # one's.
+      diagHeaders = diagnosticHeaders(prepared)
 
       # Keyed on the rewritten body, which is why this sits after `prepare` and
       # not before it — the same question with different retrieval is a
@@ -254,9 +259,17 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
           #
           # The cache header is inserted immediately after the status line: one
           # insertion at a known offset, never a parse of the head.
+          #
+          # Action purpose: **this request's diagnostics go in beside it, and
+          # the stored bytes carry none.** The tee files the upstream's own head
+          # (`upstream.forward` says why), so a hit is replayed with the
+          # trimming and retrieval of the request being served rather than of
+          # the one that happened to fill the entry. Spliced at the same known
+          # offset and in the same insertion, so a hit and a miss put the same
+          # headers in the same place.
           let cut = hit.find("\r\n")
           if cut >= 0:
-            client.send(hit[0 ..< cut + 2] & "X-Cache: HIT\r\n" &
+            client.send(hit[0 ..< cut + 2] & diagHeaders & "X-Cache: HIT\r\n" &
                         hit[cut + 2 .. ^1])
           else:
             client.send(hit)
@@ -267,8 +280,6 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       # Checked rather than assumed, because a stale length silently truncates
       # the request the backend reads.
       outbound.body = prepared.body
-
-      diagHeaders = diagnosticHeaders(prepared)
 
     # Action purpose: the relay tees only when there is a key to file it under,
     # so an uncacheable request pays nothing for the cache existing.

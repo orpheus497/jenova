@@ -1070,6 +1070,37 @@ reverted**: neutering `moveFileAssetMirror` fails three, and dropping the refusa
   still captured whole, and anything larger is short by construction and refused rather than filed
   as if complete. The relay is untouched, so no cache decision can affect a client's stream.
 
+### A ninth pass: the cache served one request's diagnostics to another
+
+* **R-34 · the response cache stored the diagnostic headers** · severity: **high**.
+  `upstream.forward` captured the head *after* splicing `extraHeaders` into it, so the bytes filed
+  in the cache carried `X-Jenova-Trimmed`, `X-Jenova-Rag-Hits` and every `X-Jenova-Hit` of whichever
+  request happened to fill the entry — and a later hit replayed them verbatim to a different
+  conversation. The cache key is the rewritten body, so two requests can share an entry while
+  having been prepared very differently: a five-turn conversation that trimmed nothing could be
+  served a head announcing that forty turns were dropped. **That is the one diagnostic whose entire
+  purpose is to report silent conversation loss truthfully**, and it was the one being fabricated.
+  The tee now files what the upstream said, and the caller splices its own diagnostics on a hit at
+  the same offset as on a miss, so the two paths put the same headers in the same place. The
+  header-building moved above the cache lookup for that reason.
+* **R-35 · the viewer's size ceiling did not cover the stored column.** `MaxOpenBytes` was checked
+  against the mirror and nothing checked the fallback, so a row with no file on disk went to
+  `classify` at whatever size it happened to be, on the GTK thread — the exact cost the constant
+  exists to bound. The new `MaxStoredBytes` is that ceiling expressed against the column, which
+  cannot be the same number: the column holds base64, so measuring it against the raw ceiling would
+  refuse to open a file the composer had just accepted. Asserted as that relation rather than as
+  the arithmetic.
+* **R-36 · `hb_ot_math_get_glyph_variants` was passed a null count.** The parameter is IN/OUT and
+  the total is the return value either way, so a real variable holding zero is well defined by the
+  interface where `nil` relies on a reading of HarfBuzz's implementation. Changed to the variable.
+  **Not verified by running it**: there is no maths font on this host, so `verticalVariantCount` is
+  never reached with a real font here. Recorded as such rather than claimed as tested.
+
+**One finding in the same batch was already fixed** and is recorded so it is not re-opened:
+`assetview.decodeBase64` was asked to strip padding and reject only a remainder of 1, which is
+exactly what R-31 did in the commit before. The report described the tree as it stood two commits
+earlier.
+
 ### The shutdown fix that was worse than the defect · **measured, not argued**
 
 The review also asked for the acceptor threads to be joined after closing the listener and before

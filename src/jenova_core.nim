@@ -4772,6 +4772,26 @@ proc main() =
         check("and the preview cap is inside the open cap",
               assetview.PreviewTextCap < assetview.MaxOpenBytes)
 
+        # Action purpose: the same agreement, for the path with no file on disk.
+        # The window falls back to the stored column when there is no mirror,
+        # and that column holds base64 for anything uploaded as a `data:` URI —
+        # so measuring it against `MaxOpenBytes` would refuse to open a file the
+        # composer had just accepted. The bound has to be what that ceiling
+        # *encodes to*, and the assertion is that relation rather than the
+        # arithmetic, which is why it is stated as a round trip.
+        check("the stored-column ceiling is larger than the raw one",
+              assetview.MaxStoredBytes > assetview.MaxOpenBytes)
+        check("a file at the open ceiling still fits the column ceiling once " &
+              "base64 has expanded it",
+              4 * ((assetview.MaxOpenBytes + 2) div 3) <=
+                assetview.MaxStoredBytes)
+        # And it is not simply enormous: a column past this decodes to more than
+        # the viewer will read, which is the whole point of refusing it.
+        check("but a column at the ceiling decodes to no more than the viewer " &
+              "reads",
+              assetview.MaxStoredBytes div 4 * 3 <=
+                assetview.MaxOpenBytes + 1024)
+
       if bad == 0:
         echo ""
         echo "asset-selftest: PASS"

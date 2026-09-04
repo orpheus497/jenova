@@ -177,6 +177,16 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
       if not complete and pending.len < MaxStatusLineProbe:
         continue
       var head = if complete: spliceHeaders(pending, extraHeaders) else: pending
+      # Action purpose: **the tee takes the upstream's head, not the client's.**
+      # `extraHeaders` describes the request being served right now — how many
+      # turns it trimmed, what it retrieved — and the capture is filed in the
+      # response cache and replayed to whoever asks the same question next.
+      # Storing the spliced head served one request's diagnostics to another:
+      # a conversation that dropped nothing could be told it lost forty turns,
+      # which is precisely the claim `X-Jenova-Trimmed` exists to make
+      # truthfully. So the cache holds what the upstream said, and the caller
+      # splices its own diagnostics on a hit.
+      let upstreamHead = pending
       splicing = false
       pending = ""
       var hs = 0
@@ -187,7 +197,7 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
         hs += w
       relayed += head.len
       if capture != nil and (captureMax == 0 or capture[].len < captureMax):
-        capture[].add head
+        capture[].add upstreamHead
       continue
 
     # Action purpose: a single `send` may accept fewer bytes than offered, and

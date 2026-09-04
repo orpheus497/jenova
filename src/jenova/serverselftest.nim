@@ -413,9 +413,24 @@ proc relayPhase(): int =
           &"client {run.client.len} bytes, wanted {wanted.len}")
     check("a 200 KB body relays whole and unaltered",
           run.client.len >= body.len and run.client.endsWith(body))
-    check("the response-cache tee is the client's bytes, byte for byte",
-          run.captured == run.client,
-          &"tee {run.captured.len} bytes, client {run.client.len}")
+    # Action purpose: **the tee is the upstream's bytes, and deliberately not
+    # the client's.** This block used to assert the two were byte-identical,
+    # which is what filed one request's diagnostics in the response cache to be
+    # replayed to the next: a conversation that trimmed nothing could be served
+    # a cached head saying it had dropped forty turns. `extraHeaders` describes
+    # the request being served, so it must not be stored; the caller splices its
+    # own on a hit. Asserted from both ends — the tee carries none of them, and
+    # the tee plus this request's headers is exactly what the client got.
+    check("the response-cache tee is the upstream's own bytes, without the " &
+          "request's diagnostics",
+          run.captured == RelayStatus & RelayHeadRest & body,
+          &"tee {run.captured.len} bytes")
+    check("...so no diagnostic header is filed in the cache",
+          not run.captured.contains("X-Jenova-"), run.captured[0 ..< min(200, run.captured.len)])
+    check("...and the tee spliced with this request's headers is what the " &
+          "client received",
+          RelayStatus & RelayExtra & run.captured[RelayStatus.len .. ^1] ==
+            run.client)
     check("the request the upstream read carries the body and closes the " &
           "connection",
           run.request.contains("""{"messages":""") and

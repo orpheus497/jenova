@@ -209,6 +209,22 @@ proc sizeLabel*(bytes: int): string =
 ## about the same file. `asset-selftest` asserts that relation.
 const MaxOpenBytes* = pipeline.MaxAttachmentBytes
 
+## Function purpose: the same ceiling expressed against the **stored column**,
+## which is what the window has when there is no mirror to read instead.
+##
+## Action purpose: it cannot be `MaxOpenBytes`, and using that number would
+## break the relation the constant above exists to keep. An asset uploaded as a
+## `data:` URI is stored base64-encoded — four characters per three bytes — so a
+## file the composer accepted at exactly `MaxOpenBytes` sits in the column about
+## a third larger, and a column measured against the raw ceiling would refuse to
+## open a file the same window had just accepted.
+##
+## So the bound is what `MaxOpenBytes` bytes *encode to*, plus a kilobyte for
+## the `data:<type>;base64,` envelope and any newlines a writer wrapped it at. A
+## column under this decodes to no more than the viewer's ceiling, which is the
+## property the guard needs.
+const MaxStoredBytes* = 4 * ((MaxOpenBytes + 2) div 3) + 1024
+
 ## Function purpose: how much of a text asset the read-only view is given.
 ## A preview is a look at a file, not a text editor: a `TextBuffer` holding
 ## tens of megabytes is laid out by Pango on the GTK thread, which is the frame
