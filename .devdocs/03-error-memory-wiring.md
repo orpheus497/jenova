@@ -1101,29 +1101,62 @@ reverted**: neutering `moveFileAssetMirror` fails three, and dropping the refusa
 exactly what R-31 did in the commit before. The report described the tree as it stood two commits
 earlier.
 
-### The shutdown fix that was worse than the defect · **measured, not argued**
+### The shutdown race, closed at the third attempt · **measured throughout**
 
-The review also asked for the acceptor threads to be joined after closing the listener and before
-the worker sentinels are queued. The reasoning is right: an acceptor blocked in `accept` can still
-reach its `queues[...].send(cfd)` after the sentinels, and a descriptor queued once its class's
-workers have exited is neither served nor closed.
+The review asked for the acceptor threads to be joined after the listener closes and before the
+worker sentinels are queued, so no acceptor can enqueue a descriptor once its class's workers have
+exited. The reasoning was right from the start; two attempts to implement it were wrong, and each
+was wrong for a different reason that only running it revealed.
 
-**Implemented, and it hung.** Closing a listening descriptor while another thread blocks in
-`accept(2)` on it is unspecified by POSIX, and on FreeBSD it does not wake that thread:
-`joinThread` never returned and `serve-selftest` hung on **three runs out of three**, each time
-needing a timeout to kill. `shutdown(2)` is no help either — it answers `ENOTCONN` on a listening
-socket. Waking them would take a self-connect to the bound address, which means keeping that
-address for shutdown and fails in its own ways on a LAN bind.
+**First attempt — join them as they were.** Closing a listening descriptor while another thread
+blocks in `accept(2)` on it is unspecified by POSIX, and on FreeBSD it does not wake that thread:
+`joinThread` never returned and `serve-selftest` hung on three runs out of three. `shutdown(2)`
+answers `ENOTCONN` on a listening socket, so it is no help either. Reverted, and the drain in
+`joinAll` added as a mitigation instead.
 
-So the ordering is not taken, the reason is recorded at the site, and **the consequence is handled
-where it safely can be**: `joinAll` drains each queue with `tryRecv` after the workers have gone
-and closes any descriptor still sitting in one. That is the difference between a client seeing a
-closed connection and one hanging until it times out. It cannot hang, because `tryRecv` does not
-block. Verified: `serve-selftest` passes three runs out of three.
+**Second attempt — wait in `poll` with a timeout** so the loop ends on its own and needs no wakeup
+at all. Correct in principle, and it still hung: **three runs out of four, intermittently.** The
+intermittency was the clue. Two acceptors poll the same listening descriptor; a single pending
+connection makes it readable for both; one wins the `accept` and the other, on a *blocking*
+socket, waits in `accept(2)` for a connection that may never arrive. A textbook thundering herd,
+invisible until something tried to join those threads.
 
-**This is the second time in this branch a proposed fix was worse than what it replaced** — the
-first being the relay contract, where the implementation was right and the test wrong. Both were
-settled by running the thing rather than by reading it.
+**Third attempt — the listener is non-blocking.** The loser's `accept` fails immediately and it
+rounds through `poll` again. `stop` now joins every acceptor before it queues a sentinel, then
+closes the listener, so every send that will ever happen has happened before the first worker can
+exit. **Six runs out of six, no hang.**
+
+Three things fell out of it that are worth keeping:
+
+* **`running` had to become `Atomic[bool]`.** The acceptors used to be woken by their descriptor
+  closing; now the only thing that ends their loop is reading that flag, so a non-atomic
+  cross-thread read the compiler may hoist out of the loop would hang the join. The same hazard
+  `serverselftest` already records for its own load flag.
+* **The accepted socket is set blocking explicitly.** FreeBSD hands the listener's non-blocking
+  flag down to it and Linux does not; every read and write below assumes blocking, so it is set
+  rather than inherited in either direction.
+* **The drain in `joinAll` stays, demoted.** It was the mitigation for a race that is now closed;
+  it is a backstop now, and its comment says so.
+
+**The general lesson, twice over in this branch:** the first shutdown fix and the relay contract
+were both settled by running the thing rather than reading it, and in both cases the *second*
+answer was wrong too. A concurrency change that passes once has not been tested.
+
+### A ninth pass, continued: the probe and the tee
+
+* **R-37 · the status-line contract only applied when there were headers to add.** `splicing` was
+  initialised from `extraHeaders.len > 0`, so R-24's rule — less than a status line is no reply —
+  was skipped entirely for a relay with nothing to splice. That is the commoner path, not the
+  rarer: `/embed` passes no headers at all, and a completion with nothing to report passes an
+  empty string. An upstream that sent `HTTP/1.1 200 O` and closed had those bytes relayed and the
+  run reported `roComplete`. The probe runs for every response now; `spliceHeaders` returns its
+  buffer untouched when there is nothing to add, which was already asserted. **Proven to fail with
+  the fix reverted**: four assertions go red.
+* **R-38 · `captureMax` was not a hard bound.** The test was `len < captureMax` and the append took
+  the whole buffer, so a 16 KB chunk arriving one byte under the cap took the capture 16 KB past
+  it. Bounded rather than unbounded, and no caller was harmed — but the caller sets the cap exactly
+  one byte past what it will accept, and reasoning that precise deserves a limit that is exact.
+  Both append sites now go through one `teeAppend` that takes only the remaining capacity.
 
 ### Deferred, with the reason stated
 

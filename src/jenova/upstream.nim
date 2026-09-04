@@ -99,6 +99,26 @@ proc spliceHeaders*(buf, extra: string): string =
 ## store it. The relay itself is never bounded: forwarding continues untouched
 ## and only the copy stops growing, so a client's stream cannot be affected by
 ## a cache decision.
+## Function purpose: the tee's only writer, so the bound is enforced once rather
+## than at each append.
+##
+## Action purpose: the previous form tested `len < captureMax` and then appended
+## the whole buffer, so a 16 KB relay chunk arriving one byte under the cap took
+## the capture 16 KB past it. That is bounded rather than unbounded and no
+## caller was harmed by it — but a limit that is only approximately a limit
+## makes its caller's reasoning approximate too, and this one's caller sets the
+## cap exactly one byte past what it will accept. Only the remaining capacity is
+## taken now, so the name means what it says.
+proc teeAppend(capture: ptr string, data: openArray[char], captureMax: int) =
+  if capture == nil: return
+  if captureMax == 0:
+    for c in data: capture[].add c
+    return
+  let room = captureMax - capture[].len
+  if room <= 0: return
+  let n = min(room, data.len)
+  for i in 0 ..< n: capture[].add data[i]
+
 proc forward*(client: Socket, req: Request, host: string, port: int,
               capture: ptr string = nil,
               extraHeaders = "", captureMax = 0): RelayOutcome =
@@ -129,7 +149,17 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
   # Both are inert unless the caller asked for headers — with `extraHeaders`
   # empty, `splicing` is false from the outset and no byte is ever buffered.
   var pending = ""
-  var splicing = extraHeaders.len > 0
+  # Action purpose: **always, and not only when there is something to splice in.**
+  # Gating this on `extraHeaders` made the head contract conditional: with no
+  # diagnostics to add, the probe never ran, so an upstream that sent
+  # `HTTP/1.1 200 O` and closed had those bytes relayed straight through and the
+  # run reported `roComplete` — the exact outcome the tail is written to refuse,
+  # skipped for the commonest case, since `/embed` passes no headers at all and a
+  # completion with nothing to report passes an empty string. `spliceHeaders`
+  # returns its buffer untouched when there is nothing to add, which is asserted,
+  # so running the probe unconditionally costs one buffering step on the first
+  # packet and changes no byte of an ordinary reply.
+  var splicing = true
   while true:
     # Action purpose: `n < 0` and `n == 0` are different endings and were
     # treated as one. This socket is unbuffered and not TLS, so `net.recv`
@@ -196,8 +226,8 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
           return roTruncated
         hs += w
       relayed += head.len
-      if capture != nil and (captureMax == 0 or capture[].len < captureMax):
-        capture[].add upstreamHead
+      teeAppend(capture, upstreamHead.toOpenArray(0, upstreamHead.len - 1),
+                captureMax)
       continue
 
     # Action purpose: a single `send` may accept fewer bytes than offered, and
@@ -221,8 +251,7 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     # passes is one byte past what it will accept: a capture that reached the
     # cap is over the limit by construction and is refused rather than filed as
     # though it were the whole reply.
-    if capture != nil and (captureMax == 0 or capture[].len < captureMax):
-      capture[].add chunk[0 ..< n]
+    teeAppend(capture, chunk.toOpenArray(0, n - 1), captureMax)
 
   # Action purpose: whatever is still buffered here is DISCARDED, and the reason
   # is structural rather than a judgement call. `pending` is appended to only

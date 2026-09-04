@@ -13,7 +13,8 @@
 ## and the owning worker parses on its own thread, so nothing refcounted is
 ## shared.
 
-import std/[net, nativesockets, posix, os, strutils, strformat, times, monotimes]
+import std/[net, nativesockets, posix, os, strutils, strformat, times, monotimes,
+            atomics]
 import ./http
 import ./db
 import ./routes
@@ -40,6 +41,11 @@ const
   MaxAcceptors = 4
   PeekBytes = 2048
   ClientTimeoutSec = 30
+
+  ## How long an acceptor waits in `poll` before re-reading `running`. It is the
+  ## upper bound on how long `stop` takes to join them, and it is short because
+  ## that wait is paid on every shutdown and on nothing else.
+  AcceptPollMs = 200
 
 # Action purpose: values shared with threads are plain buffers and integers,
 # never `string` globals — a shared refcounted string read by every worker is
@@ -68,9 +74,16 @@ var
   llamaPort: int
   embedPort: int
   debugEndpoints: bool
-  # When false the completion classes proxy to the backend, so the server still
-  # works on a host where the model cannot be loaded in-process.
-  running: bool
+
+  ## Action purpose: **atomic, because a join now depends on it being seen.** The
+  ## acceptors used to be woken by the listener closing under them; they are
+  ## joined instead, and the only thing that ends their loop is reading this
+  ## flag. A plain `bool` written by one thread and read in another's loop
+  ## condition is a non-atomic cross-thread read the compiler may hoist out of
+  ## the loop, which would hang `stop` — the same hazard `serverselftest`
+  ## records for its own load flag. The comment that stood here described a
+  ## proxy-mode flag this server does not have.
+  running: Atomic[bool]
 
   queues: array[RouteClass, Channel[SocketHandle]]
   classThreads: array[MaxThreads, Thread[ClassWorkerArg]]
@@ -423,13 +436,38 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
 ## handler can stall the accept path — the failure that makes a single-pool
 ## server stop accepting once its workers are busy.
 proc acceptor(arg: AcceptorArg) {.thread.} =
-  while running:
+  while running.load():
+    # Action purpose: **`poll` with a timeout rather than a blocking `accept`,
+    # so this loop ends on its own and can be joined.** Closing the listening
+    # descriptor does not wake a thread blocked in `accept(2)` — POSIX leaves it
+    # unspecified and FreeBSD does not do it, measured: joining an acceptor woken
+    # that way never returned. A bounded wait needs no wakeup at all. The cost is
+    # one syscall per `AcceptPollMs` per acceptor while idle, and the gain is
+    # that `stop` can wait for these threads instead of racing them.
+    var pfd = TPollfd(fd: cint(arg.listenFd), events: POLLIN, revents: 0)
+    let ready = poll(addr pfd, Tnfds(1), AcceptPollMs)
+    if not running.load(): break
+    # A timeout, or a signal. Either way, round again and re-read the flag.
+    if ready <= 0: continue
+    # The descriptor went away under us, which only happens at shutdown. Spinning
+    # on a dead fd is the one way this loop could burn a core, so it ends here
+    # rather than trusting the flag to have been set already.
+    if (pfd.revents and (POLLNVAL or POLLERR or POLLHUP)) != 0: break
+    if (pfd.revents and POLLIN) == 0: continue
     var sa: Sockaddr_storage
     var sl = SockLen(sizeof(sa))
     let cfd = accept(arg.listenFd, cast[ptr SockAddr](addr sa), addr sl)
     if cfd == osInvalidSocket:
-      if not running: break
+      # The ordinary case for the acceptor that lost the race described above:
+      # readable a moment ago, nothing left to take now. Round again — `poll`
+      # bounds the loop, so this cannot spin.
+      if not running.load(): break
       continue
+    # Action purpose: the listener is non-blocking and FreeBSD hands that flag
+    # down to the accepted socket, where every read and write below assumes the
+    # opposite. Set explicitly rather than relied upon in either direction,
+    # because the platforms disagree about whether it is inherited at all.
+    cfd.setBlocking(true)
     setTimeouts(cfd)
     let path = peekPath(cfd)
     if path.len == 0:
@@ -452,7 +490,7 @@ proc start*(host: string, port: int, root: string,
   embedPort = embedPortArg
   debugEndpoints = enableDebug
   acceptorCount = min(acceptors, MaxAcceptors)
-  running = true
+  running.store(true)
 
   listenFd = createNativeSocket(Domain.AF_INET, SockType.SOCK_STREAM,
                                 Protocol.IPPROTO_TCP)
@@ -466,6 +504,15 @@ proc start*(host: string, port: int, root: string,
   freeAddrInfo(ai)
   if nativesockets.listen(listenFd, 128) < 0'i32:
     raiseOSError(osLastError())
+  # Action purpose: **non-blocking, because more than one acceptor polls it.**
+  # Two threads waiting on the same listening descriptor both see it readable
+  # for a single pending connection; one wins the `accept` and the other, on a
+  # blocking socket, waits in `accept(2)` for a connection that may never come —
+  # and cannot then be joined. Measured: with a blocking listener the shutdown
+  # join hung on three runs out of four, intermittently, which is exactly the
+  # shape of a race between two acceptors. Non-blocking turns the loser's
+  # `accept` into an immediate failure it rounds through `poll` on.
+  listenFd.setBlocking(false)
 
   var t = 0
   for c in RouteClass:
@@ -489,32 +536,35 @@ proc describe*(): string =
 ## Function purpose: signals shutdown and closes the listener, which is what
 ## breaks the acceptors out of `accept`. The threads are joined separately.
 proc stop*() =
-  running = false
+  running.store(false)
+
+  # Action purpose: **the acceptors are joined here, before any sentinel is
+  # queued, and that ordering is the point.** An acceptor still in its loop can
+  # reach `queues[...].send(cfd)`; queueing the sentinels first raced that, and a
+  # descriptor arriving after its class's workers had taken theirs sat in a
+  # channel nothing would ever receive — neither served nor closed, with the peer
+  # waiting on a socket that would never answer.
+  #
+  # This could not be done while the acceptors blocked in `accept(2)`: closing
+  # the listener under them does not wake them on FreeBSD, and joining hung on
+  # three runs out of three. They wait in `poll` with a timeout now, so each one
+  # observes `running` within `AcceptPollMs` and returns on its own. No wakeup
+  # mechanism, no self-connect, and nothing that depends on how a platform
+  # treats a descriptor closed under a blocked thread.
+  for i in 0 ..< acceptorCount:
+    joinThread(acceptorThreads[i])
+
+  # After the join, not before: an acceptor polling a descriptor that vanished
+  # would have to handle its own listener disappearing, and there is no reason
+  # to make it. By here nothing is looking at it.
   if listenFd != osInvalidSocket:
     nativesockets.close(listenFd)
     listenFd = osInvalidSocket
 
-  # Action purpose: **the acceptors are deliberately not joined here, and this
-  # was measured rather than assumed.** An acceptor blocked in `accept` or
-  # mid-`peekPath` when the listener closes can still reach its
-  # `queues[...].send(cfd)` below, so joining them first — before any sentinel
-  # is queued — is the ordering that would close the race properly.
-  #
-  # It does not work on this platform. Closing a listening descriptor while
-  # another thread blocks in `accept(2)` on it is unspecified by POSIX, and on
-  # FreeBSD it does not wake that thread: `joinThread` here never returned, and
-  # `serve-selftest` hung on every one of three runs. `shutdown(2)` is no help
-  # either — it answers `ENOTCONN` on a listening socket. Waking them would take
-  # a self-connect to the bound address, which needs the address kept for
-  # shutdown and fails in its own ways on a LAN bind; that is a larger change
-  # than the leak it closes.
-  #
-  # So the race stays, and its consequence is handled where it can be: a
-  # descriptor queued after its class's workers have gone is closed by the drain
-  # in `joinAll` rather than left open. See there.
-
   # One sentinel per worker, so each blocking receive returns and its thread
-  # exits rather than being killed mid-request.
+  # exits rather than being killed mid-request. Every send that will ever happen
+  # has happened by now, so a worker cannot exit with a descriptor still behind
+  # it in the queue.
   for c in RouteClass:
     for _ in 0 ..< ClassTable[c].threads:
       queues[c].send(osInvalidSocket)
@@ -525,14 +575,13 @@ proc joinAll*() =
   for i in 0 ..< routes.totalThreads():
     joinThread(classThreads[i])
 
-  # Action purpose: every worker has exited by here, so anything still in a
-  # queue is a descriptor no thread will ever take. An acceptor can enqueue one
-  # after the sentinels — `stop` says why that race cannot be closed on this
-  # platform — and a connection that is neither served nor closed holds its
-  # descriptor and leaves the peer waiting on a socket that will never answer.
-  # Closing it is not a substitute for serving it, but it is the difference
-  # between a client seeing a closed connection and one hanging until it times
-  # out.
+  # Action purpose: a backstop, and no longer the thing standing between a
+  # client and a socket nobody closes. `stop` joins the acceptors before it
+  # queues a sentinel, so by the time a worker exits every descriptor that will
+  # ever be enqueued already has been, and this loop should find nothing. It
+  # stays because "should find nothing" is worth checking rather than assuming,
+  # and because a descriptor found here is one no worker will take: closing it
+  # tells the peer, where leaving it makes the peer wait out its own timeout.
   #
   # `tryRecv` and not `recv`: the queue is expected to be empty, and a blocking
   # receive on an empty channel here would hang the shutdown this proc exists to

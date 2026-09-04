@@ -474,6 +474,27 @@ proc relayPhase(): int =
     check("and it counts as an unavailable upstream, not a relay",
           run.outcome == upstream.roUnavailable, $run.outcome)
 
+  block shorterThanAStatusLineWithNoHeadersToAdd:
+    # Action purpose: **the same contract, on the path that had no probe at
+    # all.** `splicing` was initialised from `extraHeaders.len > 0`, so a relay
+    # with nothing to splice skipped the status-line accumulation entirely and
+    # sent a fragment straight through, reporting `roComplete` over it. That is
+    # the commoner path, not the rarer one: `/embed` passes no headers and a
+    # completion with nothing to report passes an empty string. Asserted
+    # separately from the block above because the two differ only in the
+    # argument that used to decide whether the rule applied.
+    const Stub = "HTTP/1.1 200 O"
+    let run = driveRelay(Stub, "", Stub.len)
+    check("with no headers to add, a reply too short to hold a status line " &
+          "is still not forwarded",
+          not run.client.contains(Stub), run.client)
+    check("...the client is still told the upstream is unavailable",
+          run.client.contains("502"), run.client)
+    check("...and nothing is teed",
+          run.captured.len == 0, run.captured)
+    check("...and it still counts as an unavailable upstream",
+          run.outcome == upstream.roUnavailable, $run.outcome)
+
   block theProbeIsBounded:
     # The one direction the splice is allowed to fail in: an upstream that sends
     # no CRLF for longer than `MaxStatusLineProbe` costs the caller its
