@@ -3461,10 +3461,31 @@ proc main() =
           check("deleting a long run is not a paste", not r.divert)
 
         block replacement:
+          # A short replacement is refused because the RUN is short — not
+          # because the draft shrank. The distinction matters now that nothing
+          # tests the draft's length at all: five characters is under the
+          # threshold and that is the whole reason.
           let prev = repeat('y', 300)
           let r = composer.classifyInsertion(prev, "short", T)
-          check("replacing a selection with something shorter is not a paste",
-                not r.divert)
+          check("replacing a selection with a run under the threshold is not " &
+                "a paste", not r.divert)
+
+          # The case the `next.len <= prev.len` guard refused to even look at:
+          # a paste SMALLER than the selection it lands on, so the draft ends
+          # up shorter. 250 characters pasted over 400 selected is a paste by
+          # every measure the user has, and it was silently left inline.
+          block aPasteSmallerThanWhatItReplaced:
+            let shrunk = composer.classifyInsertion(
+              "keep " & repeat('y', 400) & " end", "keep " & long & " end", T)
+            check("the draft really does get shorter",
+                  ("keep " & long & " end").len <
+                    ("keep " & repeat('y', 400) & " end").len)
+            check("a paste smaller than the selection it replaced still diverts",
+                  shrunk.divert and shrunk.inserted == long,
+                  "divert=" & $shrunk.divert & " inserted=" &
+                  $shrunk.inserted.len)
+            check("and the draft keeps what was outside the selection",
+                  shrunk.remaining == "keep  end", "[" & shrunk.remaining & "]")
           # A replacement that still grows past the threshold IS a paste: the
           # user pasted a long run over a selection, and the run is what should
           # be attached rather than the net difference.

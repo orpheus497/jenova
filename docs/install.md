@@ -231,7 +231,5 @@ jenova-core hardware apply --best
 
 - Detection reads `kern.ostype`, not `uname -s`, which answers `Linux` under the Linuxulator.
   Before this was fixed, Jenova misdetected its own developer's FreeBSD machine as Fedora.
-- Both binaries carry a `when not defined(freebsd)` guard, so a build on another platform fails at
-  compile time rather than at run time.
 - `external/llama.cpp` is a git submodule. If you cloned without `--recurse-submodules`, run
   `git submodule update --init`.

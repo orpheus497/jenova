@@ -61,22 +61,24 @@ type
 ## `prev` with one run spliced in, recoverable in O(n) from the longest common
 ## prefix and suffix around it.
 ##
-## Action purpose: the guards are the ways an insertion can be something else —
-## a threshold of zero means the feature is off, deleting or replacing a
-## selection with something shorter leaves `next` no longer than `prev`, and
-## typing is too short.
+## **The length that decides is the inserted run's, and nothing about the
+## draft's net length.** With `prev = P + D + S` and `next = P + I + S` the
+## growth is `I.len - D.len`, so any test on the draft charges the paste for
+## whatever it replaced. Two guards did that and both are gone: the growth
+## against the threshold, and then `next.len <= prev.len`, which refused to look
+## at all when the paste was smaller than the selection it landed on. Pasting
+## 3 000 characters over 5 000 selected ones is a paste by every measure the user
+## has, and it was left inline.
 ##
-## **The length that decides is the inserted run's, not the draft's net growth.**
-## With `prev = P + D + S` and `next = P + I + S` the growth is `I.len - D.len`,
-## so testing the growth charges the paste for whatever it replaced: selecting a
-## paragraph and pasting a long document over it grows the draft by the
-## difference, and a paste well past the threshold was silently left inline
-## whenever the selection it replaced was large enough. The run is recovered
-## first — it is O(n) either way — and measured directly.
+## Action purpose: **a deletion needs no guard of its own, which is why removing
+## them is safe.** With nothing inserted, the common prefix and suffix meet and
+## `inserted` is the empty string, so the threshold test below refuses it — the
+## same test, for the same reason, rather than a special case that has to be kept
+## in step. A threshold of zero means the feature is off and stays a guard,
+## because it is about configuration and not about the edit.
 proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
   result.remaining = next
   if threshold <= 0: return
-  if next.len <= prev.len: return
 
   var p = 0
   while p < prev.len and p < next.len and prev[p] == next[p]: inc p

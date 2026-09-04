@@ -228,6 +228,14 @@ proc newSourceWidget(): tuple[view: GtkWidget, buffer: GtkSourceBuffer] =
   let buffer = gtk_source_buffer_new(nil)
   applyScheme(buffer)
   let view = gtk_source_view_new_with_buffer(buffer)
+  # Action purpose: `gtk_source_buffer_new` hands back a full reference — a
+  # GtkTextBuffer is a plain GObject and not floating — and the view adds one of
+  # its own, so without this the constructor's reference is never dropped and a
+  # buffer is leaked per fenced code block, for the life of the process. The
+  # unref is AFTER the view exists, which is what leaves it holding the only
+  # remaining reference: `state.buffer` keeps the handle for `setSourceText` and
+  # `setSourceLanguage`, and it stays valid exactly as long as the view does.
+  g_object_unref(pointer(buffer))
   viewSetEditable(view, cbool(0))
   viewSetMonospace(view, cbool(1))
   viewSetCursorVisible(view, cbool(0))

@@ -100,7 +100,8 @@ The desktop application has the same thing under the Hardware button.
 
 ### Disk that Jenova manages itself
 
-Both are bounded, and neither was before — see `.devdocs/03-error-memory-wiring.md`.
+Two directories grow with use, and both are bounded. What bounds each is in the table — there is
+nothing to configure and nothing to prune by hand.
 
 | Path | Holds | Bound |
 |---|---|---|

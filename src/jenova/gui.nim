@@ -7010,7 +7010,14 @@ proc run*(withTray = true, checkOnly = false) =
   let (history, startLeaf) = pathOf(allHistory, loadLeaf(conv))
 
   let initialLan = isLanEnabled(p)
-  let initialAddr = if initialLan: lanAddress() else: ""
+  # Action purpose: gated on what the socket actually BOUND, not on the LAN
+  # flag. `host` is `0.0.0.0` when the flag is set OR when `HOST` says so in the
+  # configuration, and only the first of those set `initialLan` — so a
+  # deployment bound wide by its conf file resolved no address, and the header
+  # fell through to printing the literal `0.0.0.0`. That is the one reading that
+  # is useless: it is the bind wildcard, not somewhere anyone can point a
+  # browser. Same lookup, asked whenever the answer is worth having.
+  let initialAddr = if host == "0.0.0.0": lanAddress() else: ""
   # Read once, here, and used three times below — for the window state, for the
   # palette, and for the colour scheme handed to `brew`. Loading it three times
   # would let a file written between the calls give the window one theme and the
