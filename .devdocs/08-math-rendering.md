@@ -235,14 +235,51 @@ pure, testable code. M-3 is the smallest of the three and the only one that need
 
 ---
 
-## 8. Open question for the USER
+## 8. The font question, asked and then answered
 
-**One, and only one.** Everything else above is decided.
+An earlier draft of this report left one open question for the USER: which font Tier 2 should
+prefer, and whether it may be a dependency. **It is withdrawn — it answers itself, and it was
+posed against a misreading of this project's own install rule.**
 
-**Which font should Tier 2 prefer, and may it be a dependency?** Latin Modern Math gives TeX's
-own metrics and the best result (8 delimiter variants). FreeSerif gives a correct but plainer
-result and is far more likely to be present already. The plan works either way — the probe walks
-a preference list and degrades honestly — but the *first* entry in that list decides whether
-`docs/install.md` gains a font under required or under recommended, and this project's
-install document does not currently have an optional tier (report 07, V-03 hit the same wall
-from the other side).
+### What was actually at stake
+
+Only two things: the order of the preference list in §2, and whether `docs/install.md` gains a
+line. The program probes fonts at startup, takes the first that passes all three questions, and
+degrades to plain text if none does. It renders either way.
+
+### Why it looked like a blocker
+
+`docs/install.md:46`, verbatim:
+
+> Everything installs from `pkg(8)`. **There is no optional tier** — a package that cannot be
+> installed stops the build.
+
+So a "recommended font" appeared to have nowhere to live: either a hard build dependency, or a
+violation of a stated rule.
+
+### Why it is not one
+
+**That rule is about packages that stop the build.** A maths font stops nothing — it is not
+linked, not called, not read at compile time, and its absence produces a correct render in a
+plainer face or, in the worst case, the same plain text the transcript shows today. It is not the
+kind of thing that table describes, so it does not belong in that table, and the rule is not in
+tension with anything.
+
+The misreading was treating "no optional tier" as "no optional anything". `docs/install.md`
+already distinguishes these: `fetch(1)` is tried before `curl` and the document says so at `:92`
+— *"`curl` is the fallback, not an optional extra"* — which is a runtime preference between two
+things, described outside the dependency table. A font preference is the same shape.
+
+### The decision
+
+| | |
+|---|---|
+| **Preference order** | Latin Modern Math → STIX Two Math → a TeX Gyre math face → FreeSerif → **plain text with a visible note** |
+| **`docs/install.md`** | **unchanged.** No font is added to the dependency table, because no font can stop the build |
+| **`docs/usage.md`** | states, where the maths feature is documented, that a maths font improves the result, names Latin Modern Math, and says what happens without one |
+| **Rationale** | Latin Modern's constants *are* TeX's — it is the digital descendant of the font Knuth designed for it — and it carries 8 delimiter sizes against FreeSerif's 4. But FreeSerif is far more likely to be present already, and it is genuinely usable (§2), so the fallback is not a consolation prize |
+
+**M-3 therefore has no precondition on the USER.** The two real preconditions stand and are
+technical, not editorial: read the FreeBSD font port names off the target with `pkg search`
+before writing them into any document (§2), and check the target's Pango version before relying
+on `<sup>` rather than the `rise` spelling (§3).
