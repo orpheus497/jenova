@@ -211,8 +211,12 @@ absorbed into Phase 4.
 
 ## Open decisions
 
-1. **Math rendering (P-A5)** — KaTeX is a browser library with no GTK equivalent. Pango-drawn
-   subset (native, limited), external TeX renderer (correct, heavy), or out of scope. Blocks 7.
+1. ~~**Math rendering (P-A5)**~~ — **decided, session 9: in scope, and the framing above was
+   wrong.** A fourth option existed and was not offered: a native Cairo layout over the font's
+   own OpenType MATH table. Pango links HarfBuzz, and HarfBuzz exposes the whole MATH table, so
+   TeX-quality metrics need **no new library and no process spawn**. The plan is
+   `.devdocs/08-math-rendering.md`: two tiers, four phases, one open question (which font Tier 2
+   prefers, and whether it may be a dependency).
 2. **D-15** — `etc/jenova.conf` sets `JENOVA_DRAFT=0` while its source profile and the README say
    the drafter is on; drift from `7b859f5` updating the profile without re-applying it. Untouched
    on purpose: it changes inference behaviour, and the fix is `hardware apply`, not a hand-edit —
