@@ -196,11 +196,16 @@ proc diagnosticHeaders*(prepared: pipeline.Prepared): string =
                 inspect.encodeInjected(prepared.injected) & "\r\n"
 
   # Action purpose: one header per hit, so a single unparseable value costs the
-  # reader that hit and not the list. On a LAN bind these paths reach whoever
-  # the socket reaches — who already has unauthenticated access to the same
-  # files through the file routes, so the header discloses nothing the
-  # connection did not. The chunk's own text is a different question and stays
-  # off.
+  # reader that hit and not the list.
+  #
+  # **The value is a retrieval-index path and not a filesystem one**, which is
+  # what settles the disclosure question rather than the argument that used to
+  # stand here. Everything `rag.indexContent` is ever called with comes from
+  # `chatPath`, `notePath` or `fileAssetPath` — `chat/<convId>/<role>/<id>`,
+  # `note/<id>`, `file/<id>` — so the header carries database ids, which a LAN
+  # client can already list through the unauthenticated `/api/db/*` routes, and
+  # never a location on disk. The chunk's own text is a different question and
+  # stays off.
   for i, h in prepared.hits:
     if i >= inspect.MaxHits: break
     result.add "X-Jenova-Hit: " & inspect.encodeHit(h) & "\r\n"

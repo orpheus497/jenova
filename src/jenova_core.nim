@@ -5716,15 +5716,33 @@ proc main() =
             # test suites never index anything.
             if not backfilled and
                lcc.healthy(lifecycle.beEmbed, timeoutMs = 300):
-              backfilled = true
+              # Action purpose: guarded, and `backfilled` is set only after both
+              # succeed. Neither was true before: an exception from either call
+              # left this thread — which is the WATCHDOG — dead, so backend
+              # supervision stopped for the life of the process and nothing said
+              # so. A locked index or a database opened without the retrieval
+              # tables is enough to raise, and indexing is best-effort
+              # everywhere else in this program for exactly that reason.
+              #
+              # Setting the flag last is what makes the next cycle retry. Set
+              # first, one transient failure retired the backfill permanently
+              # and history stayed keyword-only until a restart.
               rag.configureEmbed("127.0.0.1", lcc.embedPort)
-              let n = rag.backfillChats()
-              if n > 0: echo "[rag] indexed ", n, " past messages for recall"
-              # Notes and file assets need the same backfill. Same
-              # gate as the chats above — both need the embedder up, or they
-              # store chunks with no vector and stay keyword-only for ever.
-              let w = rag.backfillWorkspace()
-              if w > 0: echo "[rag] indexed ", w, " notes and files for recall"
+              try:
+                let n = rag.backfillChats()
+                if n > 0: echo "[rag] indexed ", n, " past messages for recall"
+                # Notes and file assets need the same backfill. Same
+                # gate as the chats above — both need the embedder up, or they
+                # store chunks with no vector and stay keyword-only for ever.
+                let w = rag.backfillWorkspace()
+                if w > 0: echo "[rag] indexed ", w, " notes and files for recall"
+                backfilled = true
+              except CatchableError:
+                # Reported and retried on the next cycle rather than swallowed:
+                # a backfill that never runs is a silent loss of recall, and the
+                # watchdog surviving is the point.
+                echo "[rag] backfill failed, will retry: ",
+                     getCurrentExceptionMsg()
         createThread(watcher, watchLoop, lc)
         echo "  watchdog: on (30s interval, 3 failures, 60s cooldown)"
 

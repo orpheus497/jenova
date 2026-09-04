@@ -4997,8 +4997,13 @@ proc refreshTrash(app: AppState) =
 ## Function purpose: reads both halves of the trash — the rows and the
 ## path-addressed files — because the screen has to account for both.
 proc openTrash(app: AppState) =
-  app.refreshTrash()
+  # Action purpose: cleared BEFORE the refresh, not after. `refreshTrash` sets a
+  # notice when the trash directories cannot be read, and clearing afterwards
+  # wiped the one message that says the file half of the panel is missing —
+  # leaving an empty list that reads as an empty trash. The clear is still here
+  # because the panel should not open under whatever notice preceded it.
   app.notice = ""
+  app.refreshTrash()
   app.trashOpen = true
 
 ## Function purpose: undo one soft delete. Goes through `api.restoreEntity` and

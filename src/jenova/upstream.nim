@@ -143,9 +143,21 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     except CatchableError:
       recvFailed = true
     if recvFailed or n < 0:
-      # Nothing relayed yet is indistinguishable to the client from an upstream
-      # that never answered, and the tail of the function already says so.
-      if relayed == 0 and pending.len == 0: break
+      # Action purpose: `relayed == 0` alone decides, and `pending` is discarded
+      # rather than consulted. With the emptiness of `pending` in the condition,
+      # an upstream that sent a fragment of a status line and then timed out took
+      # the `roTruncated` branch — and nothing had been written to the client at
+      # all, so it got a closed connection with zero bytes and no status. Falling
+      # through with `pending` intact is no better: the tail would send that
+      # fragment as though it were a response and then report `roComplete` over
+      # it. Neither is a reply. Less than a status line is not something a client
+      # can be given, so it is dropped and the 502 at the end of the function
+      # answers, which is the same operational fact as an upstream that never
+      # spoke. Once anything HAS reached the client the head is already on the
+      # wire and only `roTruncated` is honest.
+      if relayed == 0:
+        pending = ""
+        break
       return roTruncated
     if n == 0:
       break
