@@ -247,22 +247,37 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
     let okFs = fssync.syncFileAsset(node.f "id", node.f "name", node.f "content",
                                     node.f "folderId", node.f "projectId",
                                     node.f "workspaceId")
-    # Action purpose: the trash only runs when a file was actually written at
-    # the new path. `syncFileAsset` answers `true` for a row with no bytes
-    # having written nothing, which is correct on its own (report 07, V-10) —
-    # but pairing that with the cleanup below moved the old file to the trash
-    # and left nothing in its place. `loadFileAsset` in the window stops the
-    # rename that caused it; this stops every other caller of `putEntity`,
-    # which is the layer the frozen Web UI reaches too.
-    if okFs and existed and fssync.contentWritesAFile(node.f "content") and
+    # Action purpose: an asset that moved has two correct endings and this
+    # chooses between them by whether a file was actually written.
+    #
+    # `syncFileAsset` answers `true` for a row with no bytes having written
+    # nothing, which is right on its own (report 07, V-10) — but the location
+    # columns are already stored by then, so pairing that success with the
+    # cleanup below trashed the old file and left the row pointing at a path
+    # with nothing at it. Skipping the cleanup instead only changed where the
+    # orphan sat: the bytes stayed under the old name and the row still named
+    # a path with no file.
+    #
+    # So: bytes written at the new path means the old copy is genuinely
+    # superseded and goes to the trash. No bytes written means the existing
+    # mirror *is* the asset and has to follow the row to its new path.
+    let moved = existed and
        (prior.field("folderId") != node.f("folderId") or
         prior.field("projectId") != node.f("projectId") or
         prior.field("workspaceId") != node.f("workspaceId") or
-        prior.field("name") != node.f("name")):
-      discard fssync.trashFileAsset(prior.field("id"), prior.field("name"),
-                                    prior.field("folderId"),
-                                    prior.field("projectId"),
-                                    prior.field("workspaceId"))
+        prior.field("name") != node.f("name"))
+    if okFs and moved:
+      if fssync.contentWritesAFile(node.f "content"):
+        discard fssync.trashFileAsset(prior.field("id"), prior.field("name"),
+                                      prior.field("folderId"),
+                                      prior.field("projectId"),
+                                      prior.field("workspaceId"))
+      else:
+        discard fssync.moveFileAssetMirror(
+          node.f "id", prior.field("name"), prior.field("folderId"),
+          prior.field("projectId"), prior.field("workspaceId"),
+          node.f "name", node.f "folderId", node.f "projectId",
+          node.f "workspaceId")
     okFs
   else:
     true
@@ -493,8 +508,14 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
     let r = fssync.trashProject(id, prior.field "workspaceId", prior.field "name")
     if not r.ok:
       return err(500, "filesystem trash failed for project")
-    let cascaded = cascadeIndexTargets(e.name, id)
+    # Action purpose: inside the compensation boundary, not before it. The
+    # directory is already in the trash by this point, and `cascadeIndexTargets`
+    # runs a query — so a failure there escaped with the row still live and the
+    # container still trashed, which is the one state this block exists to make
+    # impossible.
+    var cascaded: seq[(string, string)]
     try:
+      cascaded = cascadeIndexTargets(e.name, id)
       dbSoftDelete(e, id)
     except CatchableError:
       if r.path.len > 0 and r.original.len > 0:
@@ -507,8 +528,14 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
     let r = fssync.trashFolder(id, prior.field "projectId", prior.field "name")
     if not r.ok:
       return err(500, "filesystem trash failed for folder")
-    let cascaded = cascadeIndexTargets(e.name, id)
+    # Action purpose: inside the compensation boundary, not before it. The
+    # directory is already in the trash by this point, and `cascadeIndexTargets`
+    # runs a query — so a failure there escaped with the row still live and the
+    # container still trashed, which is the one state this block exists to make
+    # impossible.
+    var cascaded: seq[(string, string)]
     try:
+      cascaded = cascadeIndexTargets(e.name, id)
       dbSoftDelete(e, id)
     except CatchableError:
       if r.path.len > 0 and r.original.len > 0:

@@ -1024,10 +1024,52 @@ caller of `renderMath` is `math-selftest`, which builds its `MathFont` by hand. 
 prerequisite of M-3's Cairo draw rather than a defect in shipped code, so it is recorded in
 `.devdocs/08-math-rendering.md` beside the phase that has to close it.
 
+### A seventh pass, on the sixth's own fixes · session 10
+
+Two more against the asset path this session had just changed, both real, both fixed:
+
+* **R-29 · a move committed without the file moving.** R-26 gated the rename cleanup on a file
+  having been written, which stopped the old copy going to the trash — but `writeRow` has already
+  stored the new name and folder by then, so an update that moved an asset while carrying no
+  payload left the row naming a path with no file and the bytes stranded under the old name.
+  Skipping the cleanup only changed where the orphan sat. The two endings are now chosen between:
+  bytes written at the new path means the old copy is superseded and goes to the trash; no bytes
+  written means the existing mirror *is* the asset, and new `fssync.moveFileAssetMirror` carries it
+  to the new path.
+* **R-30 · the base64 filter wrote bytes nobody supplied.** `assetPayload` dropped every character
+  outside the alphabet before decoding, so `data:;base64,QQ!` became `QQ` and `A` was written to
+  disk under a success. The filter exists because base64 is routinely line-wrapped and a stored URI
+  can carry newlines — so whitespace is still skipped, and anything else is now a refusal.
+
+Both are asserted in `fs-selftest`, and **both assertions were proven to fail with their fix
+reverted**: neutering `moveFileAssetMirror` fails three, and dropping the refusal fails one.
+
+### Deferred, with the reason stated
+
+Three further findings from the same review are **not** taken here. None is introduced by this
+branch and each needs a decision rather than a patch:
+
+| Finding | Why it is not taken |
+|---|---|
+| **Remove the mirror when content is explicitly cleared** (`fssync.nim`) | The distinction it rests on does not survive the layer below it. `api.writeRow` writes `node.f(col)` for **every** column (`api.nim:272-278`), so an omitted `content` and an explicit `""` both reach the row as empty — by the time the mirror is consulted there is nothing left to tell them apart. And the safe default is the opposite of the one proposed: deleting a mirror because a client omitted a field is precisely the trap `loadFileAsset` (`gui.nim:671-678`) exists to stop. R-29 removes the staleness for the case that actually moves the row; a general "empty column means delete the file" rule would need the API to carry presence, not just value. |
+| **`rag.forgetMessage` races restore and update indexing** (`api.nim`) | Real. `affected` is collected before `db.begin()` and unfiled after the commit, deliberately — unfiling inside the transaction strips the index for a delete that then rolls back, which the comment at `api.nim:378-381` records. Closing the window needs a per-message lock, a deletion generation, or a conditional delete, across `deleteConversation`, `forgetIndexed` and the bulk path. That is a concurrency design for the retrieval layer, not a fix to this diff. |
+| **Descendant discovery races fork creation** (`api.nim`, `withForks`) | The same shape and the same answer: the `DescendantsCte` walk runs before the transaction, so a fork created in the gap is flagged deleted inside it but is absent from `affected`, and `rag.query` has no deletion filter to catch it. Serializing discovery with the transaction is the fix and it is the same design decision as the row above. |
+
+The middle two share a root — **`rag.query` does not filter deleted rows** — and that is the thing
+worth fixing rather than each caller. Recorded as the next retrieval question.
+
 ### What was run
 
 `nimble core`, `nimble gui`, all **20** `-selftest` subcommands, `tests/gui_check.sh`, and the six
-`tests/test_*.sh` suites — all green. `bin/jenova --check` passes, and so does the panel-open
+`tests/test_*.sh` suites — all green, and re-run after the seventh pass. `bin/jenova --check` passes, and so does the panel-open
 variant with all nine guards forced true, with no GTK criticals and no markup errors. The
-mapped-window half of `tests/gui_build.sh` still cannot run here: `Xvfb`, `xdotool` and `xclip` are
-absent on this host, which is the same limit report 07 §0 records.
+mapped-window half of `tests/gui_build.sh` still cannot run here — but **for one reason, not
+three.** `xdotool` (4.20260303.1) and `xclip` (0.13) are both installed at `/usr/local/bin`, as are
+`import`, `convert` and `xwininfo`. **The only missing piece is a display server the harness can
+start: `Xvfb`.** An earlier note in this session recorded all three as absent and was wrong.
+
+`Xvfb` is what `gui_build.sh` reaches for, and it is not installed. `/usr/local/bin` does carry
+`Xorg` and **`Xwayland`**, and `Xwayland` can run headless — which makes "no display server at
+all" the wrong description of this host, and a `Xwayland`-backed variant of the harness's display
+block a real option rather than a hypothetical one. Worth trying before treating the mapped-window
+gate as FreeBSD-only work.

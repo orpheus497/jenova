@@ -3738,6 +3738,69 @@ proc main() =
                 fssync.rmFileMissing and
               not fileExists(outside / "stolen.md"))
 
+      # Action purpose: a `data:` URI is filtered before it is decoded, and the
+      # filter has to tell layout from corruption. Base64 is routinely
+      # line-wrapped, so whitespace is not a defect and must survive; a
+      # character that is neither base64 nor layout means the bytes on the wire
+      # are not the bytes the caller meant, and dropping it silently wrote a
+      # *different* file under a success. Both directions are asserted, because
+      # a filter that refused everything would pass the refusal test alone.
+      block base64PayloadsAreDecodedOrRefused:
+        # `QQ==` is "A". The unpadded and line-wrapped spellings are the same
+        # bytes and must all be accepted.
+        for spelling in ["data:text/plain;base64,QQ==",
+                         "data:text/plain;base64,QQ",
+                         "data:text/plain;base64,Q\nQ=\n="]:
+          check("a decodable payload is accepted: " & spelling.replace("\n", "\\n"),
+                fssync.contentWritesAFile(spelling), spelling)
+        # A stray character is a refusal, not a silent `QQ` -> "A".
+        check("a payload carrying a non-base64 character is REFUSED",
+              not fssync.contentWritesAFile("data:text/plain;base64,QQ!"))
+        check("...and so is a length base64 cannot produce",
+              not fssync.contentWritesAFile("data:text/plain;base64,QQQQQ"))
+        # An empty payload is not a refusal: it is the ordinary shape of an
+        # image row, whose bytes deliberately never enter the column.
+        check("an empty payload writes no file and is not an error",
+              not fssync.contentWritesAFile("data:image/png;base64,"))
+
+      # Action purpose: **the row's location and the file's location must not
+      # disagree.** An update that moves an asset while carrying no payload used
+      # to leave the bytes under the old name with the row naming the new one.
+      # Asserted by moving a real file, because the defect is only visible on
+      # disk.
+      block aMirrorFollowsItsRowWhenTheUpdateCarriesNoBytes:
+        # No folder, project or workspace is set, so both paths resolve through
+        # `physicalPath`'s `unassigned` fallback — which keeps this assertion
+        # about the move and not about the name lookups, which have their own.
+        # The id must be a real UUID or nothing is mirrored at all.
+        const Aid = "a29b1c04-0000-4000-8000-00000000a29b"
+        let wsRoot = getEnv("JENOVA_WORKSPACES")
+        let dir = wsRoot / "unassigned"
+        createDir(dir)
+        let before = dir / ("before.txt_" & Aid)
+        let after = dir / ("after.txt_" & Aid)
+        writeFile(before, "the bytes")
+        check("the fixture is where the resolver puts it", fileExists(before))
+
+        check("the move reports success",
+              fssync.moveFileAssetMirror(Aid, "before.txt", "", "", "",
+                                         "after.txt", "", "", ""))
+        check("the file is at the new name", fileExists(after),
+              "expected " & after)
+        check("...carrying its bytes",
+              fileExists(after) and readFile(after) == "the bytes")
+        check("...and nothing is left at the old one", not fileExists(before))
+
+        # A row that never had a file is not a failed move — it is every image,
+        # whose bytes deliberately never enter the column.
+        check("a move with no file to move is not a failure",
+              fssync.moveFileAssetMirror(Aid, "gone.txt", "", "", "",
+                                         "still-gone.txt", "", "", ""))
+        # And a malformed id mirrors nothing, so it cannot report a move.
+        check("a move for an id that is not a UUID is refused",
+              not fssync.moveFileAssetMirror("nope", "a.txt", "", "", "",
+                                             "b.txt", "", "", ""))
+
       removeDir(base)
       delEnv("JENOVA_WORKSPACES")
       delEnv("JCA_HOME")

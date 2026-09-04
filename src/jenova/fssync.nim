@@ -375,10 +375,19 @@ proc assetPayload(content: string): tuple[ok: bool, bytes: string] =
   if not content.startsWith("data:"): return (true, content)
   let idx = content.find(marker)
   if idx < 0: return (true, content)
+  # Action purpose: **whitespace is skipped; anything else is a refusal.** The
+  # filter exists because a stored URI can carry newlines — base64 is routinely
+  # line-wrapped, and that is not a corruption. But dropping *every* character
+  # outside the alphabet turned `QQ!` into `QQ` and wrote `A` to disk: bytes
+  # that are not the bytes the caller supplied, filed under a success. A payload
+  # carrying a character that is neither base64 nor layout is not a payload this
+  # decoder was given, and guessing what it meant is worse than saying no.
   var clean = newStringOfCap(content.len)
   for ch in content[(idx + marker.len) .. ^1]:
     if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}:
       clean.add ch
+    elif ch notin {' ', '\t', '\n', '\r'}:
+      return (false, "")
   # Padding is stripped before the length is measured, and then only a
   # remainder of 1 is refused. base64 encodes three bytes to four characters,
   # so an unpadded tail of 2 or 3 characters is one or two bytes and decodes
@@ -438,6 +447,41 @@ proc hasAssetBytes(id: string): bool =
 ## with or without one — and they sit in a repository whose history is the
 ## user's to write: `gitAdd` stages and never commits, so deleting them here
 ## would author a change into the user's own tree that the user did not make.
+## Function purpose: carry an existing mirror across a rename or a move when the
+## update itself brought no bytes to write.
+##
+## Action purpose: **the row's location and the file's location must not be
+## allowed to disagree.** `putEntity` writes the new name and folder before the
+## mirror is touched, so an update that changes them while carrying no payload
+## left the row pointing at a path with no file and the real bytes stranded
+## under the old name — which is what `readFileAssetMirror` then failed to find,
+## falling back to a column the same update had blanked. Skipping the old file's
+## cleanup avoids destroying it and does not fix that; moving it does.
+##
+## Answers `true` when there was nothing to move, because a row that never had a
+## file is not a failed move — it is the ordinary case for an image, whose bytes
+## deliberately never enter the column (report 07, V-10).
+proc moveFileAssetMirror*(id, oldName, oldFolderId, oldProjectId, oldWorkspaceId,
+                          newName, newFolderId, newProjectId,
+                          newWorkspaceId: string): bool =
+  let (src, _) = assetPath(id, oldName, oldFolderId, oldProjectId, oldWorkspaceId)
+  let (dst, ws) = assetPath(id, newName, newFolderId, newProjectId, newWorkspaceId)
+  if src.len == 0 or dst.len == 0: return false
+  if src == dst: return true
+  if not fileExists(src): return true
+  let (workspaces, _) = roots()
+  try:
+    ensureDir(dst.parentDir)
+    moveFile(src, dst)
+  except IOError, OSError:
+    return false
+  # Both paths are staged: the old one so its removal is recorded, the new one
+  # so the file is. `gitAdd` stages and never commits, so this states what
+  # happened without authoring a commit into the user's own tree.
+  gitAdd(workspaces / ws, src)
+  gitAdd(workspaces / ws, dst)
+  true
+
 ## Function purpose: whether this content would put a file on disk at all, which
 ## is what a rename has to know before it trashes the old one. `syncFileAsset`
 ## answers `true` for a row with no bytes because writing nothing is the correct
