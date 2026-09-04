@@ -237,6 +237,7 @@ mkdir -p "$JH/.system" "$JH/Workspaces"
 SEED_PORT=$(( 18000 + ($$ % 2000) * 2 ))
 RUN_PORT=$(( SEED_PORT + 1 ))
 SEED_MSGS=6
+## The body text of seeded message `$1`.
 seed_text() {
   # Message 4 is the assistant turn that is actually *markdown*, and until it
   # existed every message in this conversation was one plain sentence — so the
@@ -266,9 +267,25 @@ seed_text() {
   fi
 }
 
+## POST a JSON body to a path on the seeded core, over the raw socket.
 seed_post() { # path body
   printf 'POST %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
     "$1" "${#2}" "$2" | nc 127.0.0.1 "$SEED_PORT" >/dev/null
+}
+
+## True when `$1` is a command on PATH.
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Asked here, and not with the display tools below, because the seeding stage
+# immediately after this is the first thing that runs `nc` — both to post the
+# conversation and to wait for the listener. Checked after `nc` had already been
+# used, a missing one surfaced as a silently short transcript and a readiness
+# loop that timed out, which reads as a defect in the window rather than as a
+# missing tool on the host.
+have nc || {
+  echo "gui_build: nc is needed to seed the conversation the window renders."
+  echo "gui_build: FAIL"
+  exit 1
 }
 
 echo "gui_build: seeding a conversation"
@@ -405,6 +422,8 @@ app.previewAtt.payload.len > 0
 GUARDS
 }
 
+## Build a second binary with every overlay panel's guard forced true, and
+## `--check` it, so the panel bodies are constructed by something.
 run_panel_variant() {
   VSRC=$OUT/panels
   rm -rf "$VSRC"
@@ -482,8 +501,6 @@ H=800
 # space beside the window.
 BAND_FRACTION=6
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
 ## The application window's geometry, as `WIDTH HEIGHT X Y`.
 ##
 ## From `xwininfo -root -children` and not `xdotool search --name`: GTK4 sets
@@ -543,6 +560,11 @@ card_accent_x() { # image wx wy ww wh
     awk -v ox=$(($2 + 20)) '$2 > 40 { print $1 + ox; exit }'
 }
 
+## Prove the transcript drew message cards carrying the seeded text.
+##
+## Clicks down the copy button's column until one answers, then requires the
+## clipboard to hold message 1 verbatim — so a window that maps but renders an
+## empty transcript fails here rather than passing on a photograph.
 transcript_renders() {
   set -- $(window_geometry)
   [ $# -eq 4 ] || { echo "gui_build: no window to read the transcript from"; return 1; }
@@ -759,11 +781,11 @@ fi
 
 # Asked before the display is started, because `xwininfo` is what proves the
 # display came up and this block is the reason it has to be present by then.
-have import && have convert && have xwininfo && have xdotool && have xclip && have nc || {
-  echo "gui_build: ImageMagick's import/convert, xwininfo, xdotool, xclip and nc"
+have import && have convert && have xwininfo && have xdotool && have xclip || {
+  echo "gui_build: ImageMagick's import/convert, xwininfo, xdotool and xclip"
   echo "gui_build: are needed to prove the window works. xclip reads back what the"
-  echo "gui_build: transcript's Copy button put on the clipboard; nc seeds the"
-  echo "gui_build: conversation it copies from."
+  echo "gui_build: transcript's Copy button put on the clipboard. nc is asked for"
+  echo "gui_build: earlier, beside the seeding that uses it."
   echo "gui_build: FAIL"
   exit 1
 }

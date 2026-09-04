@@ -251,6 +251,24 @@ window is better than it was.**
 > recurse. `MathFont` is `MathConstants` plus two closures, `measure` and `variants`, so the
 > module imports only `std/[strutils, tables]` and stays assertable without a font.
 | **M-3** (font half ✅) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw remains: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
+
+> **M-3's draw has a prerequisite this report never stated: the two modules do not share a
+> `MathConstants`, and nothing converts between them.** `mathfont.MathConstants`
+> (`mathfont.nim:157`, built by `readConstants` at `:341`) and `mathtex.MathConstants` are
+> **separate types of different shapes** — 24 fields against 45. The reader omits metrics that
+> stack, script, radical, delimiter, limit and matrix layout all consume, and maps display-style
+> fraction and radical values onto the non-display fields.
+>
+> **This is not a live defect today, which is why it is recorded here rather than fixed.** Nothing
+> imports `mathfont`, `readConstants` has no caller anywhere in the tree, and the only caller of
+> `renderMath` is `math-selftest`, which builds a `mathtex.MathFont` by hand
+> (`src/jenova_core.nim:1889`). The gap opens the moment M-3 wires a real font to the layout
+> engine, and closing it is part of that work: extend the reader to every field `mathtex` reads,
+> supply a documented default for each metric the MATH table does not carry (§6's correction 2
+> already names two of them), and convert text-style and display-style values **explicitly**
+> rather than letting one stand in for the other. Reusing a display-style constant in a text-style
+> position is the kind of error that renders plausibly and is wrong everywhere, which is the
+> failure mode §0 says a font question must not produce.
 | **M-4** | Polish: display-math alignment, `\begin{align}`, spacing classes (ord/op/bin/rel), and `docs/usage.md` stating exactly which LaTeX subset is supported | assertions per feature; **the doc must name what is *not* supported**, per §4.4 |
 
 **M-1 is the whole of the visible win for most replies.** M-2 is the real engineering and it is

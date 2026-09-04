@@ -545,6 +545,17 @@ proc appendToSystem*(messages: JsonNode, text: string) =
 ## makes the whole feature assertable with no window and no generation.
 proc chatBody*(messages: JsonNode, continuing = false,
                opts = settings.initSettings(), wsContext = ""): string =
+  # Action purpose: **the caller's node is never written to.** `JsonNode` is a
+  # ref, so `appendToSystem` below reaches back into whatever the caller passed
+  # — and both injections are idempotent only on a body built once. Building
+  # two bodies from one turn put the workspace context and the directive in
+  # twice, and the assertions in `jenova_core.nim` already work around it by
+  # constructing a fresh literal per call instead of reusing one, which is the
+  # shape of a defect rather than of a decision. Copied only when there is
+  # something to inject, so the common path allocates nothing extra.
+  var messages = messages
+  let injecting = wsContext.len > 0 or opts.getBool("useThinking")
+  if injecting: messages = messages.copy()
   # Action purpose: the workspace's notes and files go into the system message
   # here rather than in `prepare`, because that is handed a body and never
   # learns which conversation it belongs to.

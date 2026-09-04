@@ -356,20 +356,33 @@ file — which is the thing #113 reverted. Re-applying the profile resolves it.
 
 ## Findings added in session 2
 
-### D-11 — `PLANS.md` is referenced from ten places and does not exist · severity: low
+### D-11 — `PLANS.md` is referenced from ten places and does not exist · severity: low · **closed**
 
 `src/jenova_core.nim:20` named `.devdocs/PLANS.md` in the FreeBSD guard's **user-facing error
-message**; that one is fixed to point at `docs/install.md`. Nine further references remain in code
-comments as provenance markers (`settings.nim:2`, `convmd.nim:2`, `composer.nim:6`,
-`pipeline.nim`, `gui.nim:280`, `gui.nim:3149`, `api.nim:688`, `api.nim:832`, `fssync.nim:378`).
+message**; that one was fixed first, to point at `docs/install.md`. Nine further references
+remained in code comments as provenance markers (`settings.nim:2`, `convmd.nim:2`,
+`composer.nim:6`, `pipeline.nim`, `gui.nim:280`, `gui.nim:3149`, `api.nim:688`, `api.nim:832`,
+`fssync.nim:378`), and this finding left the choice open: restore the file, or strip the
+references in a single pass.
 
-The file is not in the repository — `.gitignore:61` says `.devdocs/` is deliberately tracked, so
-it was removed rather than ignored. The comments are historical rather than instructional, so they
-were left alone rather than mass-edited; but a reader following one finds nothing.
+**The decision was taken — strip — and it has been carried out.** Report 04 §2 D-01 widened it
+from the dangling labels to the whole comment apparatus and settled on that option; report 03
+records the same call as *"D-11 — WITHDRAWN AS FRAMED. The labels are the defect, not an asset"*.
 
-**Decide:** restore `PLANS.md` to `.devdocs/`, or strip the references in a single pass.
+**Verified against the tree, and the sweep did not reach all of it.** `grep -rn
+'PLANS\.md\|TODOS\.md' src/` returns nothing — all nine Nim comment references are gone, and so is
+the user-facing one. **Four remain in `tests/`**, all the same `TODOS.md A-2` provenance marker in
+a comment explaining why a guard fails rather than exiting 0:
 
-### D-12 — `db-selftest` carries a wall-clock assertion that fails under load · severity: low
+```
+tests/test_api_db.sh:22   tests/test_api_fs.sh:28
+tests/test_lifecycle.sh:23  tests/test_routes.sh:26
+```
+
+They are the last of the class, in the one directory report 04's batches did not cover. Stripping
+them is the remainder of this finding and is XS.
+
+### D-12 — `db-selftest` carries a wall-clock assertion that fails under load · severity: low · **fixed**
 
 `db-selftest` measures what fraction of a reader's run overlapped a concurrent writer and fails
 below a 25% floor. Observed failing at 23.3% and 23.6% on a loaded container, passing on re-runs of
@@ -378,5 +391,12 @@ the same binary, with `src/jenova/db.nim` untouched.
 The property it tests is real and worth testing. The **threshold** is not robust: it is a
 wall-clock ratio on a machine whose scheduling the test does not control, so it will fail on a
 single-core or busy host with nothing wrong. Documented in `docs/usage.md` so a failure there is
-not mistaken for a database defect; the assertion itself should be re-shaped (compare against a
-serialized baseline measured in the same run, rather than against a fixed percentage).
+not mistaken for a database defect.
+
+**Fixed, and the diagnosis above was half wrong — the metric was the defect, not the threshold.**
+Overlap was scored as a fraction of the *reader's* own span, so a reader was penalised for
+outliving the writer. Two intervals of length `a` and `b` overlap by at most `min(a, b)`, so that
+is the denominator now (`dbselftest.nim:15-20`), with a separate branch for the degenerate timing
+that would otherwise read as a serialized layer (`:100-120`). Eight consecutive runs pass with
+every reader at 100.0%: the concurrency was always there and the old measure could not see it.
+Tracked to completion as report 03's D-12 row.

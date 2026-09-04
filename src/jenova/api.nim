@@ -247,7 +247,14 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
     let okFs = fssync.syncFileAsset(node.f "id", node.f "name", node.f "content",
                                     node.f "folderId", node.f "projectId",
                                     node.f "workspaceId")
-    if okFs and existed and
+    # Action purpose: the trash only runs when a file was actually written at
+    # the new path. `syncFileAsset` answers `true` for a row with no bytes
+    # having written nothing, which is correct on its own (report 07, V-10) —
+    # but pairing that with the cleanup below moved the old file to the trash
+    # and left nothing in its place. `loadFileAsset` in the window stops the
+    # rename that caused it; this stops every other caller of `putEntity`,
+    # which is the layer the frozen Web UI reaches too.
+    if okFs and existed and fssync.contentWritesAFile(node.f "content") and
        (prior.field("folderId") != node.f("folderId") or
         prior.field("projectId") != node.f("projectId") or
         prior.field("workspaceId") != node.f("workspaceId") or

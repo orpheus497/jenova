@@ -357,7 +357,7 @@ as a code defect.
 | V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
 | V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | **done** |
 | V-15 | A renamed file asset can restore the wrong copy and report success | **data** | M | open |
-| V-16 | A settings help string containing markup blanks its own row | display | XS | string fixed; **general form open** |
+| V-16 | A settings help string containing markup blanks its own row | display | XS | **done** — the string, and then the general form: `jenova_core.nim:4961-4968` walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` |
 
 ### V-02's exception: `AutoScroll` stays, and not out of caution
 
@@ -372,17 +372,33 @@ the pinned revision, and the mechanism kept because the *new* reading also says 
 
 ---
 
-## 5. The four open findings, stated
+## 5. The one open finding, stated
 
 | ID | Finding |
 |---|---|
-| **V-09** | **Report 03's E-05 verification cannot be reproduced.** It states at `:375` and `:941-944` that `upstream.forward` *"was driven end-to-end against a fake upstream that feeds a response head in seven-byte packets"*, listing five specific confirmations. `grep -rln` across `src/` and `tests/` finds no such driver, and `serverselftest.nim` mentions neither `upstream` nor `forward`. The verification was presumably real when it was run; it is ungated now, so a regression in the splice passes every suite. The driver belongs in `serve-selftest`. |
-| **V-10** | **Every image attached in the window leaves a zero-byte file in the workspace mirror, and `git add`s it.** An image's `content` column is left empty *deliberately and correctly* (`gui.nim:2335-2339`: base64 must not enter a column that `workspace.contextFor` renders and `rag.indexFileAsset` embeds). But `api.putEntity` → `fssync.syncFileAsset(id, name, "", …)` → `writeFile(path, "")`. The *rename* form of this trap was found and closed (`gui.nim:653-657`); the *creation* form is open. Fixing it means choosing between writing the real bytes from the attachment cache and writing no file at all — a design decision, which is why session 9 recorded it rather than picking one. It is also why `assetview.classify` needs `avEmpty` as its own answer: "nothing stored" and "no viewer for this type" are different claims. |
-| **V-11** | **The gate is not concurrency-safe.** `DISPLAY=:87` and fixed ports mean two gates on one host fight; it cost one agent three red runs that read as code defects. It matters more now that `suites` runs the gate. Deriving both from `$$` closes it. |
-| **V-12** | **`tests/gui_check.sh:31` still passes `-d:gtk48`** — V-01's residue, in the one file that claims to mirror the `.nimble` flags and now does not. Inert, but the claim is false. |
-| **V-16** | **A settings help string containing markup blanks its own row in the shipped window.** Every `help` in `settings.nim` is drawn as an `AdwActionRow`/`SwitchRow`/`ComboRow` subtitle — a Pango markup property (`gui.nim:4872`, `:4885`, `:4905`, `:4918`) — and Pango rejects a whole string it cannot parse, so the row draws **empty** rather than drawing the text plainly. `useThinking`'s help read *"inside `<think>` tags"* and was blank in the window. Found by V-14's panel variant on its **first run**, which is the argument for V-14 in one sentence. The string is fixed; **the general form is open** — nothing stops the next help text containing a `<` or a bare `&`. The fix is not escaping (these strings are authored in-tree, not user input) but an assertion that walks `settings.Defs` and refuses raw markup characters, so a future one fails the build instead of silently blanking a row. |
-| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:246-259` → `fssync.trashFileAsset`); deleting later writes a *second* sidecar with the same id (`api.nim:526`). `restoreMirror` (`fssync.nim:715-728`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert`. The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
-| **V-14** | **`--check` never builds anything behind an `if …Open`** — see §0. The gate should compile the panel-open variants rather than leaving each agent to do it by hand. |
+| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:255` → `fssync.trashFileAsset`, `fssync.nim:500`); deleting later writes a *second* sidecar with the same id (`api.nim:526`). `restoreMirror` (`fssync.nim:748-788`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert` (`api.nim:202`). The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
+
+**This section used to list seven findings under the heading "four", five of them already
+recorded as done in the tracker above.** It is now the tracker's open rows and nothing else.
+Each of the five was re-checked against the tree rather than taken on the tracker's word:
+
+* **V-09** — closed. `serverselftest.nim:16` imports `upstream`, and `:184-284` is the fake
+  upstream that drives `upstream.forward` end to end. The finding's evidence — that
+  `serverselftest.nim` "mentions neither `upstream` nor `forward`" — was true when written and
+  is false now.
+* **V-10** — closed. `fssync.syncFileAsset` (`fssync.nim:432-448`) returns `true` before
+  touching the disk when the decoded payload is empty, so an image row writes no file and
+  `git add`s nothing. `restoreMirror`'s tail reads the same rule back: no bytes means no
+  physical form, not a lost file.
+* **V-11** — closed. `tests/gui_build.sh:237` derives `SEED_PORT` from `$$`, and `:800` derives
+  the display number the same way.
+* **V-12** — closed. No `-d:gtk48` is passed anywhere. The four remaining mentions are prose
+  recording that it is gone, and `jenova_core.nimble:31` states the property both scripts check.
+* **V-16** — closed **in its general form**, not only as one string: `jenova_core.nim:4961-4968`
+  walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` in any `label` or `help`.
+  That is the assertion this row asked for.
+* **V-14** — closed. `run_panel_variant` in `tests/gui_build.sh` compiles the panel-open variant
+  and `--check`s it, and refuses to pass if any guard it patches has been renamed.
 
 **V-13**, for completeness, is not a defect in this tree: at `ac61ecf` owlkettle binds no
 `gtk_file_chooser_set_current_name` (so a Save dialog cannot be pre-filled), no `GtkSorter` on

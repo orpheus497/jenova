@@ -145,11 +145,12 @@ The Web UI ships a complete Model Context Protocol client:
 Capabilities: server registration and connection, tool listing and invocation,
 resource browsing and preview, URI-template resources, prompt templates with typed
 arguments, connection logs, per-conversation server overrides
-(`conversations.mcpServerOverrides`, `src/jenova/db.nim:325`).
+(`conversations.mcpServerOverrides`, `src/jenova/db.nim:312`).
 
-The Nim side has **no MCP implementation at all**. `mcp` appears in `src/` only as:
-the `mcpServerOverrides` column (`src/jenova/api.nim:49`), and the settings note recording
-its deliberate exclusion (`src/jenova/settings.nim:367-368`, *"the whole MCP section is
+The Nim side has **no MCP implementation at all** — re-verified: `grep -rin mcp src/` returns
+exactly three lines, and none of them is code. They are the `mcpServerOverrides` column in the
+schema (`src/jenova/db.nim:312`) and in the entity map (`src/jenova/api.nim:48`), and the settings
+note recording its deliberate exclusion (`src/jenova/settings.nim:380`, *"the whole MCP section is
 excluded by the USER; MCP is deferred (SETTLED FACT)"*).
 
 **This is the single largest parity gap and it is a decision, not an oversight.** Nothing
@@ -165,8 +166,8 @@ browser: streaming with tool-call detection, execution through `mcpStore`, one D
 per LLM turn plus one per tool result, turn limits, per-turn timing statistics
 (`ChatMessageAgenticContent.svelte`, 333 lines).
 
-`grep -rn 'agentic' src/` returns **nothing**. The `messages.toolCalls` column exists
-(`src/jenova/api.nim:52`) and the GUI never reads or writes it.
+`grep -rn 'agentic' src/` returns **nothing** — re-verified. The `messages.toolCalls` column
+exists (`src/jenova/api.nim:51`, `src/jenova/db.nim:317`) and the GUI never reads or writes it.
 
 Note the coupling: the agentic loop is only useful with tools, and tools only come from
 MCP. P-A2 is downstream of P-A1.
@@ -176,40 +177,79 @@ MCP. P-A2 is downstream of P-A1.
 Web: `ChatFormActionRecord.svelte`, `services/audio.service.ts`, `utils/audio-recording.ts`,
 gated by the `autoMicOnEmpty` setting.
 GUI: the `autoMicOnEmpty` setting is **present and does nothing** — see P-C1.
-`pipeline.contentFor` can already emit `input_audio` parts (`src/jenova/pipeline.nim:737`),
-so the send path exists; only capture is missing.
+`pipeline.contentFor` can already emit `input_audio` parts (`src/jenova/pipeline.nim:738`),
+so the send path exists; only capture is missing. Still open, and `settings.nim:173` now says so
+in the setting's own `awaiting` string rather than blaming a shipped step.
 
 ### P-A4 — Speech synthesis (read a reply aloud) · size: small
 
 Web: `ChatMessageAssistant.svelte:110-120` via `window.speechSynthesis`, plus the
 `useAudioVoice` setting.
-GUI: absent. A GTK equivalent needs an external synthesiser; on FreeBSD this means a
-process invocation, which conflicts with the "the GUI spawns no shell at all" property
-stated at `src/jenova/gui.nim:26`. **Flag for a ruling before any work.**
+GUI: absent, and still absent. A GTK equivalent needs an external synthesiser; on FreeBSD this
+means a process invocation. **The premise stated here has since changed and the conclusion has
+not.** This row used to cite a "the GUI spawns no shell at all" property at `src/jenova/gui.nim:26`;
+the header now says the opposite in as many words (`src/jenova/gui.nim:14-22`) — two things do
+spawn a process, `route`/`ifconfig` for the LAN address and `xdg-open` for the web UI, both off the
+GTK thread on the control worker. So the objection is no longer "this window spawns nothing"; it is
+that a synthesiser is a third spawn with a much larger surface and no equivalent justification.
+**Flag for a ruling before any work.**
 
-### P-A5 — Math rendering (KaTeX) · size: medium
+### P-A5 — Math rendering (KaTeX) · size: medium · **largely shipped**
 
 Web renders LaTeX via KaTeX with dedicated protection passes
 (`utils/latex-protection.ts`, `constants/latex-protection.ts`, `styles/katex-custom.scss`).
-`src/jenova/markdown.nim` has no math concept; `$…$` and `\[…\]` render as literal text.
-For a system whose stated purpose is helping the user think, this is a real content gap.
 
-### P-A6 — Fork from a message, with options · size: small
+**As first written this row said `src/jenova/markdown.nim` "has no math concept" and that `$…$`
+and `\[…\]` "render as literal text". Both are now false**, and the route taken was not KaTeX —
+it is a native Cairo layout over the font's own OpenType MATH table, decided in report 05's open
+decision 1 and planned in `.devdocs/08-math-rendering.md`. Against that plan's four phases:
+
+* **M-1 shipped** — inline Tier 1 in `markdown.nim`: `mathSymbol` (`:150`), `mathUpright`
+  (`:340`), `mathDoubleStruck` (`:352`), `mathAccent` (`:369`) and the `mathItem`/`mathRun`/
+  `mathArg`/`mathMarkup` pass (`:386-590`) turn Greek and operator names into Unicode and `^`/`_`
+  into Pango sup/sub.
+* **M-2 shipped** — `src/jenova/mathtex.nim` (1,293 lines) parses to a tree and lays out to boxes
+  over TeXbook Appendix G rules, with `renderMath` at `:1258`. No drawing at all, by design, and
+  asserted as numbers by `math-selftest`.
+* **M-3 half shipped** — `src/jenova/mathfont.nim` (391 lines) is the font probe and constants
+  reader. **The Cairo draw is the open half**: `renderMath` has exactly one caller in the tree
+  (`src/jenova_core.nim:1959`, the self-test), so display maths is laid out and not yet painted.
+* **M-4 open** — alignment, `\begin{align}`, spacing classes, and the `docs/usage.md` statement of
+  the supported subset.
+
+**What remains of this row is M-3's draw and M-4.** Report 08 is the live plan and is accurate;
+this row is the parity view of it.
+
+### P-A6 — Fork from a message, with options · size: small · **fixed**
 
 Web forks from any message with a name and an `includeAttachments` choice
-(`ChatMessageActions.svelte:31,69-84`). The GUI forks only whole conversations from the
-sidebar row, always unnamed (`src/jenova/gui.nim:3163-3174`). `api.forkConversation`
-already takes name and target parameters, so this is a UI-layer gap only.
+(`ChatMessageActions.svelte:31,69-84`). The GUI used to fork only whole conversations from the
+sidebar row, always unnamed, because it passed an empty `atMessageId` to a proc that had always
+taken one. It now passes the message (`src/jenova/gui.nim:3706-3726`), and the sidebar's own fork
+keeps the whole-conversation meaning deliberately (`:3980-3983`). `api.forkConversation`
+(`src/jenova/api.nim:786`) is unchanged — this was a UI-layer gap and it is closed. The name and
+`includeAttachments` options are not surfaced; that is the remainder.
 
 ### P-A7 — PDF viewing · size: medium
-### P-A8 — File-asset access · size: medium
 
-`src/jenova/gui.nim:3213` — `sensitive = entity == "notes"`. A `fileAssets` row in the GUI
-tree is a **dead button**: it can be renamed and deleted but never opened, previewed,
-exported or read. The comment above it explains the choice ("a file asset has no editor to
-open, because its content may be binary"), but the effect is that files attached to a chat
-— which the GUI itself now writes (`src/jenova/gui.nim:1956`) — are write-only from the
-window that wrote them. The Web UI has a full explorer for the same rows.
+Open. `pdf.nim` extracts a page's text and there is no rasteriser, so `pdfAsImage` cannot be
+honoured — which is now what its `awaiting` string says (`src/jenova/settings.nim:129`) rather
+than blaming attachments. Nothing in `gui.nim` or `assetview.nim` references `pdf`.
+
+### P-A8 — File-asset access · size: medium · **fixed**
+
+**As first written this row said a `fileAssets` row was a dead button — "renamed and deleted but
+never opened, previewed, exported or read" — on the strength of `sensitive = entity == "notes"`.
+That is no longer the code.** `src/jenova/assetview.nim` is new and classifies an asset into
+`avEmpty` / `avImage` / `avText` / `avBinary` (`:20-23`, `classify` at `:104`), the window imports
+it (`gui.nim:58`), holds the decision (`:1303-1305`), and `openFileAsset` (`:4070`) opens the row —
+its own comment stating the defect it closes: *"a row that can only be renamed and deleted is a
+file this window wrote and cannot read"*. The tree sorts and filters by asset type as well
+(`:4003-4004`, `:4043`).
+
+`avEmpty` exists as its own answer because "nothing stored" and "no viewer for this type" are
+different claims — see report 07, V-10, which is what made an empty asset a real case rather than
+a defect.
 
 ---
 
@@ -289,28 +329,32 @@ shortcut-carrying buttons.
 
 ## 4. Class C — false implementations, dead surfaces, stale claims
 
-### P-C1 — Three settings are drawn, saved, and connected to nothing · severity: high
+### P-C1 — Three settings are drawn, saved, and connected to nothing · severity: high · **fixed**
 
-`src/jenova/settings.nim` marks these `awaiting: "attachments — PLANS.md Step 7b (G-30)"`:
+As first written: `src/jenova/settings.nim` marked three settings
+`awaiting: "attachments — PLANS.md Step 7b (G-30)"` — a blocker that had already shipped in full
+(file picker, drop zone, paste, PDF extraction, thumbnails, preview) — and each had **zero**
+consumers anywhere in `src/` outside `settings.nim`. They read as work forgotten rather than
+deferred, and a user setting `pdfAsImage` got no behaviour change and no warning beyond a stale
+sentence.
 
-| Key | Def | Consumers in `src/` outside `settings.nim` |
-|---|---|---|
-| `pasteLongTextToFileLen` | `src/jenova/settings.nim:105-111` | **0** |
-| `copyTextAttachmentsAsPlainText` | `src/jenova/settings.nim:112-118` | **0** |
-| `pdfAsImage` | `src/jenova/settings.nim:126-131` | **0** |
+**Re-counted against the tree — all three are wired:**
 
-Attachments (G-30) have shipped in full — file picker, drop zone, paste, PDF extraction,
-thumbnails, preview. The blocker these three name **no longer exists**, so they now read
-as work that was forgotten rather than deferred. A user setting `pdfAsImage` gets no
-behaviour change and no warning beyond a stale sentence.
+| Key | Def | Consumers in `src/` outside `settings.nim` | State |
+|---|---|---|---|
+| `pasteLongTextToFileLen` | `settings.nim:98` | **9** | wired through `composer.classifyInsertion` |
+| `copyTextAttachmentsAsPlainText` | `settings.nim:105` | **4** | wired through `pipeline.copyTextFor` |
+| `pdfAsImage` | `settings.nim:121` | **5** | read, but **honestly blocked** — `awaiting` at `:129` now names *a PDF rasteriser*, not attachments |
+| `autoMicOnEmpty` | `settings.nim:168` | **2** | **honestly blocked** — `awaiting` at `:173` names audio capture (P-A3), which is real |
 
-A fourth, `autoMicOnEmpty` (`src/jenova/settings.nim:157-163`, `awaiting: "audio capture"`),
-is honestly blocked — its blocker (P-A3) is real.
+So both halves of the fix were taken: two were wired, and the two that stay deferred name the
+blocker they actually have. No `awaiting` string in the file mentions attachments or `PLANS.md`
+any more.
 
-**Fix:** wire the three, or if they are to stay deferred, update `awaiting` to name the
-actual remaining blocker. The self-test at `src/jenova_core.nim:2773-2774` asserts these
-strings are non-empty, so it will keep passing either way — the assertion checks that a
-reason exists, not that it is true.
+The self-test that only asserted these strings are non-empty would have passed either way. It is
+no longer the only guard: `src/jenova_core.nim:4961-4968` walks `settings.Defs` and fails the build
+on a raw `<`, `>` or `&` in any `label` or `help` — see report 07, V-16, which is a different
+defect in the same strings, found by actually rendering the panel.
 
 ### P-C2 — The Web UI calls three endpoints this server does not implement · severity: medium
 
@@ -447,7 +491,7 @@ is a channel message and a panel, and no other surface can show it.
 | P-A2 | Agentic tool loop | absent | L | **parked** — downstream of P-A1 |
 | P-A3 | Audio capture | absent | M | open. `pipeline.contentFor` already emits `input_audio` parts, so the wire format is done and only the recorder is missing |
 | P-A4 | Speech synthesis | absent | S | **parked** — deferred to future planning (ruling) |
-| P-A5 | Math rendering | absent | M | **open — now the largest rendering gap**, and the only one left in the markdown path |
+| P-A5 | Math rendering | partial | M | **largely shipped.** Not KaTeX — a native Cairo layout over the font's OpenType MATH table (report 08). M-1 inline maths in `markdown.nim` and M-2 `mathtex.nim`'s parser and box layout are both in, asserted by `math-selftest`; `mathfont.nim` is M-3's font half. **Open: M-3's Cairo draw** — `renderMath` has one caller and it is the self-test, so display maths is laid out and not painted — **and M-4** |
 | P-A6 | Fork from a message | absent | S | **done** — `api.forkConversation` already took an `atMessageId`; the window had never passed one |
 | P-A7 | PDF viewing | absent | M | open |
 | P-A8 | File-asset open/preview/export | absent | M | **done (session 9).** New `src/jenova/assetview.nim` decides image/text/binary/empty below the widget layer, 40 assertions; the row activates into a viewer reusing the transcript's own decoder, and Export is a `FileChooserSave` with `filters`. `avEmpty` is its own answer because of V-10 |
@@ -460,7 +504,7 @@ is a channel message and a panel, and no other surface can show it.
 | P-B10 | `useThinking` toggle | absent | S | **done (session 9).** Verified against `chat.service.ts:120-122`: it is a `[THINKING LOGIC]` directive on the system message, **never a wire flag** — `llama-server` has no such parameter, so a JSON key of that name would have been a control wired to nothing |
 | P-B3 | Markdown block coverage | partial | S remaining | **mostly done** — see the correction above. What is left is P-A5 |
 | P-B12 | Keyboard shortcuts | partial | M | **mechanism done, bindings started.** `shortcuts.ShortcutHost` owns one window-level `GtkShortcutController` at `GTK_SHORTCUT_SCOPE_MANAGED`; bindings are a `seq[Binding]`, so adding one is a table row. F11 moved off `fullscreenButton`, which removes the container constraint at its source — no button carries a `shortcut` now. Five bindings ship: F11, `<Ctrl>n`, `<Ctrl>b`, `<Ctrl>comma`, `<Ctrl>Escape`. **Type-checked, not run** |
-| P-C1 | Three unwired settings | false impl | S | **2 of 3 done.** `copyTextAttachmentsAsPlainText` and `pasteLongTextToFileLen` are wired; `pdfAsImage` needs a rasteriser and is honestly blocked — see report 03, W-01 |
+| P-C1 | Three unwired settings | false impl | S | **done.** `copyTextAttachmentsAsPlainText` and `pasteLongTextToFileLen` are wired — re-counted, 4 and 9 consumers outside `settings.nim`; `pdfAsImage` is read but needs a rasteriser and its `awaiting` now says so, as does `autoMicOnEmpty`'s. No `awaiting` string blames attachments or `PLANS.md` any more — see report 03, W-01 |
 | P-C2 | Three unserved endpoints called by the Web UI | dead surface | S | **won't fix — `jca_web` is frozen.** `/models/load` and `/models/unload` are unreachable in practice (they need ROUTER mode, which this server never reports). `/cors-proxy` fails gracefully but does silently disable remote MCP servers — which is moot while MCP is parked, and is the argument for a **server-side** MCP client when it is revisited |
 | P-C3 | Push/Pull vestigial | dead surface | S | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
 | P-C4 | Models panel empty-state | — | — | **withdrawn — the finding was wrong**, see above |

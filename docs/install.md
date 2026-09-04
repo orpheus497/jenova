@@ -106,7 +106,7 @@ These ship with FreeBSD and are never packages. Anything telling you to install 
 |---|---|
 | **GNU make** (`gmake`) and base `make(1)` | There is no Makefile. `nimble` is the build system |
 | **GNU coreutils** | Only ever wanted for `realpath(1)`, which FreeBSD has in base |
-| **bash** | Every script the product builds or runs is POSIX `/bin/sh` — the six suites under `tests/` and `jca_web/scripts/post-build.sh`. Two Web UI *developer* scripts are `#!/bin/bash` (`jca_web/scripts/dev.sh`, `install-git-hooks.sh`); neither is needed to build or run Jenova |
+| **bash** | Every script the product builds or runs is POSIX `/bin/sh` — the eight suites under `tests/`, which now include the GUI harnesses `gui_check.sh` and `gui_build.sh`, and `jca_web/scripts/post-build.sh`. Two Web UI *developer* scripts are `#!/bin/bash` (`jca_web/scripts/dev.sh`, `install-git-hooks.sh`); neither is needed to build or run Jenova |
 
 The first and third are GPL, which this project's dependency policy excludes.
 

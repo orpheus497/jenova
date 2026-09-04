@@ -367,8 +367,8 @@ proc readNoteMirror*(id, title, folderId, projectId, workspaceId: string):
 
 ## Function purpose: the bytes a stored asset belongs on disk as. Assets arrive
 ## as `data:` URIs, so the payload is decoded here — otherwise every uploaded
-## image is mirrored as its own text encoding. A payload whose length is not a
-## multiple of four is refused rather than written truncated, which is what the
+## image is mirrored as its own text encoding. A payload whose length cannot be
+## base64 at all is refused rather than written truncated, which is what the
 ## flag distinguishes from a payload that is legitimately empty.
 proc assetPayload(content: string): tuple[ok: bool, bytes: string] =
   const marker = "base64,"
@@ -379,7 +379,16 @@ proc assetPayload(content: string): tuple[ok: bool, bytes: string] =
   for ch in content[(idx + marker.len) .. ^1]:
     if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}:
       clean.add ch
-  if clean.len mod 4 != 0: return (false, "")
+  # Padding is stripped before the length is measured, and then only a
+  # remainder of 1 is refused. base64 encodes three bytes to four characters,
+  # so an unpadded tail of 2 or 3 characters is one or two bytes and decodes
+  # exactly; 1 is the only length base64 cannot produce. Measuring the padded
+  # length instead refused every unpadded `data:` URI — and the cost of that is
+  # not cosmetic, because `syncFileAsset` returns false and `api.upsert` then
+  # deletes the row it has already written, so the upload is lost and the
+  # client is told the save failed.
+  clean = clean.strip(leading = false, chars = {'='})
+  if clean.len mod 4 == 1: return (false, "")
   try:
     (true, base64.decode(clean))
   except ValueError:
@@ -429,6 +438,17 @@ proc hasAssetBytes(id: string): bool =
 ## with or without one — and they sit in a repository whose history is the
 ## user's to write: `gitAdd` stages and never commits, so deleting them here
 ## would author a change into the user's own tree that the user did not make.
+## Function purpose: whether this content would put a file on disk at all, which
+## is what a rename has to know before it trashes the old one. `syncFileAsset`
+## answers `true` for a row with no bytes because writing nothing is the correct
+## outcome there (report 07, V-10) — but "succeeded" and "wrote a file" are then
+## two different claims, and only the second one makes trashing the previous
+## file safe. Asked of the content rather than of the disk, so it is the same
+## decision the writer makes and cannot drift from it.
+proc contentWritesAFile*(content: string): bool =
+  let (decoded, payload) = assetPayload(content)
+  decoded and payload.len > 0
+
 proc syncFileAsset*(id, name, content, folderId, projectId,
                     workspaceId: string): bool =
   let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)

@@ -97,10 +97,13 @@ proc mimeFromName*(name: string): string =
 ## choice, so the sidebar row, the files list and the viewer panel cannot
 ## disagree about what a given asset is.
 ##
-## Action purpose: the byte scan outranks every declaration. `type` is written
-## by whichever client uploaded the row — the window writes the literal
-## `image/*` for an image and `text/plain` for everything else — so trusting it
-## would send a text file to an image loader on the strength of a name.
+## Action purpose: the byte scan outranks every declaration **except a `data:`
+## URI's own**. `type` is written by whichever client uploaded the row — the
+## window writes the literal `image/*` for an image and `text/plain` for
+## everything else — so trusting it would send a text file to an image loader on
+## the strength of a name. A `data:` URI is the exception because its type was
+## written around these exact bytes rather than guessed from them; see the
+## branch below, which says why an SVG needs that exception.
 proc classify*(name, declaredType, content: string): AssetView =
   let (isData, dataMime, encoded) = splitDataUrl(content)
   var bytes = content
@@ -121,16 +124,33 @@ proc classify*(name, declaredType, content: string): AssetView =
     else: mimeFromName(name)
   result.data = bytes
 
+  # Action purpose: **which of the two decides depends on where the type came
+  # from**, and the header above overstated it as "the byte scan outranks every
+  # declaration". A `data:` URI carries its own type, written by the client that
+  # built the URI around the very bytes being classified, so there it is a
+  # statement and not a guess — and it has to win, or an SVG, whose bytes are
+  # textual, would be shown as XML source instead of drawn.
+  #
+  # Without a `data:` URI there is no such statement. The type is then the row's
+  # `type` column or, failing that, the file's own name — and a name is exactly
+  # the evidence the header refuses to trust. A text row declared `image/png`,
+  # or a text file called `notes.png`, went to the image loader on the strength
+  # of that name and failed to decode bytes the viewer could have shown.
+  let mimeIsStated = isData and dataMime.len > 0
+  let looksLikeImage = result.mime.startsWith("image/") or
+                       (result.mime.len == 0 and
+                        mimeFromName(name).startsWith("image/"))
   if bytes.len == 0:
     result.viewer = avEmpty
-  elif result.mime.startsWith("image/") or
-       (result.mime.len == 0 and mimeFromName(name).startsWith("image/")):
+  elif mimeIsStated and looksLikeImage:
     result.viewer = avImage
   elif pipeline.looksTextual(bytes):
     # The same test the attach path uses, not a second one: a file the composer
     # would take as text must read as text here, or the two surfaces disagree
     # about the same bytes.
     result.viewer = avText
+  elif looksLikeImage:
+    result.viewer = avImage
   else:
     result.viewer = avBinary
 
@@ -185,9 +205,21 @@ const PreviewTextCap* = 256 * 1024
 ## Function purpose: the shown text plus whether anything was left out, because
 ## a view that silently stops at a cap is indistinguishable from a file that
 ## ends there.
+##
+## Action purpose: the cut is walked back to a character boundary. The cap is a
+## byte count and the data is UTF-8, so slicing at it lands mid-sequence for any
+## multi-byte character straddling the mark — and the result goes into a
+## `TextBuffer`, which requires valid UTF-8 and rejects the whole string rather
+## than dropping the broken tail. A continuation byte is `10xxxxxx`, so backing
+## up over continuation bytes reaches the lead byte of the straddling character
+## and dropping it is the only cut that cannot split one. At most three bytes
+## are given up, out of 256 KiB.
 proc previewText*(data: string): tuple[text: string, truncated: bool] =
   if data.len <= PreviewTextCap: return (data, false)
-  (data[0 ..< PreviewTextCap], true)
+  var stop = PreviewTextCap
+  while stop > 0 and (data[stop].uint8 and 0b1100_0000'u8) == 0b1000_0000'u8:
+    dec stop
+  (data[0 ..< stop], true)
 
 ## Function purpose: the name to offer in the export dialog. The stored name is
 ## what the user uploaded and is the right suggestion; it is stripped of any

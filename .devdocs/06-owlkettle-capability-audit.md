@@ -101,39 +101,31 @@ confirmed and `-d:adwminor` set to match.
 
 ---
 
-## 3. The transcript is not virtualised · **severity: high**
+## 3. The transcript · **widget half done; cache half open**
 
-`gui.nim:3674`:
-
-```nim
-for i, m in (if app.openNote.len > 0: @[] else: app.messages):
-  Frame {.expand: false.}:
-```
-
-Every message in the open conversation is a live widget subtree, inside a `Box`, inside
-`AutoScroll`. A thousand-turn conversation is a thousand `Frame`s with their children, built and
-retained.
+**As first written this section read "the transcript is not virtualised · severity: high", and
+quoted the `for i, m in … Frame` loop at `gui.nim:3674` that built one live widget subtree per
+message.** That loop is gone. The transcript is a `ListView` (`gui.nim:4589`), so the heading and
+the excerpt are kept only as the statement of what was fixed.
 
 **`ListView` (`widgets.nim:4432`) is GTK4's virtualised list and owlkettle exposes it fully.**
 It wraps `gtk_list_view_new` over a `GListModel` with a `GtkSignalListItemFactory`, and its
 `bind`/`unbind` callbacks build and destroy item widgets as they scroll into and out of view
 (`widgets.nim:4463-4486`). The interface is `proc viewItem(index: int): Widget` plus a `size`.
 
-**This reframes report 03's M-01 as a symptom.** `BlockMemo`, `ParseMemo` and `thumbCache` were
-unbounded because the design requires holding every rendered message at once. Session 2 capped
-and cleared them, which was correct and remains correct — but a `ListView` transcript needs a
-cache proportional to the *viewport*, not the conversation. The cure for the memory pressure is
-the right widget, not a bigger lid.
+> **Done, session 7 — and it measures.** On a 400-turn conversation the resident set after load
+> falls from 297 MiB to 267 MiB, reproducibly across runs. The widget subtrees are viewport-scaled.
+> `gui.nim:4436-4452` records the constraint that makes it real: a `GtkListView` virtualises only
+> when it is the scrolled window's direct child, so the reading-width column had to move.
 
-> **Done, session 7 — and it measures.** The transcript is a `ListView`, and on a 400-turn
-> conversation the resident set after load falls from 297 MiB to 267 MiB, reproducibly across
-> runs. The widget subtrees are now viewport-scaled.
->
-> **Phase 2.2 is still open, and scrolling shows why.** Scrolling that same conversation to turn
-> 130 takes the resident set to 320 MiB: the rows recycle, but `BlockMemo`, `ParseMemo` and
-> `thumbCache` are keyed by message id and still grow with the number of messages *ever
-> rendered*, bounded only by session 2's caps. Reducing them to viewport scale is the other half
-> of this finding and has not been done.
+**The cache half is still open, and it reframes report 03's M-01 as a symptom.** `BlockMemo`,
+`ParseMemo` and `thumbCache` were unbounded because the old design required holding every rendered
+message at once. Session 2 capped and cleared them, which was correct and remains correct — but a
+`ListView` transcript wants a cache proportional to the *viewport*, not the conversation. Scrolling
+that same 400-turn conversation to turn 130 takes the resident set to 320 MiB: the rows recycle,
+but all three are still module-level `var`s keyed by message id (`gui.nim:1757`, `:2126`, `:2278`)
+and grow with the number of messages *ever* rendered, bounded only by session 2's caps. **Verified
+still open.** Reducing them to viewport scale is Phase 2.2 and has not been done.
 
 `ColumnView` (`widgets.nim`) is the same mechanism with columns.
 

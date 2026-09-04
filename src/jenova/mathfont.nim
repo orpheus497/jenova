@@ -57,9 +57,14 @@
 ## before `curl`.
 
 import std/[os, strutils]
+import ./pkgconfig
 
-{.passC: staticExec("pkg-config --cflags harfbuzz").}
-{.passL: staticExec("pkg-config --libs harfbuzz").}
+# Through the template and not a bare `staticExec`, for the reason
+# `pkgconfig.nim` gives: `staticExec` discards the exit status, so on a machine
+# without HarfBuzz pkg-config's own error text is spliced into `passC`/`passL`
+# and the build ends in compiler errors naming no missing dependency. This was
+# the last hand-written binding still doing it (report 07, V-04).
+pkgConfig("harfbuzz", "print/harfbuzz")
 
 type
   HbBlob = distinct pointer

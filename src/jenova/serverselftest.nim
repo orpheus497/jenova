@@ -118,13 +118,20 @@ proc streamClient(arg: ClientArg) {.thread.} =
         let rec = buf[0 ..< i]
         buf = buf[i + 4 .. ^1]
         if not rec.startsWith("data:"): continue
-        r.events.inc
         # The stamp is seconds as a float; the marker is matched rather than the
         # body parsed, because a JSON parser here would be a dependency of the
         # measurement on the thing being measured.
         var sent = -1.0
         let k = rec.find("\"t\":")
+        # Action purpose: counted only once the record is known to carry a
+        # stamp, which is what separates a generated event from the terminal
+        # `data: {"done":true}` the handler sends after the loop
+        # (`server.nim:339`). Counting that one made the total `n + 1`, so the
+        # truncation test below — `events < StreamEvents` — passed on a stream
+        # that had dropped exactly one event, which is the smallest truncation
+        # it exists to catch.
         if k >= 0:
+          r.events.inc
           var stop = k + 4
           while stop < rec.len and rec[stop] in {'0' .. '9', '.', '-', '+', 'e', 'E'}:
             inc stop
@@ -429,14 +436,28 @@ proc relayPhase(): int =
 
   block shorterThanAStatusLine:
     # An upstream that dies mid-status-line leaves those bytes in the
-    # accumulation, and dropping them turns a short reply into no reply at all.
+    # accumulation, and `forward` discards them rather than forwarding them.
+    #
+    # **This block used to assert the opposite** — that the bytes reach the
+    # client and the run counts as `roComplete` — which is the contract
+    # `upstream.nim:204-213` deliberately does not implement. Bytes surviving to
+    # the tail mean no status line was ever completed, so forwarding them sends
+    # the client a fragment that is not an HTTP response, counts it as relayed,
+    # and reports success over it — an answer the response cache is then
+    # entitled to store. Less than a status line is no reply, not a short one.
+    # The assertion follows the implementation because the implementation is the
+    # one with the argument; asserting the discard is what stops it being undone
+    # by accident.
     const Stub = "HTTP/1.1 200 O"
     let run = driveRelay(Stub, RelayExtra, Stub.len)
-    check("a reply too short to hold a status line still reaches the client",
-          run.client == Stub, run.client)
-    check("and is teed", run.captured == Stub)
-    check("and counts as a relay, not an unavailable upstream",
-          run.outcome == upstream.roComplete, $run.outcome)
+    check("a reply too short to hold a status line is not forwarded",
+          not run.client.contains(Stub), run.client)
+    check("the client is told the upstream is unavailable instead",
+          run.client.contains("502"), run.client)
+    check("nothing is teed, so the cache cannot store a fragment",
+          run.captured.len == 0, run.captured)
+    check("and it counts as an unavailable upstream, not a relay",
+          run.outcome == upstream.roUnavailable, $run.outcome)
 
   block theProbeIsBounded:
     # The one direction the splice is allowed to fail in: an upstream that sends

@@ -372,7 +372,7 @@ rows over current ones.
 | E-02 | Non-async-signal-safe work between `fork` and `exec` | error | medium | **fixed.** The environment is materialised as an explicit `envp` in the parent and handed to `execve`; the child now calls only `setsid`, `open`, `dup2`, `close`, `execve` |
 | E-03 | 32 silent exception handlers | error | medium | **closed.** All 32 read: thirty are correct and now say why where it was not obvious; `gui.setLanState` was the one hiding a fault a user could act on — a failed write left the LAN toggle claiming a state the next start would not have — and now reports it |
 | E-04 | Error-body reader | — | none | **withdrawn — the finding was wrong** (see above). A fix was written and reverted |
-| E-05 | Pipeline diagnostics discarded; silent history trimming | wiring | medium | **fixed.** Intent, RAG hits, web hits, editor-document and trimmed-turn count travel as response headers; documented in `docs/usage.md`. The splice is built to fail only by omitting the header, never by damaging the stream, and was driven end-to-end against a fake upstream. **Session 9 correction: that driver is not in the tree.** `grep -rln` across `src/` and `tests/` finds it nowhere and `serverselftest.nim` mentions neither `upstream` nor `forward`, so the verification cannot be re-run and a regression in the splice passes every suite. Tracked as report 07, V-09 |
+| E-05 | Pipeline diagnostics discarded; silent history trimming | wiring | medium | **fixed.** Intent, RAG hits, web hits, editor-document and trimmed-turn count travel as response headers; documented in `docs/usage.md`. The splice is built to fail only by omitting the header, never by damaging the stream, and was driven end-to-end against a fake upstream. **Session 9 recorded that the driver was not in the tree (report 07, V-09); it is now.** `serverselftest.nim:16` imports `upstream` and `:184-284` is the fake upstream that drives `upstream.forward`, so the verification is re-runnable and a regression in the splice fails `serve-selftest` |
 | E-06 | `lanAddress` spawns 3 shells on the GTK thread; header claim false | error | medium | **fixed, and then fixed better (session 7).** The worker job was moved off the GTK thread first. Session 7 found that the two call sites it existed for were resolving the address on a *flag flip*, which cannot change the answer — `run` binds the socket before the window exists and nothing in the process moves it. With the refetch removed, the `lan_addr` job and `umLanAddr` had no caller and are gone: the address is resolved once, at startup, in the one synchronous call this finding already blessed |
 | M-01 | Three unbounded GUI caches, never cleared | memory | **high** | **fixed.** `BlockMemo` and `ParseMemo` gain caps with oldest-first batch eviction and a `clear`; `thumbCache` gains a cap; all three are emptied on a conversation switch and the two keyed ones forgotten on a delete. Asserted by overrunning the caps, not by reading the constants |
 | M-02 | Attachment disk cache never swept | memory | medium | **fixed.** `paths.sweepCache` prunes oldest-first at startup and **matches only `attach-*`** — asserted, because `cacheDir` comes from an environment variable and this is exactly how B-07 happened |
@@ -938,8 +938,9 @@ implied**:
   this session. This is real execution, not a compile.
 * **The `lifecycle-selftest` was proven to fail without its fix** by reverting `isAlive` in the
   scratch tree and re-running.
-* **`upstream.forward` was driven end-to-end** — **but the driver was never committed, so this
-  line is now a claim nobody can check (report 07, V-09).** It ran against a fake upstream that feeds a response head
+* **`upstream.forward` was driven end-to-end.** The driver went uncommitted at first, which made
+  this line a claim nobody could check (report 07, V-09); it is committed now, at
+  `serverselftest.nim:184-284`. It runs against a fake upstream that feeds a response head
   in seven-byte packets, confirming that headers splice correctly, that the no-header path stays
   byte-identical, that a 200 KB body relays whole, that a reply shorter than a status line is not
   dropped, and that the response-cache tee matches the client's bytes exactly in every case.
@@ -953,3 +954,80 @@ wrong callback signature, an owlkettle API misuse. The GUI edits were kept minim
 and none of them changes the child count of a container holding a shortcut-carrying button, which
 is the documented hazard (`gui.nim`, G-51). **The first FreeBSD build of this branch is the real
 test of the GUI changes.**
+
+---
+
+## A sixth review pass: five real, one skipped as not yet reachable · session 10
+
+Six findings against this branch's own work. Each was checked against the tree before anything was
+changed, and every fix below is asserted by a suite that was run.
+
+### R-24 · the relay's contract and its self-test asserted opposite things · **critical**
+
+`upstream.forward` clears `pending` at the tail, so an upstream that closes having sent fewer bytes
+than a status line yields a 502 and `roUnavailable`. `shorterThanAStatusLine` in
+`serverselftest.nim` asserted the opposite — that those bytes reach the client and the run reports
+`roComplete`. **Phase 4 of `serve-selftest` failed on every run**, and the failure was in this
+branch, which had added both halves.
+
+The implementation is the half with the argument, and it is written down at `upstream.nim:204-213`:
+bytes surviving to the tail mean no status line was ever completed, so forwarding them sends the
+client a fragment that is not an HTTP response, counts it as relayed, and reports success over it —
+an answer the response cache is entitled to store. The assertion now follows the implementation and
+states the discard positively, so undoing it fails a test rather than passing one.
+
+### R-25 · valid uploads were refused, and the row deleted behind them · **high**
+
+`assetPayload` measured `clean.len mod 4 != 0` against a string that still carried its `=` padding,
+so any `data:` URI whose base64 omitted the optional padding — remainder 2 or 3 — was refused.
+`base64.decode` handles both correctly; verified by running it. The cost is not cosmetic:
+`syncFileAsset` returns false, and `api.upsert` then deletes the row it has already written, so the
+upload is lost and the client is told the save failed. Padding is stripped before the length is
+measured now, and only a remainder of 1 — the one length base64 cannot produce — is refused.
+
+### R-26 · a rename could trash the old file and write nothing in its place · **medium**
+
+The other half of report 07's V-10. `syncFileAsset` answers `true` for a row with no bytes having
+written nothing, which is correct on its own — but `api.mirrorUpsert` paired that success with the
+rename cleanup and trashed the previous file. `loadFileAsset` stops the rename that caused it in
+the window; nothing stopped it at `putEntity`, which is the layer the frozen Web UI reaches too.
+New `fssync.contentWritesAFile` separates "succeeded" from "wrote a file", and the cleanup is
+gated on the second.
+
+### R-27 · `chatBody` wrote into its caller's `JsonNode` · **medium**
+
+`JsonNode` is a ref, so `appendToSystem` reached back into whatever the caller passed: building two
+bodies from one turn put the workspace context and the thinking directive in twice. The assertions
+in `jenova_core.nim` already worked around it by constructing a fresh literal per call rather than
+reusing one, which is the shape of a defect rather than of a decision. Copied now, and only when
+there is something to inject, so the common path allocates nothing extra.
+
+### R-28 · two smaller ones, both contradicting a comment beside them
+
+* **`thumbCache` cached nil.** The comment said *"Only cache a successful load: caching nil would
+  make one unreadable image permanently unreadable"* and the store below it was unconditional.
+  `loadPixbuf` answers nil without raising, so one undecodable file poisoned its key for the life
+  of the process — including after the cause was fixed. The store is now inside the test its own
+  comment describes.
+* **`assetview.classify` trusted a filename it said it would not.** The header claimed the byte
+  scan outranks every declaration; the branch order let `mimeFromName` route a text file called
+  `notes.png` to the image loader. Corrected on both sides — a `data:` URI's own type still wins,
+  because it was written around those exact bytes and because an SVG's bytes are textual, and the
+  comment now says so instead of overstating the rule.
+
+### Skipped: the `mathfont` → `mathtex` metrics bridge · **not yet reachable**
+
+Reported as major: the two modules declare `MathConstants` types of different shapes (24 fields
+against 45) and `readConstants` omits metrics `mathtex` consumes. **Verified, and it cannot fail
+today** — nothing imports `mathfont`, `readConstants` has no caller in the tree, and the only
+caller of `renderMath` is `math-selftest`, which builds its `MathFont` by hand. It is a
+prerequisite of M-3's Cairo draw rather than a defect in shipped code, so it is recorded in
+`.devdocs/08-math-rendering.md` beside the phase that has to close it.
+
+### What was run
+
+`nimble core`, `nimble gui`, all **20** `-selftest` subcommands, `tests/gui_check.sh`, and the six
+`tests/test_*.sh` suites — all green. `bin/jenova --check` passes, and so does the panel-open
+variant with all nine guards forced true, with no GTK criticals and no markup errors. The
+mapped-window half of `tests/gui_build.sh` still cannot run here: `Xvfb`, `xdotool` and `xclip` are
+absent on this host, which is the same limit report 07 §0 records.

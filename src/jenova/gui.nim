@@ -2324,16 +2324,23 @@ proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
     createDir(dir)
     if not fileExists(file): writeFile(file, bytes)
     result = loadPixbuf(file, size, size, preserveAspectRatio = true)
-    if not thumbCache.hasKey(key):
-      thumbOrder.add key
-      # Batch eviction, for the reason `markdown.evict` gives: this runs from
-      # `view`, and a per-insert `delete(0)` is an O(n) shift on a path that
-      # must do no work proportional to anything.
-      if thumbOrder.len > ThumbCacheCap:
-        let drop = max(1, ThumbCacheCap div 4)
-        for i in 0 ..< drop: thumbCache.del(thumbOrder[i])
-        thumbOrder = thumbOrder[drop .. ^1]
-    thumbCache[key] = result
+    # The comment above is the rule, and the store has to obey it: `loadPixbuf`
+    # answers nil for a file it cannot decode without raising, so an
+    # unconditional store put that nil in the table and every later call
+    # returned it from the hit path above — permanently, including after the
+    # cause was fixed. Nothing is cached and nothing is ordered unless there is
+    # a pixbuf to cache.
+    if result != nil:
+      if not thumbCache.hasKey(key):
+        thumbOrder.add key
+        # Batch eviction, for the reason `markdown.evict` gives: this runs from
+        # `view`, and a per-insert `delete(0)` is an O(n) shift on a path that
+        # must do no work proportional to anything.
+        if thumbOrder.len > ThumbCacheCap:
+          let drop = max(1, ThumbCacheCap div 4)
+          for i in 0 ..< drop: thumbCache.del(thumbOrder[i])
+          thumbOrder = thumbOrder[drop .. ^1]
+      thumbCache[key] = result
   except CatchableError:
     # A file that is not a decodable image is not an error worth a notice — the
     # chip falls back to its name and type.

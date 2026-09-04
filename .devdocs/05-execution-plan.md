@@ -36,6 +36,14 @@ Two changes, both small, both gating everything after.
 
 **Exit:** the build sees the whole toolkit; the comment rule is where a future session reads it.
 
+> **State: 0.1 done, 0.2 not done.** `jenova_core.nimble:46` sets `-d:adwminor=4`, so all seven
+> `{.since: AdwVersion >= (1, x).}` widgets are in the binary (report 06 §2), and `:24` pins
+> owlkettle to `ac61ecf` rather than trusting `>= 3.0.0`, which the `v3.0.0` tag and `main` both
+> satisfied while differing. **Report 07's cross-reference calls this phase closed; it is not.**
+> Step 0.2 — recording report 04 §3's comment standard where a future session reads it — has not
+> happened: there is no `CLAUDE.md` in the repository. Every phase written since has been written
+> without it.
+
 ---
 
 ## Phase 1 — FreeBSD build and first run (1 session)
@@ -82,6 +90,19 @@ one place where `ListView`'s recycling and the token stream can fight. If 2.3 do
 fall back to virtualising only conversations above a length threshold and record why.
 
 **Exit:** a long conversation costs viewport memory, not conversation memory.
+
+> **State: 2.1 and 2.3–2.5 done; 2.2 open. The risk did not materialise.** The transcript is a
+> `ListView` (`gui.nim:4589`) and streaming into it holds, so the fallback above was never needed
+> — open decision 3 is closed by that. On a 400-turn conversation the resident set after load
+> falls 297 → 267 MiB. `gui.nim:4436-4452` records the constraint that made it real: a
+> `GtkListView` virtualises only as the scrolled window's direct child, so the reading-width
+> `Clamp` had to move rather than wrap it.
+>
+> **2.2 is the open half and the phase's exit condition is not met without it.** `BlockMemo`,
+> `ParseMemo` and `thumbCache` are still module-level `var`s keyed by message id
+> (`gui.nim:1757`, `:2126`, `:2278`), growing with messages *ever* rendered and bounded only by
+> session 2's caps — scrolling that same conversation to turn 130 reaches 320 MiB. The rows
+> recycle; the caches do not. See report 06 §3.
 
 ---
 
@@ -147,6 +168,13 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 
 **Exit:** the window is keyboard-driveable. P-B12 closes, P-E1 ships.
 
+> **State: 4.1 and 4.2 done; 4.3 open.** `src/jenova/shortcuts.nim` owns one window-level
+> `GtkShortcutController` at managed scope and bindings are a `seq[Binding]`
+> (`gui.nim:6346` `keyBindings`); no button carries a `shortcut` any more, which removes the
+> container hazard at its source. Five bindings ship: F11, `<Ctrl>n`, `<Ctrl>b`, `<Ctrl>comma`,
+> `<Ctrl>Escape`. **P-E1, the command palette, does not exist** — `grep -in palette src/` finds
+> only colour palettes — so the phase's second exit condition is unmet.
+
 ---
 
 ## Phase 5 — Settings, files and trash as native lists (1 session)
@@ -159,6 +187,13 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 | 5.4 | **P-B5** attachment "view all" · **P-B8** favourite models · **P-B11** selective export |
 
 **Exit:** the three list surfaces are native. Four Class B gaps and one Class A gap close.
+
+> **State: 5.2 and 5.3 done.** P-B6 — Files and Trash — landed as `ColumnView`s, except that the
+> trash stays a plain list on purpose (report 06 §3: it holds two lists of different kinds, and
+> presenting them as one would be a false claim about what restoring one does). P-A8 landed as
+> `src/jenova/assetview.nim` plus `openFileAsset` (`gui.nim:4070`). Header-click sorting is not
+> wire-able: owlkettle binds no `GtkSorter` at `ac61ecf` (report 07, V-13). **5.1 and 5.4 are
+> open.**
 
 ---
 
@@ -174,6 +209,11 @@ to fit · **P-E4** retrieval inspector — which chunks the last turn retrieved,
 **P-B2** real processing state from the same channel · **P-B9** show the system message ·
 **P-B10** `useThinking` toggle.
 
+> **State: done.** `src/jenova/inspect.nim` parses the diagnostic headers into
+> `inspect.Diagnostics`, the window holds one (`gui.nim:1261`) and fills it from the stream
+> (`:1596`), clearing it per request (`:2191`). All five items in this phase are marked done in
+> report 02's tracker.
+
 ---
 
 ## Phase 7 — Rendering and media (1–2 sessions)
@@ -184,6 +224,14 @@ unblocks `pdfAsImage`, the one setting still honestly marked pending · **P-A3**
 also unblocks `autoMicOnEmpty`, the last pending setting).
 
 **P-A5 needs a decision before starting** — see Open decisions.
+
+> **State: P-B4 done; P-A5 largely done; P-A7 and P-A3 open.** The P-A5 decision was taken
+> (open decision 1) and three of its four phases have shipped: `markdown.nim`'s inline pass,
+> `mathtex.nim`'s parser and box layout, and `mathfont.nim`'s font probe. **What is left in this
+> phase is M-3's Cairo draw** — `renderMath` has exactly one caller and it is the self-test, so
+> display maths is laid out and not painted — plus M-4's polish. P-A7 still has no rasteriser, so
+> `pdfAsImage` is still pending, and P-A3 still has no recorder, so `autoMicOnEmpty` is too;
+> both settings now name those blockers rather than the shipped one.
 
 ---
 
@@ -216,7 +264,8 @@ absorbed into Phase 4.
    own OpenType MATH table. Pango links HarfBuzz, and HarfBuzz exposes the whole MATH table, so
    TeX-quality metrics need **no new library and no process spawn**. The plan is
    `.devdocs/08-math-rendering.md`: two tiers, four phases, one open question (which font Tier 2
-   prefers, and whether it may be a dependency).
+   prefers, and whether it may be a dependency). **Three of the four phases have since shipped**
+   — M-1, M-2 and M-3's font half — leaving M-3's Cairo draw and M-4.
 2. **D-15** — `etc/jenova.conf` sets `JENOVA_DRAFT=0` while its source profile and the README say
    the drafter is on; drift from `7b859f5` updating the profile without re-applying it. Untouched
    on purpose: it changes inference behaviour, and the fix is `hardware apply`, not a hand-edit —
