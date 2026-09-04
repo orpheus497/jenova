@@ -3230,12 +3230,18 @@ renderable DraftView of BaseWidget:
 ## did. That is visible and wrong in the sidebar: "Rename" turns the row into an
 ## entry, and the menu was left standing on top of it, swallowing the typing.
 ##
-## So this is the same `GtkModelButton` — created exactly as `ModelButton` does,
-## through `g_object_new(g_type_from_name("GtkModelButton"))` — with one thing
+## So this is the same `GtkModelButton`, created as `ModelButton` creates one —
+## `g_object_new(g_type_from_name("GtkModelButton"), nil)` — with one thing
 ## added: the callback walks up to the enclosing `GtkPopover` and pops it down
 ## **before** running the handler. Before, not after: the handler may put a
 ## widget where the popover is standing, and the entry has to be the thing left
 ## on screen.
+##
+## **"As `ModelButton` does" has to mean the whole call, terminator included.**
+## This was written with the arguments copied and the trailing `nil` left off,
+## which owlkettle's `{.varargs.}` binding accepts silently — and the window then
+## segfaulted before it drew a frame. That is recorded here rather than only at
+## the call site, because this paragraph is what invited the omission.
 ##
 ## `gtk_widget_get_ancestor` is the only proto declared here; the other six calls
 ## are already in owlkettle's bindings and are imported above, per rule 5.
@@ -3254,8 +3260,17 @@ renderable MenuItem of BaseWidget:
 
   hooks:
     beforeBuild:
+      # Action purpose: the trailing `nil` is the whole of this line's
+      # correctness. `g_object_new` is variadic — `GType` then a NULL-terminated
+      # property list — and owlkettle binds it `{.varargs.}`, so a call with one
+      # argument compiles and emits `g_object_new(t)` with no terminator. GLib
+      # then reads `first_property_name` out of whatever the register held and
+      # hands it to `g_param_spec_pool_lookup`, which dereferences it: the window
+      # segfaulted before it drew, in `g_hash_table_lookup` under
+      # `g_object_new_valist`. owlkettle's own `ModelButton` passes the `nil`;
+      # this did not.
       state.internalWidget =
-        GtkWidget(g_object_new(g_type_from_name("GtkModelButton")))
+        GtkWidget(g_object_new(g_type_from_name("GtkModelButton"), nil))
     connectEvents:
       proc itemCallback(w: GtkWidget, data: ptr EventObj[proc ()]) {.cdecl.} =
         let popover = gtk_widget_get_ancestor(w, gtk_popover_get_type())
@@ -4997,8 +5012,13 @@ proc refreshTrash(app: AppState) =
 ## Function purpose: reads both halves of the trash — the rows and the
 ## path-addressed files — because the screen has to account for both.
 proc openTrash(app: AppState) =
-  app.refreshTrash()
+  # Action purpose: cleared BEFORE the refresh, not after. `refreshTrash` sets a
+  # notice when the trash directories cannot be read, and clearing afterwards
+  # wiped the one message that says the file half of the panel is missing —
+  # leaving an empty list that reads as an empty trash. The clear is still here
+  # because the panel should not open under whatever notice preceded it.
   app.notice = ""
+  app.refreshTrash()
   app.trashOpen = true
 
 ## Function purpose: undo one soft delete. Goes through `api.restoreEntity` and
@@ -7005,7 +7025,14 @@ proc run*(withTray = true, checkOnly = false) =
   let (history, startLeaf) = pathOf(allHistory, loadLeaf(conv))
 
   let initialLan = isLanEnabled(p)
-  let initialAddr = if initialLan: lanAddress() else: ""
+  # Action purpose: gated on what the socket actually BOUND, not on the LAN
+  # flag. `host` is `0.0.0.0` when the flag is set OR when `HOST` says so in the
+  # configuration, and only the first of those set `initialLan` — so a
+  # deployment bound wide by its conf file resolved no address, and the header
+  # fell through to printing the literal `0.0.0.0`. That is the one reading that
+  # is useless: it is the bind wildcard, not somewhere anyone can point a
+  # browser. Same lookup, asked whenever the answer is worth having.
+  let initialAddr = if host == "0.0.0.0": lanAddress() else: ""
   # Read once, here, and used three times below — for the window state, for the
   # palette, and for the colour scheme handed to `brew`. Loading it three times
   # would let a file written between the calls give the window one theme and the

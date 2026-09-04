@@ -328,7 +328,16 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # that source at itself — an `ELOOP` reported as a successful switch. One hop
   # cannot form a cycle, and the slot naming the real file is what the reader of
   # `models list` wants anyway.
-  let linkTarget = relativePath(targetReal, agentDir)
+  #
+  # **Both sides of the relative path are resolved.** `targetReal` is, and
+  # `agentDir` was not — so on an install whose `models/` is a symlink, which is
+  # what the `mdmfs` profiles produce, `relativePath` was asked to relate a real
+  # path to a symlinked one and answered a traversal that does not lead there.
+  # It failed loudly rather than silently, because the `tmpReal == targetReal`
+  # validation below catches it — but what it caught was every switch on such an
+  # install. A relative link is resolved against the directory holding it, and
+  # `agentReal` is that directory's real name.
+  let linkTarget = relativePath(targetReal, agentReal)
 
   # Action purpose: a name ending in `.tmp.<pid>` cannot match the `*.gguf` scan
   # below, so the clearing loop can never mistake the replacement for an entry

@@ -323,4 +323,9 @@ trimming and drops nothing of its own.
 | 9 | History trimming | ✅ oldest-first, reported as `X-Jenova-Trimmed` | the branch exceeds the budget | — |
 | 10 | History summarisation | ❌ not implemented | — | — |
 
-The open items are #8, which is a deferred product decision rather than a gap, and #10.
+The two open items are **MCP tools**, which is a deferred product decision rather than a gap, and
+**history summarisation**, which is not implemented.
+
+They are named rather than numbered because the two tables on this page number differently: the
+first counts eight mechanisms and this one splits FOCUS notes out as their own row, so every number
+from 6 down is shifted. A reference by number is ambiguous about which table it means.

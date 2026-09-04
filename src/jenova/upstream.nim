@@ -143,9 +143,21 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     except CatchableError:
       recvFailed = true
     if recvFailed or n < 0:
-      # Nothing relayed yet is indistinguishable to the client from an upstream
-      # that never answered, and the tail of the function already says so.
-      if relayed == 0 and pending.len == 0: break
+      # Action purpose: `relayed == 0` alone decides, and `pending` is discarded
+      # rather than consulted. With the emptiness of `pending` in the condition,
+      # an upstream that sent a fragment of a status line and then timed out took
+      # the `roTruncated` branch — and nothing had been written to the client at
+      # all, so it got a closed connection with zero bytes and no status. Falling
+      # through with `pending` intact is no better: the tail would send that
+      # fragment as though it were a response and then report `roComplete` over
+      # it. Neither is a reply. Less than a status line is not something a client
+      # can be given, so it is dropped and the 502 at the end of the function
+      # answers, which is the same operational fact as an upstream that never
+      # spoke. Once anything HAS reached the client the head is already on the
+      # wire and only `roTruncated` is honest.
+      if relayed == 0:
+        pending = ""
+        break
       return roTruncated
     if n == 0:
       break
@@ -189,18 +201,16 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     if capture != nil:
       capture[].add chunk[0 ..< n]
 
-  # Action purpose: an upstream that closed having sent less than a status line
-  # leaves those bytes here, and dropping them turns a short reply into none.
-  if pending.len > 0:
-    var ps = 0
-    while ps < pending.len:
-      let w = client.send(addr pending[ps], pending.len - ps)
-      if w <= 0:
-        return roTruncated
-      ps += w
-    relayed += pending.len
-    if capture != nil:
-      capture[].add pending
+  # Action purpose: whatever is still buffered here is DISCARDED, and the reason
+  # is structural rather than a judgement call. `pending` is appended to only
+  # while `splicing`, and `splicing` is cleared in the same breath as `pending`
+  # the moment a head goes out — so bytes surviving to this point mean no status
+  # line was ever completed, and `relayed` is necessarily zero. Forwarding them
+  # sent the client a fragment that is not an HTTP response, counted it as
+  # relayed, and then reported `roComplete` over it — an answer the response
+  # cache is entitled to store. Less than a status line is not a short reply, it
+  # is no reply, and the 502 below is the honest one.
+  pending = ""
 
   # Action purpose: an upstream that accepted the connection and then closed
   # without a byte — a crash mid-load, a receive timeout — is the same

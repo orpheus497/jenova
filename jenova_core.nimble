@@ -98,6 +98,16 @@ const SelfTests = [
   "serve",
 ]
 
+# Declared BEFORE `suites`, which calls `webTask()`. NimScript generates a
+# task's proc where the task is written and resolves calls in source order, so
+# with this further down the file `nimble` refused to read the package at all —
+# "undeclared identifier: 'webTask'" — and every task, `core` and `gui`
+# included, failed before running a line.
+task web, "Build the Web UI into public/":
+  withDir "jca_web":
+    exec "npm install"
+    exec "npm run build"
+
 task suites, "Build both binaries and run the test suites":
   coreTask()
   guiTask()
@@ -172,11 +182,6 @@ task llama, "Build the llama.cpp backend into external/ext_bin":
   for f in listFiles(build / "bin"):
     if f.endsWith("llama-server") or f.contains(".so"):
       cpFile(f, "external" / "ext_bin" / "bin" / f.extractFilename)
-
-task web, "Build the Web UI into public/":
-  withDir "jca_web":
-    exec "npm install"
-    exec "npm run build"
 
 task clean, "Remove build artifacts":
   rmFile "bin/jenova-core"
