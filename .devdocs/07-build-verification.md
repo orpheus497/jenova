@@ -346,11 +346,12 @@ as a code defect.
 | V-07 | Unhandled Nim exception printed on a passing gate run | noise | XS | **done** |
 | V-08 | The gate bound the real port; the script contradicted itself | isolation | XS | **done** |
 | V-09 | Report 03's E-05 verification cannot be reproduced | audit trail | S | open |
-| V-10 | Every attached image leaves a zero-byte file in the workspace mirror | data | S | open |
+| V-10 | Every attached image leaves a zero-byte file in the workspace mirror | data | S | **done** |
 | V-11 | The gate is not concurrency-safe | isolation | XS | open |
 | V-12 | `tests/gui_check.sh:31` still passes `-d:gtk48` | stale | XS | open |
 | V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
 | V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | open |
+| V-15 | A renamed file asset can restore the wrong copy and report success | **data** | M | open |
 
 ### V-02's exception: `AutoScroll` stays, and not out of caution
 
@@ -373,6 +374,7 @@ the pinned revision, and the mechanism kept because the *new* reading also says 
 | **V-10** | **Every image attached in the window leaves a zero-byte file in the workspace mirror, and `git add`s it.** An image's `content` column is left empty *deliberately and correctly* (`gui.nim:2335-2339`: base64 must not enter a column that `workspace.contextFor` renders and `rag.indexFileAsset` embeds). But `api.putEntity` → `fssync.syncFileAsset(id, name, "", …)` → `writeFile(path, "")`. The *rename* form of this trap was found and closed (`gui.nim:653-657`); the *creation* form is open. Fixing it means choosing between writing the real bytes from the attachment cache and writing no file at all — a design decision, which is why session 9 recorded it rather than picking one. It is also why `assetview.classify` needs `avEmpty` as its own answer: "nothing stored" and "no viewer for this type" are different claims. |
 | **V-11** | **The gate is not concurrency-safe.** `DISPLAY=:87` and fixed ports mean two gates on one host fight; it cost one agent three red runs that read as code defects. It matters more now that `suites` runs the gate. Deriving both from `$$` closes it. |
 | **V-12** | **`tests/gui_check.sh:31` still passes `-d:gtk48`** — V-01's residue, in the one file that claims to mirror the `.nimble` flags and now does not. Inert, but the claim is false. |
+| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:246-259` → `fssync.trashFileAsset`); deleting later writes a *second* sidecar with the same id (`api.nim:526`). `restoreMirror` (`fssync.nim:715-728`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert`. The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
 | **V-14** | **`--check` never builds anything behind an `if …Open`** — see §0. The gate should compile the panel-open variants rather than leaving each agent to do it by hand. |
 
 **V-13**, for completeness, is not a defect in this tree: at `ac61ecf` owlkettle binds no
