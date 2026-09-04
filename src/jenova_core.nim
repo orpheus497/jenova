@@ -18,7 +18,7 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http, upstream, websearch, version]
+               http, upstream, websearch, version, inspect]
 
 const
   Version = version.Version
@@ -55,7 +55,8 @@ proc usage() =
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
   echo "              models-selftest, fs-selftest, composer-selftest,"
-  echo "              convmd-selftest, lifecycle-selftest, relay-selftest"
+  echo "              convmd-selftest, lifecycle-selftest, relay-selftest,"
+  echo "              inspect-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -3550,6 +3551,47 @@ proc main() =
               body["messages"][0]["content"].getStr.contains("autonomous agent"))
         check("no intent is reported as inNone", r.intent == inNone)
 
+      # Action purpose: the chain the inspector reads, with the sockets taken
+      # out — the pipeline's own measurements, through the header builder
+      # `server.handle` actually calls, and back out of the parser the window
+      # actually uses. Asserting a rebuilt header block instead would only
+      # prove that two copies of it agree.
+      block whatTheRewriteReportsAboutItself:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"Visual Rewrite: tidy this"}]}""")
+        check("the rewrite reports how many messages went to the model",
+              r.msgCount == 2, $r.msgCount)
+        check("...and how large the body it built is",
+              r.bodyBytes == r.body.len and r.bodyBytes > 0)
+        check("...and how much of it is the system message it assembled",
+              r.sysBytes > 0 and r.sysBytes < r.bodyBytes,
+              $r.sysBytes & " of " & $r.bodyBytes)
+        check("the persona it injected is named",
+              inspect.ibPersona in r.injected)
+        check("and nothing it did not inject is",
+              inspect.ibWeb notin r.injected and
+              inspect.ibEditor notin r.injected)
+
+        let head = server.diagnosticHeaders(r)
+        check("no header line can close the response head early",
+              not head.replace("\r\n", "").contains('\r') and
+              not head.replace("\r\n", "").contains('\n'), head)
+        let d = inspect.parse(head)
+        check("the counts survive the header round trip",
+              d.msgCount == r.msgCount and d.bodyBytes == r.bodyBytes and
+              d.sysBytes == r.sysBytes, head)
+        check("so does the intent, as the enum's own name",
+              d.intent == $r.intent, d.intent)
+        check("so does the block set", d.injected == r.injected)
+        check("the retrieval count and the hits agree",
+              d.hits.len == min(r.ragHits, inspect.MaxHits),
+              $d.hits.len & " hits for " & $r.ragHits & " reported")
+
+        # A plain relay says nothing. An ordinary turn's response head must be
+        # unchanged, or every request pays for a diagnostic nobody asked for.
+        check("a body with nothing to report emits no headers at all",
+              server.diagnosticHeaders(pipeline.Prepared()) == "")
+
       block cacheKey:
         let a = pipeline.prepare(
           """{"messages":[{"role":"user","content":"stable"}]}""")
@@ -3714,6 +3756,7 @@ proc main() =
         badj["custom"] = "{not json"
         check("malformed custom JSON is refused before it is stored",
               not settings.validate(badj).ok)
+
         check("a well-formed set validates", settings.validate(cst).ok)
 
         # A scratch file, never `p.state / "settings.json"` — a self-test that
@@ -3763,12 +3806,53 @@ proc main() =
           check("a fresh install and an unwritten one agree on every boolean",
                 disagreed.len == 0, $disagreed)
 
+      # Action purpose: the whole risk in this setting is that it becomes a
+      # switch wired to nothing. `llama-server` has no thinking parameter, so a
+      # JSON key of that name would be accepted, ignored and indistinguishable
+      # from a working control — which is why what is asserted here is that the
+      # instruction reaches the system message and that no field reaches the wire.
+      block thinkingIsADirectiveAndNotAWireField:
+        let turn = %*[{"role": "user", "content": "hi"}]
+        var think = settings.initSettings()
+        think["useThinking"] = "1"
+        let on = parseJson(pipeline.chatBody(turn, opts = think))
+        check("the directive reaches the system message",
+              on["messages"][0]["role"].getStr == "system" and
+              "<think>" in on["messages"][0]["content"].getStr,
+              $on["messages"][0])
+        check("and no request field of that name is sent",
+              not on.hasKey("useThinking") and not on.hasKey("thinking"))
+        check("the user's own turn is untouched and still last",
+              on["messages"][^1]["content"].getStr == "hi")
+
+        let off = parseJson(pipeline.chatBody(
+          %*[{"role": "user", "content": "hi"}]))
+        check("off, nothing is added at all",
+              off["messages"].len == 1 and
+              off["messages"][0]["role"].getStr == "user")
+
+        # An existing system message is extended, never replaced: the standing
+        # instruction is the user's and the directive is this program's.
+        let kept = parseJson(pipeline.chatBody(
+          %*[{"role": "system", "content": "KEEP ME"},
+             {"role": "user", "content": "q"}], opts = think))
+        check("an existing system message survives the directive",
+              kept["messages"].len == 2 and
+              "KEEP ME" in kept["messages"][0]["content"].getStr and
+              "<think>" in kept["messages"][0]["content"].getStr)
+
       # Action purpose: the parity claim itself, asserted rather than stated.
       # "1:1 with the Web UI" is the kind of thing that is true on the day it is
       # written and quietly false a month later. The list below is
       # `jca_web`'s `ChatSettings.svelte` `settingSections`, in its order, minus
       # the three `settings.OmittedFields` records — so if a field is dropped,
       # renamed or silently added, this goes red and names it.
+      #
+      # Action purpose: `showSystemMessage` and `useThinking` are on the list
+      # even though that component does not draw them. They are keys of
+      # `settings-config.ts` all the same, drawn by `ChatSettingsFields.svelte`
+      # instead, and taking one component for the whole surface is what let two
+      # Web UI settings read as absent from it.
       block settingsParityWithTheWebUi:
         let turn2 = %*[{"role": "user", "content": "hi"}]
         var themed = settings.initSettings()
@@ -3777,9 +3861,10 @@ proc main() =
           # General
           "theme", "systemMessage", "pasteLongTextToFileLen",
           "copyTextAttachmentsAsPlainText", "enableContinueGeneration",
-          "pdfAsImage", "askForTitleConfirmation",
+          "pdfAsImage", "askForTitleConfirmation", "useThinking",
           # Display
-          "showMessageStats", "showThoughtInProgress", "keepStatsVisible",
+          "showMessageStats", "showThoughtInProgress", "showSystemMessage",
+          "keepStatsVisible",
           "autoMicOnEmpty", "renderUserContentAsMarkdown",
           "fullHeightCodeBlocks", "disableAutoScroll",
           "alwaysShowSidebarOnDesktop", "autoShowSidebarOnNewChat",
@@ -4054,13 +4139,20 @@ proc main() =
         # implementation passes.
         let roomy = convo(6)
         check("a conversation inside the budget is left alone",
-              pipeline.trimHistory(roomy, 1_000_000) == 0 and roomy.len == 8)
+              pipeline.trimHistory(roomy, 1_000_000).turns == 0 and
+              roomy.len == 8)
 
         let tight = convo(6)
-        let dropped = pipeline.trimHistory(tight, 900)
+        let cut = pipeline.trimHistory(tight, 900)
+        let dropped = cut.turns
         check("a conversation over the budget loses turns", dropped > 0)
         check("...and the messages actually went", tight.len == 8 - dropped,
               $tight.len & " left after dropping " & $dropped)
+        # The byte figure is what the inspector reports beside the count, and a
+        # count with no weight cannot say whether what went was a greeting or
+        # half the conversation.
+        check("the turns dropped are weighed as well as counted",
+              cut.bytes > 0, $cut.bytes)
         # The two that must survive at any budget. Asserted separately from the
         # count, because a trim that kept the right *number* and the wrong
         # *messages* would satisfy the line above.
@@ -4086,7 +4178,8 @@ proc main() =
         # silently lose turns.
         let untouched = convo(6)
         check("a zero budget trims nothing",
-              pipeline.trimHistory(untouched, 0) == 0 and untouched.len == 8)
+              pipeline.trimHistory(untouched, 0).turns == 0 and
+              untouched.len == 8)
 
         # Action purpose: without this, attaching an image deletes the whole
         # earlier conversation from what the model was sent. The weight was
@@ -4111,8 +4204,8 @@ proc main() =
 
         let plain = convo(6)
         let picture = withImage(4_000_000)
-        let plainDropped = pipeline.trimHistory(plain, 100_000)
-        let pictureDropped = pipeline.trimHistory(picture, 100_000)
+        let plainDropped = pipeline.trimHistory(plain, 100_000).turns
+        let pictureDropped = pipeline.trimHistory(picture, 100_000).turns
         check("a conversation with a 4 MB image trims exactly as the same " &
               "conversation without one",
               pictureDropped == plainDropped and picture.len == plain.len,
@@ -4323,6 +4416,260 @@ proc main() =
         quit(0)
       echo ""
       echo "relay-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "inspect-selftest":
+      # Action purpose: this is the whole diagnostics channel with the sockets
+      # taken out. The headers are built by `server.handle`, spliced into a live
+      # response head by `upstream.forward` and read back by the window's stream
+      # worker — three places that cannot disagree, and only this can prove they
+      # do not. The encoder is the load-bearing half: the safety argument for
+      # inserting headers into a response head is that no value can carry a
+      # CRLF, and a filesystem path is the first value here that could.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "inspect-selftest"
+
+      block theEncoderCannotSplitAResponse:
+        # The two bytes that turn a header insertion into response splitting.
+        # Everything else here is correctness; this is the security property.
+        const Nasty = [
+          "a\r\nX-Evil: 1",
+          "a\nX-Evil: 1",
+          "a\rb",
+          "/home/u/Jenova/Workspaces/note\r\n\r\ndata: {}",
+        ]
+        var leaked = 0
+        for n in Nasty:
+          let e = inspect.encodeValue(n)
+          if e.contains('\r') or e.contains('\n'): inc leaked
+          if inspect.decodeValue(e) != n: inc leaked
+        check("no encoded value carries a CR or an LF, and all round-trip",
+              leaked == 0)
+
+        # The escape character itself. A path containing a literal `%` is the
+        # case an encoder that only escapes what it dislikes gets wrong: the
+        # decode then reads the user's own text as an escape sequence.
+        const Pct = "/home/u/reports/100%25 done/q_%41_.md"
+        check("the escape character round-trips through itself",
+              inspect.decodeValue(inspect.encodeValue(Pct)) == Pct,
+              inspect.encodeValue(Pct))
+
+        # The field separator. A path may legitimately contain one, and a
+        # reader splitting on it would silently invent a sixth field.
+        const Semi = "/home/u/a;b/c;d.md"
+        check("the field separator is escaped inside a path",
+              not inspect.encodeValue(Semi).contains(inspect.HitSep) and
+              inspect.decodeValue(inspect.encodeValue(Semi)) == Semi)
+
+        check("a path separator stays legible", inspect.encodeValue("/a/b") == "/a/b")
+        check("a space is escaped",
+              inspect.encodeValue("a b") == "a%20b")
+        check("bytes above ASCII survive a round trip",
+              inspect.decodeValue(inspect.encodeValue("naïve/über.md")) ==
+                "naïve/über.md")
+        # Total by contract: this parses a response head, and a diagnostic that
+        # could raise would take a generation down with it.
+        check("a truncated escape decodes to itself rather than raising",
+              inspect.decodeValue("a%") == "a%" and
+              inspect.decodeValue("a%4") == "a%4" and
+              inspect.decodeValue("a%zz") == "a%zz")
+
+      block oneHitOnOneHeader:
+        let h = inspect.RetrievalHit(
+          path: "/home/u/Jenova/Workspaces/note;1 100%.md",
+          score: 0.8125, bm25: 0.5, semantic: 0.9375, startLine: 42)
+        let wire = inspect.encodeHit(h)
+        check("an encoded hit is one header value with no CRLF in it",
+              not wire.contains('\r') and not wire.contains('\n'), wire)
+        let (ok, back) = inspect.parseHit(wire)
+        check("it parses back", ok)
+        check("...with the path intact", back.path == h.path, back.path)
+        check("...and the three scores and the line", back.startLine == 42 and
+              abs(back.score - 0.8125) < 1e-6 and
+              abs(back.bm25 - 0.5) < 1e-6 and
+              abs(back.semantic - 0.9375) < 1e-6)
+        check("a value with too few fields is refused",
+              not inspect.parseHit("0.5;0.5;0.5").ok)
+        check("a non-numeric score is refused rather than read as zero",
+              not inspect.parseHit("high;0.5;0.5;1;/a/b").ok)
+        check("an empty path is refused", not inspect.parseHit("1;1;1;1;").ok)
+
+      block theBlockSet:
+        let all = {inspect.ibPersona, inspect.ibRag, inspect.ibWeb,
+                   inspect.ibEditor}
+        check("the injected set round-trips",
+              inspect.parseInjected(inspect.encodeInjected(all)) == all,
+              inspect.encodeInjected(all))
+        check("the empty set encodes to nothing",
+              inspect.encodeInjected({}) == "")
+        check("an unknown block name is dropped, not fatal",
+              inspect.parseInjected("rag,teleport,web") ==
+                {inspect.ibRag, inspect.ibWeb})
+
+      block readingAHeadLineByLine:
+        # The window's stream worker reads the head one line at a time, so that
+        # is how this is asserted rather than as one string.
+        var d = inspect.Diagnostics()
+        check("an unrelated header is not claimed",
+              not d.applyHeader("Content-Type: text/event-stream"))
+        check("nothing was recorded from it", not d.present)
+        check("the cache header is claimed", d.applyHeader("X-Cache: HIT"))
+        discard d.applyHeader("X-Jenova-Intent: inWebSearch")
+        discard d.applyHeader("X-Jenova-Rag-Hits: 3")
+        discard d.applyHeader("X-Jenova-Web-Hits: 4")
+        discard d.applyHeader("X-Jenova-Trimmed: 2")
+        discard d.applyHeader("X-Jenova-Trimmed-Bytes: 4096")
+        discard d.applyHeader("X-Jenova-Editor-Doc: 1")
+        discard d.applyHeader("X-Jenova-Sys-Bytes: 2048")
+        discard d.applyHeader("X-Jenova-Msg-Count: 9")
+        discard d.applyHeader("X-Jenova-Body-Bytes: 65536")
+        discard d.applyHeader("X-Jenova-Injected: persona,rag,web")
+        check("every field arrives",
+              d.present and d.cacheHit and d.intent == "inWebSearch" and
+              d.ragHits == 3 and d.webHits == 4 and d.trimmed == 2 and
+              d.trimmedBytes == 4096 and d.editorDoc and d.sysBytes == 2048 and
+              d.msgCount == 9 and d.bodyBytes == 65536 and
+              d.injected == {inspect.ibPersona, inspect.ibRag, inspect.ibWeb})
+        # Zero is a meaningful answer here — "nothing was trimmed" — so a
+        # malformed header must not be able to claim it.
+        discard d.applyHeader("X-Jenova-Trimmed: lots")
+        check("a malformed number leaves the field alone", d.trimmed == 2)
+        # The header name is case-insensitive on the wire and the reader must
+        # not depend on how an upstream capitalised it.
+        var lower = inspect.Diagnostics()
+        discard lower.applyHeader("x-jenova-rag-hits: 5")
+        check("header names are matched case-insensitively", lower.ragHits == 5)
+
+      block theCeilingIsEnforcedOnTheReadingSideToo:
+        # How many of these arrive is chosen upstream. A client that grew a list
+        # from the count would be sizing a panel on something it does not own.
+        var d = inspect.Diagnostics()
+        for i in 0 .. 9:
+          discard d.applyHeader("X-Jenova-Hit: 0.5;0.5;0.5;1;/f/" & $i & ".md")
+        check("no more hits are kept than retrieval is ever asked for",
+              d.hits.len == inspect.MaxHits, $d.hits.len)
+
+      block theJoin:
+        # THE ONE THAT MATTERS. Everything above stays green if the encoder and
+        # the parser agree with each other and with nothing else. This builds
+        # the header block the way `server.handle` does, splices it into a real
+        # response head the way `upstream.forward` does, and reads it back the
+        # way the window does.
+        let hits = @[
+          inspect.RetrievalHit(path: "/home/u/Jenova/Workspaces/a b;c%.md",
+                               score: 0.9, bm25: 0.7, semantic: 0.95,
+                               startLine: 17),
+          inspect.RetrievalHit(path: "/home/u/Jenova/Workspaces/plain.md",
+                               score: 0.4, bm25: 0.4, semantic: 0.0,
+                               startLine: 1)]
+        var extra = "X-Jenova-Trimmed: 2\r\nX-Jenova-Trimmed-Bytes: 900\r\n" &
+                    "X-Jenova-Rag-Hits: 2\r\nX-Jenova-Intent: inFileChat\r\n" &
+                    "X-Jenova-Msg-Count: 6\r\nX-Jenova-Body-Bytes: 12000\r\n" &
+                    "X-Jenova-Sys-Bytes: 3000\r\n" &
+                    "X-Jenova-Injected: " &
+                    inspect.encodeInjected({inspect.ibPersona,
+                                            inspect.ibRag}) & "\r\n"
+        for h in hits: extra.add "X-Jenova-Hit: " & inspect.encodeHit(h) & "\r\n"
+
+        const Head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+        let spliced = upstream.spliceHeaders(Head, extra)
+        check("the status line is still first",
+              spliced.startsWith("HTTP/1.1 200 OK\r\n"))
+        check("the head still ends with a blank line",
+              spliced.endsWith("\r\n\r\n"), spliced)
+        check("the upstream's own header survives a path going past it",
+              spliced.contains("Content-Type: text/event-stream\r\n"))
+        # The bytes after the head are the generation. If a path could have
+        # closed the head early, this is where it would show.
+        check("nothing but the insertion changed the length",
+              spliced.len == Head.len + extra.len, $spliced.len)
+
+        let d = inspect.parse(spliced)
+        check("the diagnostics come back off the head", d.present)
+        check("both hits are there", d.hits.len == 2, $d.hits.len)
+        check("a path with a space, a separator and a percent is intact",
+              d.hits[0].path == hits[0].path, d.hits[0].path)
+        check("the ranking order is the order they were sent in",
+              d.hits[0].score > d.hits[1].score)
+        check("the counts survive",
+              d.trimmed == 2 and d.trimmedBytes == 900 and d.ragHits == 2 and
+              d.msgCount == 6 and d.bodyBytes == 12000 and d.sysBytes == 3000)
+        check("and so does what was injected",
+              d.injected == {inspect.ibPersona, inspect.ibRag})
+
+      block theWording:
+        # A panel that shows nothing is the correct behaviour on a plain relay,
+        # and the failure mode is a row of empty chips claiming zero of
+        # everything.
+        let none = inspect.Diagnostics()
+        check("no diagnostics means nothing to show",
+              inspect.processingDetails(none).len == 0)
+        check("...and nothing to warn about", inspect.trimWarning(none) == "")
+
+        var d = inspect.parse("X-Jenova-Rag-Hits: 1\r\n" &
+                              "X-Jenova-Intent: " & $prompts.inWebSearch &
+                              "\r\n")
+        let chips = inspect.processingDetails(d)
+        check("a single hit is not reported in the plural",
+              chips.anyIt(it == "1 chunk retrieved"), chips.join(" | "))
+        check("the intent is named in words, not in the enum's one word",
+              chips.anyIt(it == "intent: web search"), chips.join(" | "))
+
+        # Action purpose: the labels are keyed on what `$Intent` serialises to,
+        # which is the enum's string value and not its identifier. Written
+        # against the identifiers the table matched nothing, every intent
+        # arrived on screen as its own wire token, and no assertion phrased in
+        # those same identifiers could see it. So this walks the classifier's
+        # own enum rather than naming the values again.
+        var unnamed: seq[string]
+        for i in prompts.Intent.low .. prompts.Intent.high:
+          if i == prompts.inNone: continue
+          if inspect.intentLabel($i) == $i: unnamed.add $i
+        check("every intent the classifier can return has words of its own",
+              unnamed.len == 0, "passed through: " & unnamed.join(", "))
+        check("and no intent at all reads as nothing",
+              inspect.intentLabel($prompts.inNone) == "")
+
+        # Trimming is the only diagnostic that silently changes what the model
+        # was asked, so it is the only one that reads as a warning.
+        d.trimmed = 3
+        d.trimmedBytes = 2048
+        let warn = inspect.trimWarning(d)
+        check("trimming says how much went and that it was not lost",
+              "3 oldest" in warn and "2.0 kB" in warn and
+              "still in this conversation" in warn, warn)
+
+        check("bytes are shown in a unit a reader can hold",
+              inspect.humanBytes(512) == "512 B" and
+              inspect.humanBytes(2048) == "2.0 kB" and
+              inspect.humanBytes(3 * 1024 * 1024) == "3.0 MB")
+
+      block bothSidesAreLabelled:
+        # The rewritten prompt is not on the wire, so the inspector's honesty
+        # rests on labelling the two figures it does have as what they are.
+        let d = inspect.parse("X-Jenova-Msg-Count: 8\r\n" &
+                              "X-Jenova-Body-Bytes: 20000\r\n")
+        let rows = inspect.pipelineRows(d, 6, 12000)
+        var labels: seq[string]
+        for r in rows: labels.add r.label
+        check("what the window posted is a row of its own",
+              "Posted by this window" in labels, labels.join(", "))
+        check("and what the model was given is a separate one",
+              "Sent to the model" in labels, labels.join(", "))
+        check("a head with no diagnostics reports only the window's own side",
+              inspect.pipelineRows(inspect.Diagnostics(), 6, 12000).len == 1)
+
+      if bad == 0:
+        echo ""
+        echo "inspect-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "inspect-selftest: FAIL (", bad, ")"
       quit(1)
     of "rag-selftest":
       # Proves retrieval end to end against a scratch corpus: index, keyword

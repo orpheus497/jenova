@@ -57,6 +57,7 @@ import ./hardware
 import ./composer
 import ./shortcuts
 import ./convmd
+import ./inspect
 import ./version
 
 type
@@ -177,7 +178,10 @@ type
     umHardware,
     ## 12d-3: this turn was answered from the response cache. Sent once, on the
     ## response head, before any token.
-    umCacheHit
+    umCacheHit,
+    ## What the pipeline did to this turn, as the diagnostic header lines
+    ## exactly as they arrived. Sent once, on the response head.
+    umDiag
 
   UiMsg = object
     kind: UiMsgKind
@@ -320,22 +324,27 @@ proc streamOnce(job: StreamJob) =
                         retryable: ce.retryable))
       return
 
-    # Action purpose: 12d-3. The headers were skipped, not read, and that is
-    # why a cache hit has always been invisible here. `server.handle` has sent
-    # `X-Cache: HIT` on the hit path since the route was written, and this loop
-    # discarded it along with everything else — so a cached turn was
-    # indistinguishable from a live one and no screen run could tell the
-    # mechanism worked at all. The Web UI's `ChatMessageStatistics` shows a
-    # Cache Hit badge from this same header; this is the parity gap behind it.
+    # Action purpose: the response head is where the server says what it did to
+    # this turn — a cache hit, and every pipeline diagnostic. Two prefixes are
+    # kept and the rest of the head is dropped, so no general header table
+    # crosses the channel for a reader that does not exist.
     #
-    # Only this one header is inspected. A general header table would cross the
-    # channel per turn for no other reader.
+    # The lines are carried verbatim and parsed on arrival rather than here.
+    # `inspect.Diagnostics` holds a `seq`, and what crosses this channel per
+    # token stays the plain fields it already was; a dozen short lines parsed
+    # once per turn is bounded work and not proportional to any payload, which
+    # is what allows it on the other side.
+    var diagLines = ""
     while true:
       let line = sock.recvLine(timeout = 120_000)
       if line.len == 0 or line == "\r\n": break
-      if line.toLowerAscii.startsWith("x-cache:") and
-         line.toLowerAscii.contains("hit"):
+      let lower = line.toLowerAscii
+      if lower.startsWith("x-cache:") and lower.contains("hit"):
         uiChan.send(UiMsg(kind: umCacheHit))
+      if lower.startsWith("x-cache:") or lower.startsWith("x-jenova-"):
+        diagLines.add line & "\n"
+    if diagLines.len > 0:
+      uiChan.send(UiMsg(kind: umDiag, text: diagLines))
 
     while true:
       # Checked before the read as well as relied on after it: if the stop lands
@@ -1237,6 +1246,16 @@ viewable App:
   modelFilter: string
 
   hardwareOpen: bool
+  ## What the server said it did to the last turn, read off its response head.
+  ## One turn's worth: this is the inspector's subject and the inspector is
+  ## about the turn on screen, not a history of them.
+  diag: inspect.Diagnostics
+  inspectorOpen: bool
+  ## The window's own side of the comparison, recorded where the turn is posted.
+  ## The rewritten prompt does not travel, so the honest thing the inspector can
+  ## show is these two figures beside the server's, each labelled as what it is.
+  sentMessages: int
+  sentBytes: int
   ## Everything deleted is a soft delete and had no surface at all, which
   ## makes a delete indistinguishable from data loss — the hazard the confirm
   ## dialog names but cannot answer on its own. Cached in `trashItems` for
@@ -1522,6 +1541,12 @@ viewable App:
             if st.messages.len == 0 or st.messages[^1].role != rAssistant:
               st.messages.add Message(role: rAssistant, text: "")
             st.messages[^1].cacheHit = true
+          of umDiag:
+            # Parsed here, on the GTK thread, because a `seq` of hits crossing
+            # the channel would be copied on every token message that shares the
+            # object. A dozen short lines once per turn is not payload-sized
+            # work, which is the rule this has to satisfy to be here at all.
+            st.diag = inspect.parse(m.text)
           of umModel:
             if st.messages.len > 0 and st.messages[^1].role == rAssistant:
               st.messages[^1].model = m.text
@@ -2100,9 +2125,19 @@ proc postConversation(app: AppState, continuing = false) =
     if c.id == app.convId:
       wsCtx = workspace.contextFor(c.folderId, c.projectId, c.workspaceId)
       break
-  streamReq.send(StreamJob(host: "127.0.0.1", port: port,
-                           body: pipeline.chatBody(msgs, continuing, app.opts,
-                                                   wsCtx)))
+  let body = pipeline.chatBody(msgs, continuing, app.opts, wsCtx)
+  # Action purpose: measured after `chatBody`, so it counts the workspace
+  # context and the thinking directive the same way the server counts what it
+  # sends on. Measuring the array before them would make the inspector's two
+  # figures differ by this window's own additions and call the difference the
+  # server's rewriting.
+  app.sentMessages = msgs.len
+  app.sentBytes = body.len
+  # Last turn's answer is not this turn's. Cleared here rather than on arrival,
+  # so a generation that fails before a response head leaves the panel empty
+  # instead of describing the turn before it.
+  app.diag = inspect.Diagnostics()
+  streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: body))
 
 ## Function purpose: a conversation's name, taken from the message that started
 ## it. The Web UI titles a chat from its first message and this window
@@ -4273,8 +4308,16 @@ proc mainArea(app: AppState): Widget =
               # a shorter conversation asks for a row that no longer exists.
               # This runs inside a `cdecl` callback, where an `IndexDefect`
               # has no useful place to go.
+              # Action purpose: a hidden system turn is an empty row here and
+              # never a shorter `app.messages`. The list is indexed straight
+              # into that seq and `deleteMessage`, `saveEdit` and `forkFrom` all
+              # take the same index, so filtering the seq would silently retarget
+              # every one of them at the wrong message. A Box with no children
+              # requests no size, so the row it leaves behind takes none.
               proc viewItem(index: int): Widget =
-                if index >= 0 and index < app.messages.len:
+                if index >= 0 and index < app.messages.len and
+                   (app.messages[index].role != rSystem or
+                    app.opts.getBool("showSystemMessage")):
                   app.messageCard(index, app.messages[index])
                 else:
                   gui: Box()
@@ -5423,6 +5466,145 @@ proc settingsPanel(app: AppState): Widget =
               style = [ButtonSuggested, StyleClass("row-btn")]
               proc clicked() = app.saveSettings()
 
+## Function purpose: the chips under the header while a turn is generating and
+## after it — what the pipeline did, read off the same response head every other
+## client gets. Empty when the head carried no diagnostics, which is what keeps
+## the strip off screen on a plain relay.
+##
+## Action purpose: it survives the generation deliberately. The counts are about
+## the turn on screen, and clearing them at the last token would put the one
+## thing worth reading on screen only while the tokens are moving. The next post
+## clears them.
+proc processingBar(app: AppState): Widget =
+  let details = inspect.processingDetails(app.diag)
+  gui:
+    # The outer Box is always in the tree and holds nought or one child, which
+    # is the shape the panels here use: a strip that comes and goes as a
+    # toolbar child would be a child count changing under owlkettle's
+    # positional matching. A Box with no children requests no size.
+    Box(orient = OrientX, spacing = 8):
+      if details.len > 0 and not app.editorOpen:
+        Box(orient = OrientX, spacing = 8, margin = 8):
+          Label {.expand: true.}:
+            text = details.join("    ")
+            xAlign = 0.0
+            wrap = true
+            style = [StyleClass("dim-note")]
+          Button {.expand: false.}:
+            text = "Inspect"
+            tooltip = "What the model was actually sent"
+            style = [ButtonFlat, StyleClass("row-btn")]
+            proc clicked() = app.inspectorOpen = true
+
+## Function purpose: one retrieval hit as a row — the path, where in the file it
+## starts, and the three scores that say whether it was found by its words or by
+## its meaning.
+##
+## Action purpose: the chunk's text is not here and does not travel. It is prose
+## out of the user's own files and it already reaches the model inside the
+## prompt, which is the only place it needs to be; a diagnostic that carried it
+## would be logged by every proxy between the server and a client.
+proc hitRow(h: inspect.RetrievalHit): Widget =
+  gui:
+    ActionRow:
+      title = inspect.hitTitle(h)
+      subtitle = inspect.hitScores(h)
+
+## Function purpose: what the pipeline did to the last turn and what retrieval
+## found for it — the two things this program computes on every request, which
+## no client could see because both were discarded before they left the process.
+##
+## Action purpose: an overlay child of the window, always in the tree and
+## insensitive when closed, which is the shape every other panel here has. An
+## Overlay child that comes and goes is a child count changing under owlkettle's
+## positional matching, and an empty Box still takes the whole allocation — so
+## `sensitive` is what lets a closed panel be clicked through.
+proc inspectorPanel(app: AppState): Widget =
+  let rows = inspect.pipelineRows(app.diag, app.sentMessages, app.sentBytes)
+  let warning = inspect.trimWarning(app.diag)
+  gui:
+    Box(orient = OrientY):
+      sensitive = app.inspectorOpen
+      style = (if app.inspectorOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.inspectorOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          # Opaque, not `.glass-panel`, for the reason the settings panel is:
+          # the transcript reads through a translucent one and GTK4 has no
+          # blur to put behind it.
+          style = [StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Pipeline"
+              xAlign = 0.0
+              style = [StyleClass("brand"), StyleClass("brand-purple")]
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.inspectorOpen = false
+
+          if rows.len == 0:
+            # A `ListView` of nothing is nothing at all, and this is the state
+            # a reader is most likely to open the panel in: before the first
+            # turn of a conversation.
+            StatusPage {.expand: true.}:
+              iconName = "dialog-information-symbolic"
+              title = "Nothing sent yet"
+              description = "Send a message and this shows what the server " &
+                            "made of it: the intent it detected, what it " &
+                            "retrieved, what it added to the system message, " &
+                            "and how much of the conversation it had to drop " &
+                            "to fit the context window."
+          else:
+            ScrolledWindow {.expand: true.}:
+              Box(orient = OrientY, spacing = 12, margin = 4):
+                # The one diagnostic that is a warning rather than a
+                # statistic: trimming silently changes what the model was
+                # asked, and nothing else here does.
+                Banner {.expand: false.}:
+                  revealed = warning.len > 0
+                  title = warning
+                  useMarkup = false
+
+                PreferencesGroup {.expand: false.}:
+                  title = "This turn"
+                  description = "What this window posted, and what the " &
+                                "server gave the model after rewriting it. " &
+                                "The prompt itself stays in this process."
+                  for r in rows:
+                    ActionRow:
+                      title = r.label
+                      subtitle = r.value
+
+                # Action purpose: only drawn once a response head has actually
+                # been read. Without the guard a turn that failed before one
+                # arrived would report "nothing was retrieved", which is a
+                # claim about the pipeline and not about a request that never
+                # reached it.
+                PreferencesGroup {.expand: false.}:
+                  title = (if app.diag.present: "Retrieval"
+                           else: "No answer yet")
+                  description = (if not app.diag.present:
+                                   "The server has not answered this turn, so " &
+                                   "there is nothing it has said about it."
+                                 elif app.diag.hits.len > 0:
+                                   "The chunks this turn retrieved, in the " &
+                                   "order they were ranked. Keyword and " &
+                                   "semantic are the two halves the score " &
+                                   "mixes."
+                                 else:
+                                   "Nothing was retrieved for this turn. A " &
+                                   "web-search intent asks for no chunks at " &
+                                   "all, and a follow-up turn already " &
+                                   "carrying a context block is not " &
+                                   "retrieved for again.")
+                  for h in app.diag.hits:
+                    insert(hitRow(h))
+
 ## Function purpose: a body widget and not a titlebar, which is what keeps it
 ## mapped in fullscreen — GTK4 hides a window's titlebar there, taking the
 ## sidebar toggle, the app menu and the status line with it. The window is an
@@ -5493,6 +5675,14 @@ proc topBar(app: AppState): Widget =
         tooltip = "Trash"
         style = [ButtonFlat]
         proc clicked() = app.openTrash()
+
+      # In the bar and not the app menu because it answers a question asked
+      # about the turn on screen — the same reason Trash is here.
+      Button {.addRight.}:
+        icon = "dialog-information-symbolic"
+        tooltip = "What the model was sent"
+        style = [ButtonFlat]
+        proc clicked() = app.inspectorOpen = not app.inspectorOpen
 
       # In the bar rather than in the app menu because it is a surface the
       # user opens repeatedly while tuning a model, not a one-off action like
@@ -5905,6 +6095,8 @@ method view(app: AppState): Widget =
                     # changes it, and a button that could not do what it named
                     # would be worse than none.
 
+                  insert(app.processingBar()) {.addTop.}
+
                   # The transcript takes all the free height; the notice and the action
                   # row take only what they need — the child annotation on the Box, not
                   # a property of the child. The three children keep the same types in
@@ -6158,6 +6350,7 @@ method view(app: AppState): Widget =
               insert(app.modelsPanel()) {.addOverlay.}
               insert(app.trashPanel()) {.addOverlay.}
               insert(app.previewPanel()) {.addOverlay.}
+              insert(app.inspectorPanel()) {.addOverlay.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
