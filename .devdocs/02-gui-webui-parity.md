@@ -248,11 +248,34 @@ What was **actually** missing, verified line by line:
 | Headings h4–h6 — fell through and rendered their own hashes | **fixed**, session 2 |
 | Horizontal rules (`---`, `***`, `___`) | **fixed**, session 2 |
 | `+ ` bullets | **fixed**, session 2 |
-| Math / KaTeX | still absent — that is P-A5, and it is the real remaining gap |
+| Math / KaTeX | still absent — that is P-A5, and **it was not the only remaining gap; see below** |
 
 Twenty-five assertions cover the new behaviour in `markdown-selftest`, including that the branches
 which already worked still do. The change is parser-only: no widget-tree change, which is where
 this project has had its crashes.
+
+### Second correction — "math is the only remaining markdown gap" was also wrong
+
+The correction above closed by naming P-A5 as the one gap left in the markdown path. Session 9
+compiled and ran that path and found **three live defects in the emphasis passes**, the first of
+which was destroying whole lines:
+
+| Defect | Effect |
+|---|---|
+| `***bold italic***` emitted `<b><i>x</b></i>` | Pango's parser is XML-shaped and rejects the **whole string**, so the label drew *nothing*. Not a lost bold — a lost line, on the path every streaming reply takes |
+| `2 * 3 * 4` | rendered as italic arithmetic |
+| An unpaired `**` | eaten as an empty italic, contradicting `inlineSpan`'s own docstring |
+
+The fix is a `markupBalanced` guard whose fallback costs a line its emphasis rather than costing
+the reader the line, because ordering alone cannot resolve `*a~~b*c~~`. It was proved in a mapped
+window first, by running the gate against a reverted copy.
+
+**And the assertion count quoted in the first correction was already stale when written.**
+`markdown-selftest` carried **77** assertions, not twenty-five; it now carries **119**.
+
+The lesson is the same one twice: this section was written by reading `markdown.nim`, and both
+times what it concluded about the file was wrong in the direction of "the remaining work is
+small". A compiler and a mapped window were what settled it.
 
 **P-B12 carries a structural hazard.** `owlkettle`'s `Button.shortcut` has no update path —
 it builds a `GtkShortcutController` once and its update hook asserts the value never
@@ -427,8 +450,14 @@ is a channel message and a panel, and no other surface can show it.
 | P-A5 | Math rendering | absent | M | **open — now the largest rendering gap**, and the only one left in the markdown path |
 | P-A6 | Fork from a message | absent | S | **done** — `api.forkConversation` already took an `atMessageId`; the window had never passed one |
 | P-A7 | PDF viewing | absent | M | open |
-| P-A8 | File-asset open/preview/export | absent | M | open. The window writes `fileAssets` rows it cannot then read |
-| P-B1, P-B2, P-B4…P-B11 | Partial implementations | partial | S–M | open |
+| P-A8 | File-asset open/preview/export | absent | M | **done (session 9).** New `src/jenova/assetview.nim` decides image/text/binary/empty below the widget layer, 40 assertions; the row activates into a viewer reusing the transcript's own decoder, and Export is a `FileChooserSave` with `filters`. `avEmpty` is its own answer because of V-10 |
+| P-B1 | Error surface with the server's own detail | partial | S | open |
+| P-B2 | Processing-state detail while generating | partial | S | **done (session 9)** — from the widened `diagHeaders`, the same channel as P-E5, not a second one |
+| P-B4 | Per-code-block copy and preview | partial | S | **done (session 9).** The copy button already existed and this report said otherwise; what was missing was preview, now a `MenuButton`+`Popover` owning its own open state. Copy goes insensitive on an unterminated fence. `DialogCodePreview` *runs* code in an iframe — that half needs a decision, not an implementation |
+| P-B5…P-B8, P-B11 | Partial implementations | partial | S–M | open |
+| P-B6 | Files and Trash as native lists | partial | M | **done (session 9)** — both are `ColumnView`s on the models panel's idiom. Header-click sorting does not exist to wire: owlkettle binds no `GtkSorter` at `ac61ecf` (report 07, V-13) |
+| P-B9 | Show the system message | partial | S | **done (session 9).** Defaults on. Returns an empty `Box` from `viewItem` rather than filtering `app.messages` — the `ListView` is indexed into that seq and three mutators take that index |
+| P-B10 | `useThinking` toggle | absent | S | **done (session 9).** Verified against `chat.service.ts:120-122`: it is a `[THINKING LOGIC]` directive on the system message, **never a wire flag** — `llama-server` has no such parameter, so a JSON key of that name would have been a control wired to nothing |
 | P-B3 | Markdown block coverage | partial | S remaining | **mostly done** — see the correction above. What is left is P-A5 |
 | P-B12 | Keyboard shortcuts | partial | M | **mechanism done, bindings started.** `shortcuts.ShortcutHost` owns one window-level `GtkShortcutController` at `GTK_SHORTCUT_SCOPE_MANAGED`; bindings are a `seq[Binding]`, so adding one is a table row. F11 moved off `fullscreenButton`, which removes the container constraint at its source — no button carries a `shortcut` now. Five bindings ship: F11, `<Ctrl>n`, `<Ctrl>b`, `<Ctrl>comma`, `<Ctrl>Escape`. **Type-checked, not run** |
 | P-C1 | Three unwired settings | false impl | S | **2 of 3 done.** `copyTextAttachmentsAsPlainText` and `pasteLongTextToFileLen` are wired; `pdfAsImage` needs a rasteriser and is honestly blocked — see report 03, W-01 |
@@ -436,4 +465,6 @@ is a channel message and a panel, and no other surface can show it.
 | P-C3 | Push/Pull vestigial | dead surface | S | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
 | P-C4 | Models panel empty-state | — | — | **withdrawn — the finding was wrong**, see above |
 | P-C5 | Stale composer comment | stale | XS | **done** |
-| P-E1…P-E8 | Beyond-parity proposals | new | — | proposed. **P-E5 is now half-built**: the pipeline diagnostics it needed are no longer discarded (report 03, E-05) and travel as response headers — what remains is a panel to show them |
+| P-E4 | Retrieval inspector | new | M | **done (session 9).** One `X-Jenova-Hit` header per hit — `score;bm25;semantic;line;percent-encoded-path`. `ragLimitFor` caps at 5, so it fits; snippet prose stays off the wire |
+| P-E5 | Pipeline inspector | new | M | **done (session 9).** Carries the shape — system bytes, message count, body bytes, injected blocks, trimmed turns and bytes — with both sides labelled separately so the delta *is* the rewriting. The full prompt cannot ride a header and must not ride the body: the relay stores the captured stream verbatim for replay, so injecting would poison the cache |
+| P-E1…P-E3, P-E6…P-E8 | Beyond-parity proposals | new | — | proposed |

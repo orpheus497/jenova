@@ -7,7 +7,7 @@ the tag the comments were written for.
 **Method:** a build environment was constructed and **every finding was reproduced by compiling
 or running.** Where a claim comes from a header or from owlkettle's own source it is quoted
 verbatim with a file and line.
-**Audited at commit:** `aabcc77`
+**Audited at commit:** `aabcc77`, then carried through session 9's consolidation
 **owlkettle audited at:** `ac61ecf0adea2fd611ce962e3915e704abc2fb7f` — the revision
 `jenova_core.nimble:24` pins.
 
@@ -41,13 +41,20 @@ gui_build: the composer is at the bottom of the window and takes typing
 gui_build: PASS
 ```
 
-All seventeen self-tests pass. `jenova --check` exits 0.
+All nineteen self-tests pass — the seventeen that existed plus `asset` and `inspect`, both added
+in session 9. `jenova --check` exits 0.
 
 **The answer to the opening question is therefore "almost".** Sessions 7 and 8 pinned
-`ac61ecf`, set `-d:adwminor=4`, and took the window from 18 owlkettle widgets to 39. What is
-left is not capability — it is four places where the build or the source still describes
-owlkettle `v3.0.0` while linking `ac61ecf`, and each of them is currently the stated reason for
-code that no longer needs to exist.
+`ac61ecf`, set `-d:adwminor=4`, and took the window from 18 owlkettle widgets to 39. What was
+left was not capability — it was four places where the build or the source still described
+owlkettle `v3.0.0` while linking `ac61ecf`, each of them the stated reason for code that no
+longer needed to exist.
+
+**Session 9 closed those four and found four more while doing it** (V-05…V-08), every one in the
+build harness rather than the product: a gate nothing ran, a shared nimcache that makes a clean
+tree fail to link, an unhandled exception printed on a passing run, and a port override that
+never overrode anything. Six further findings are open and stated in §5. **The pattern across all
+fourteen is one thing — the apparatus that checks this project had not itself been checked.**
 
 ### What this environment still does not cover
 
@@ -61,6 +68,14 @@ code that no longer needs to exist.
 * Report 05's Phase 1 list stands unchanged: the `sysctl` probe, the `fork`/`setsid`/`execv`
   backend path, the D-Bus tray (no `StatusNotifierWatcher` runs under Xvfb), and the embedded
   Neovim page are FreeBSD-only and untested here.
+* **`--check` builds the startup tree, and that is less than it looks.** The five overlay panels
+  are inserted unconditionally (`src/jenova/gui.nim:6163-6167`), which makes it tempting to say
+  they are constructed. **Only their shells are.** Each panel's body sits behind
+  `if app.<x>Open:` — `trashPanel` at `:4813` is the pattern — so the `beforeBuild` hook of every
+  widget *inside* four panels has never run, on any host, under any gate. Two agents found this
+  independently in session 9; one worked around it by compiling variants whose `AppState`
+  defaults open each state and `--check`ing all eight, which is the shape the gate itself should
+  take. Recorded as **V-14**.
 
 ---
 
@@ -274,14 +289,97 @@ should name the package and the port that provides it, which `docs/install.md` a
 
 ---
 
-## 3. Tracker
+## 3. Four more findings, produced by executing the first four
+
+Each was reproduced before it was acted on.
+
+### V-05 — the build gate did not gate the build
+
+`tests/gui_build.sh` is 612 lines, is tracked, and its own header records two defects it caught
+that `nim check` could not see. But `grep -n "gui_build\|gui_check" jenova_core.nimble` returned
+nothing and the repository has no CI workflow, so `suites` ran the self-tests and six shell
+suites and never the only harness that has ever compiled, linked, mapped and driven the window.
+
+### V-06 — the harness shared one nimcache with every other build on the machine
+
+A gate run produced ~20 `undefined reference` errors for generic instantiations in
+`markdown.nim`, ending in `final link failed: bad value`. **There was no code defect**: the same
+tree with an explicit fresh `--nimcache:` linked and exited 0. Nim's default cache is keyed on
+project *name*, so `/root/.cache/nim/jenova_core_r/` is shared by every build of every copy of
+this project from any directory, while `gui_build.sh` copies the tree to a fresh `mktemp -d` each
+run. A developer reaches the same state by changing a generic across modules and rebuilding. Two
+agents hit it independently; for one it read as a sibling's defect.
+
+### V-07 — the harness printed an unhandled Nim exception on a passing run
+
+```
+syncio.nim(161)          raiseEIO
+Error: unhandled exception: errno: 32 `Broken pipe` [IOError]
+```
+
+from `tests/gui_build.sh:61`, `case $("$NIM" --version | head -1) in` — `head -1` closes the
+pipe, `nim` takes SIGPIPE, and Nim's `syncio` raises rather than dying quietly. Non-deterministic:
+one run in three. A gate that prints `Error: unhandled exception` while passing trains its reader
+to skim the one line that will eventually matter.
+
+### V-08 — the gate never had a port of its own, and the script contradicted itself
+
+`tests/gui_build.sh:552` launched the window with a bare `PORT=18787`. `etc/jenova.conf:39` is
+`PORT="${JENOVA_PORT:-8080}"`, so the conf overwrites a bare `PORT` whenever `JENOVA_PORT` is
+unset: the gate's window bound **8080**, the real one, under a comment claiming it got "a port of
+its own, so the run cannot collide". The same script does it correctly thirty lines earlier at
+`:168`. Measured both ways through `jenova-core config`. It cost one agent a red gate that read
+as a code defect.
+
+---
+
+## 4. Tracker
 
 | ID | Finding | Class | Size | State |
 |---|---|---|---|---|
-| V-01 | `-d:gtk48` dead at the pinned revision; its justifying comment describes `v3.0.0` | stale | XS | open |
-| V-02 | Four owlkettle-capability claims false at `ac61ecf`; each justifies code that can now go | stale + dead code | S–M | open |
-| V-03 | `nimble suites` fails on a clean checkout, reporting the wrong cause | false report | S | open |
-| V-04 | pkg-config `gorge`/`staticExec` with no failure path | build robustness | XS | open |
+| V-01 | `-d:gtk48` dead at the pinned revision; its justifying comment describes `v3.0.0` | stale | XS | **done** |
+| V-02 | Four owlkettle-capability claims false at `ac61ecf`; each justifies code that can now go | stale + dead code | S–M | **done**, with one deliberate exception below |
+| V-03 | `nimble suites` fails on a clean checkout, reporting the wrong cause | false report | S | **done** — `suites` now depends on `web` |
+| V-04 | pkg-config `gorge`/`staticExec` with no failure path | build robustness | XS | **done** — new `src/jenova/pkgconfig.nim` |
+| V-05 | The build gate did not gate the build | process | S | **done** — tiered, and wired into `suites` |
+| V-06 | A shared nimcache makes a clean tree fail to link | build robustness | XS | **done** |
+| V-07 | Unhandled Nim exception printed on a passing gate run | noise | XS | **done** |
+| V-08 | The gate bound the real port; the script contradicted itself | isolation | XS | **done** |
+| V-09 | Report 03's E-05 verification cannot be reproduced | audit trail | S | open |
+| V-10 | Every attached image leaves a zero-byte file in the workspace mirror | data | S | open |
+| V-11 | The gate is not concurrency-safe | isolation | XS | open |
+| V-12 | `tests/gui_check.sh:31` still passes `-d:gtk48` | stale | XS | open |
+| V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
+| V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | open |
+
+### V-02's exception: `AutoScroll` stays, and not out of caution
+
+The replacement is **not expressible** at `ac61ecf`. owlkettle's `ScrolledWindow`
+(`widgets.nim:1140-1181`) exposes `child`, the two natural-size flags and
+`edgeReached`/`edgeOvershot` — and `bindings/gtk.nim:815-821` binds `gtk_adjustment_set_*` with
+**no getters at all**, so nothing owlkettle offers can read the view's position. The edge events
+fire on *arriving* at an edge and never on *leaving* one, which is exactly the transition
+`scrollSticky` exists to observe. The comment was corrected to state what owlkettle does expose
+and why it is still not enough. This is the work order's intended outcome: a claim re-checked at
+the pinned revision, and the mechanism kept because the *new* reading also says keep it.
+
+---
+
+## 5. The four open findings, stated
+
+| ID | Finding |
+|---|---|
+| **V-09** | **Report 03's E-05 verification cannot be reproduced.** It states at `:375` and `:941-944` that `upstream.forward` *"was driven end-to-end against a fake upstream that feeds a response head in seven-byte packets"*, listing five specific confirmations. `grep -rln` across `src/` and `tests/` finds no such driver, and `serverselftest.nim` mentions neither `upstream` nor `forward`. The verification was presumably real when it was run; it is ungated now, so a regression in the splice passes every suite. The driver belongs in `serve-selftest`. |
+| **V-10** | **Every image attached in the window leaves a zero-byte file in the workspace mirror, and `git add`s it.** An image's `content` column is left empty *deliberately and correctly* (`gui.nim:2335-2339`: base64 must not enter a column that `workspace.contextFor` renders and `rag.indexFileAsset` embeds). But `api.putEntity` → `fssync.syncFileAsset(id, name, "", …)` → `writeFile(path, "")`. The *rename* form of this trap was found and closed (`gui.nim:653-657`); the *creation* form is open. Fixing it means choosing between writing the real bytes from the attachment cache and writing no file at all — a design decision, which is why session 9 recorded it rather than picking one. It is also why `assetview.classify` needs `avEmpty` as its own answer: "nothing stored" and "no viewer for this type" are different claims. |
+| **V-11** | **The gate is not concurrency-safe.** `DISPLAY=:87` and fixed ports mean two gates on one host fight; it cost one agent three red runs that read as code defects. It matters more now that `suites` runs the gate. Deriving both from `$$` closes it. |
+| **V-12** | **`tests/gui_check.sh:31` still passes `-d:gtk48`** — V-01's residue, in the one file that claims to mirror the `.nimble` flags and now does not. Inert, but the claim is false. |
+| **V-14** | **`--check` never builds anything behind an `if …Open`** — see §0. The gate should compile the panel-open variants rather than leaving each agent to do it by hand. |
+
+**V-13**, for completeness, is not a defect in this tree: at `ac61ecf` owlkettle binds no
+`gtk_file_chooser_set_current_name` (so a Save dialog cannot be pre-filled), no `GtkSorter` on
+`ColumnView` (so header-click sorting does not exist to wire), and no `ScrolledWindow` adjustment
+getters; and `TextView` still declares no events, which is why `DraftView` remains custom. Four
+upstream contribution candidates, found by using the library rather than reading it.
 
 ### Cross-references
 

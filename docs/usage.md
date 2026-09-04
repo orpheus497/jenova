@@ -307,6 +307,17 @@ Emitted only when there is something to report, so an ordinary turn's response h
 | `X-Jenova-Web-Hits: N` | N web-search results were injected |
 | `X-Jenova-Intent: <name>` | An intent prefix was detected and stripped |
 | `X-Jenova-Editor-Doc: 1` | A live document was read from Neovim and attached |
+| `X-Jenova-Trimmed-Bytes: N` | How many bytes those dropped turns were — the turn count alone does not say whether what was lost was a sentence or a file |
+| `X-Jenova-Msg-Count: N` | How many messages were actually sent to the model |
+| `X-Jenova-Body-Bytes: N` | The size of the request body as sent |
+| `X-Jenova-Sys-Bytes: N` | The size of the system message as sent, counted separately because it is the part the window never typed |
+| `X-Jenova-Injected: <names>` | Which standing blocks were joined to the system message — the persona, the workspace context, a FOCUS note, the thinking directive |
+| `X-Jenova-Hit: <score>;<bm25>;<semantic>;<line>;<path>` | One per retrieved chunk, with its scores and the line it starts at. The path is percent-encoded, because a filesystem path is the first value in this set that is not an integer or a fixed enum and a raw one could split the header |
+
+These six were added in session 9 and are what the window's inspector reads; the window calls no
+pipeline code directly, so **everything the inspector shows is available to a LAN client too.**
+A cache hit replays the original turn's diagnostics, because `upstream.forward` tees after the
+splice — correct, and worth knowing when reading them.
 
 ### Forwarded to `llama-server` unchanged
 
