@@ -108,13 +108,22 @@ grep -rn 'https\?://' jca_web/src/                # Web UI
 sockstat -4l | grep -E '8080|8081|8082'           # what is actually listening
 ```
 
-The first command returns more than two hosts, and all the extras are inert:
+The first command returns about twenty lines. **Read them; do not filter them.** An earlier version
+of this page offered
+`grep -rn 'https\?://' src/jenova/*.nim | grep -v '#'` as a way to "narrow it to the two real ones".
+It does neither: the glob excludes `src/jenova_core.nim`, which is the one file the fixtures are in,
+and `grep -v '#'` drops any line containing a `#` — which would hide a real URL carrying a fragment
+just as readily as a comment. The honest version is the full list, accounted for line by line:
 
-| What you will also see | Where | What it is |
+| What you will see | Where | What it is |
 |---|---|---|
-| `x.example`, `img.example`, `rfc.example` (about a dozen) | `src/jenova_core.nim` | Self-test fixtures for the markdown link renderer |
-| `https://host/a_b_c` | `src/jenova/markdown.nim` | An example inside a comment |
+| `html.duckduckgo.com`, `api.duckduckgo.com` | `src/jenova/websearch.nim` | **The two real ones.** The only hosts the runtime builds a request for |
+| `x.example`, `img.example`, `rfc.example`, `i.example` (about a dozen) | `src/jenova_core.nim` | Self-test fixtures for the markdown link renderer. Never fetched — they are compared as strings |
+| `http://{host}:{port}/v1/embeddings` | `src/jenova/rag.nim` | The embedding server on **loopback**, `127.0.0.1:8082`. Local by construction |
+| `http://127.0.0.1:<port>` | `src/jenova/gui.nim` | What the "Open Web UI" button hands to `xdg-open` — your own server |
+| `https://github.com/orpheus497/jenova`, `…/issues` | `src/jenova/version.nim` | The About window's Website and Report an Issue links. Opened **in your browser, when you click them**, never fetched by Jenova |
+| `"http://"`, `"https://"` | `src/jenova/markdown.nim` | The scheme allowlist for rendering a link, not a destination |
 
-`grep -rn 'https\?://' src/jenova/*.nim | grep -v '#'` narrows it to the two real ones. Neither
-fixture is ever fetched: nothing in the runtime performs an outbound request except
-`websearch.nim`.
+So the runtime performs an outbound request from exactly one module, `websearch.nim`, and one
+non-runtime path exists: two `github.com` links the About window can hand to your browser on a
+click.
