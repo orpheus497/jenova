@@ -1,6 +1,15 @@
 # Installation
 
-Jenova targets **FreeBSD 15+** (amd64, aarch64). It is the only supported platform.
+Jenova targets **FreeBSD 15+** (amd64, aarch64). It is the only supported platform, and the
+only one the hardware profiles are measured on.
+
+It will nonetheless **build and run wherever Nim, GTK4 and libadwaita do.** Nothing in the source
+is FreeBSD-only, and the entry points no longer refuse to compile elsewhere — that guard was
+removed because it kept the code out of reach of every build machine that was not the target,
+which is the opposite of what a compiler is for. On another system, expect everything to work
+except hardware detection, which asks `sysctl` questions only FreeBSD answers and will report an
+unknown machine rather than guess. The package names below are FreeBSD's; the libraries
+themselves are the same everywhere.
 
 ## Install
 

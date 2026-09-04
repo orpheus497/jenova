@@ -10,8 +10,9 @@ management layer, running entirely on your own hardware.
   call is web search, and only when a model invokes it.
 - **Hardware-aware** — installation detects your GPU, CPU and RAM and deploys a matching
   `etc/jenova.conf` overlay from `hardware-profiles/`.
-- **FreeBSD-native** — the only supported platform. ZFS, Vulkan, `mdmfs` swap-backed model
-  storage, `sysctl`-based detection. The source contains no other platform.
+- **FreeBSD-native** — the only supported platform, and the one everything is tuned against:
+  ZFS, Vulkan, `mdmfs` swap-backed model storage, `sysctl`-based detection. The *tuning* is
+  FreeBSD-specific; the *source* is not, and builds anywhere Nim and GTK4 do.
 
 ## Components
 

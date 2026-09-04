@@ -10,9 +10,10 @@
 ## is deliberately not reproduced is a tray that owns the client-facing port as a
 ## child process — see `gui.nim` for why that arrangement disappears.
 
-when not defined(freebsd):
-  {.error: "Jenova targets FreeBSD only — see docs/install.md. " &
-           "This matches the guard in jenova_core.nim.".}
+## There is no OS guard here either; `jenova_core.nim` carries the reasoning for
+## both. The window builds and runs wherever Nim, GTK4 and libadwaita do, which
+## is how it is tested — `tests/gui_build.sh` maps a real window and types into
+## it, and that has to be possible somewhere other than the target machine.
 
 import std/os
 import jenova/gui

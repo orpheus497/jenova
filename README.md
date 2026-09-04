@@ -142,8 +142,8 @@ Full detail — scoring, the priority ladder, every setting, and how to add a pr
 
 ## Platform Support
 
-**Jenova is a FreeBSD program**, not a portable program that runs on FreeBSD. The source contains
-no other platform: one kernel ABI, one package manager, one hardware-profile tree.
+**Jenova is built and tuned for FreeBSD.** That is where it is developed, where the hardware
+profiles are measured, and the only platform where it is supported as a product.
 
 | | |
 |---|---|
@@ -151,11 +151,21 @@ no other platform: one kernel ABI, one package manager, one hardware-profile tre
 | **Storage** | ZFS or UFS; ZFS ARC tuning shipped per profile |
 | **GPU** | Vulkan by default. CUDA is opt-in and never auto-selected |
 | **Swap** | Swap-backed model store via `mdmfs`, tuned for NVMe/Optane |
-| **Not supported** | Linux, macOS, Windows |
+| **Builds elsewhere** | Yes. Both binaries compile and run wherever Nim, GTK4 and libadwaita do |
+| **Supported elsewhere** | No |
 
-Both binaries carry a `when not defined(freebsd)` guard and will not compile anywhere else.
-Hardware detection reads `kern.ostype` rather than `uname -s`, which answers `Linux` under the
-FreeBSD Linuxulator.
+**It compiles anywhere, and that is deliberate.** Both entry points used to carry a
+`when not defined(freebsd)` guard that refused to compile on any other system. It was removed,
+because it was protecting nothing: `grep -rn 'defined(freebsd)' src/` returns nothing, so there
+was no second platform in the source for a guard to keep out. What it did instead was put the
+compiler out of reach of every continuous-integration runner and every developer machine that
+was not the target, so the only way to discover that the code did not compile was to try it on
+the one machine that mattered.
+
+The tuning is what is FreeBSD-specific, not the code. Hardware detection asks `sysctl` for the
+machine's identity — it reads `kern.ostype` rather than `uname -s`, which answers `Linux` under
+the FreeBSD Linuxulator — and on a system that does not answer, it reports an unknown machine
+and applies no profile, which is the honest result rather than a wrong one.
 
 ---
 

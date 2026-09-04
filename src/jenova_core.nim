@@ -9,10 +9,29 @@
 ##
 ## The desktop application is a separate binary.
 
-## Action purpose: refuses to compile anywhere but FreeBSD, rather than
-## acquiring an OS branch later. The desktop binary carries the same guard.
-when not defined(freebsd):
-  {.error: "jenova-core targets FreeBSD only — see docs/install.md.".}
+## Action purpose: **there is no OS guard here, and removing it was the fix.**
+##
+## Both entry points refused to compile anywhere but FreeBSD, on the argument
+## that a hard stop now prevents an OS branch later. The argument did not
+## survive contact with the tree: nothing under `src/jenova/` has an OS
+## conditional at all — `grep -rn 'defined(freebsd)' src/` returns nothing —
+## so there was no branch to prevent. The single platform-shaped dependency is
+## `hardware.nim`, which asks `sysctl` for the machine's identity; elsewhere it
+## gets nothing back and reports an unknown machine, which is the honest answer
+## and what its self-test already asserts.
+##
+## What the guard cost was concrete and recurring. Every check of this code had
+## to be run against a patched copy, and the resulting report read "cannot be
+## built on this host" — which describes a portability problem that does not
+## exist, instead of a refusal this file was issuing on purpose. It also put
+## the binaries out of reach of any CI runner, which is the one place a
+## compiler should always be running.
+##
+## FreeBSD remains the **supported and tuned** target: the hardware profiles,
+## the install document and the backend paths are written for it, and that is
+## a claim about where this is known to run well, not about where the compiler
+## may be pointed. It is stated in `--version` and in the README, where someone
+## can read it, rather than in an error that stops them.
 
 import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
