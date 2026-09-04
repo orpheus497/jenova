@@ -32,7 +32,8 @@ two-dimensional layout that no markup language can express. Tier 1 in a widget w
 Tier 2 in markup is impossible.
 
 **Tier 1 alone is already worth shipping**, and it ships first: today `$\alpha$` renders as the
-literal five characters `$\alpha$`.
+literal seven characters `$\alpha$`. *(It said five. It is seven — counted after the fact, which
+is exactly the kind of number this report is supposed to measure rather than estimate.)*
 
 ### The three options as report 05 framed them
 
@@ -125,9 +126,26 @@ a<sub>i</sub>                                  OK   text="ai"
 <i>f</i>(<i>x</i>)                             OK   text="f(x)"
 ```
 
-Everything Tier 1 needs parses: superscript, subscript, numeric character references for Greek
-and operators, and italic — which is the one piece of real mathematical typography Pango gives
-for free, since TeX sets variables in italic and function names upright.
+Everything in that probe parses: superscript, subscript, numeric character references, and
+italic — the last being the one piece of real mathematical typography Pango gives for free, since
+TeX sets variables in italic and function names upright.
+
+> **Correction, made while implementing M-1: the numeric-character-reference line above was the
+> wrong verification, and it contradicted a requirement two paragraphs below.** Pango does accept
+> `&#945;`, which is what the probe shows. But this codebase does not let a string reach Pango
+> unchecked — every markup fragment must pass `markupBalanced`, and that guard
+> (`src/jenova/markdown.nim:128`) accepts exactly five entity names:
+>
+> ```nim
+> if semi < 0 or s[i + 1 ..< semi] notin ["amp", "lt", "gt", "quot", "apos"]:
+>   return false
+> ```
+>
+> A `&#945;` therefore fails the guard, the whole line falls back to escaped source, and the
+> Greek letter never draws. **The two requirements in this section could not both be satisfied**,
+> and the error was verifying the wrong layer: the toolkit's parser rather than the guard this
+> project puts in front of it. M-1 emits the UTF-8 codepoint directly, which needs no entity, no
+> guard exemption and no probe.
 
 **Two spellings work, and that matters for the target.** `<sup>`/`<sub>` are the newer tags;
 `<span rise='…' size='smaller'>` is older and accepted wherever `rise` is. This host is Pango
