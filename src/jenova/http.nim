@@ -234,4 +234,35 @@ proc resolveStatic*(root, reqPath: string): string =
   # `public-old` for a root of `public` — and serves out of it.
   if not (full == rootNorm or full.startsWith(rootNorm & "/")):
     raise newException(HttpError, "path escapes static root: " & reqPath)
+
+  # Action purpose: **the lexical test above is not sufficient, and this is the
+  # same hole `fssync.resolveStoragePath` was fixed for.** `normalizedPath`
+  # resolves `.` and `..` as text and knows nothing about symlinks, so a link
+  # inside the static root pointing out of it — `public/x -> /etc` — normalises
+  # to a path that still begins with the root, passes, and is then read through.
+  # Encoding cannot bypass the lexical check; a symlink does not need to.
+  #
+  # Resolved compared against resolved, at both ends, for the reason that file
+  # gives: comparing a resolved target against the *lexical* root refuses every
+  # legitimate path when the root is itself a symlink, which it is whenever the
+  # tree is reached through one.
+  #
+  # Only an existing target is resolved, because only an existing target is ever
+  # read — `serveStatic` answers 404 for the rest, and `expandFilename` raises on
+  # a path that is not there. That is the whole difference from the storage
+  # route, which also has to guard a *create* through a symlinked parent.
+  var realRoot = rootNorm
+  if dirExists(rootNorm):
+    try:
+      realRoot = expandFilename(rootNorm)
+    except OSError:
+      raise newException(HttpError, "static root cannot be resolved")
+  if fileExists(full) or dirExists(full):
+    var real: string
+    try:
+      real = expandFilename(full)
+    except OSError:
+      raise newException(HttpError, "path escapes static root: " & reqPath)
+    if not (real == realRoot or real.startsWith(realRoot & "/")):
+      raise newException(HttpError, "path escapes static root: " & reqPath)
   full

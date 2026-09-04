@@ -92,9 +92,16 @@ proc spliceHeaders*(buf, extra: string): string =
 ## *parsed* response would answer a later hit in a shape the streaming reader
 ## cannot consume; storing the wire bytes makes a replayed hit byte-identical to
 ## a live reply, and nothing downstream has to know the difference.
+##
+## Action purpose: `captureMax` bounds the tee, and 0 means unbounded. Without
+## it the buffer grows with the whole reply, so a long generation is held twice
+## — once on the wire and once in memory — for a caller that may then refuse to
+## store it. The relay itself is never bounded: forwarding continues untouched
+## and only the copy stops growing, so a client's stream cannot be affected by
+## a cache decision.
 proc forward*(client: Socket, req: Request, host: string, port: int,
               capture: ptr string = nil,
-              extraHeaders = ""): RelayOutcome =
+              extraHeaders = "", captureMax = 0): RelayOutcome =
   var up: Socket
   try:
     up = newSocket(buffered = false)
@@ -179,7 +186,7 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
           return roTruncated
         hs += w
       relayed += head.len
-      if capture != nil:
+      if capture != nil and (captureMax == 0 or capture[].len < captureMax):
         capture[].add head
       continue
 
@@ -198,7 +205,13 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     relayed += n
     # Action purpose: the tee runs after the client is served, so a capture
     # buffer can never delay a token reaching the window.
-    if capture != nil:
+    #
+    # Once past `captureMax` the copy simply stops growing while the relay runs
+    # on. The caller is left holding a short buffer, which is why the cap it
+    # passes is one byte past what it will accept: a capture that reached the
+    # cap is over the limit by construction and is refused rather than filed as
+    # though it were the whole reply.
+    if capture != nil and (captureMax == 0 or capture[].len < captureMax):
       capture[].add chunk[0 ..< n]
 
   # Action purpose: whatever is still buffered here is DISCARDED, and the reason

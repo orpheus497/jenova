@@ -272,11 +272,22 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
 
     # Action purpose: the relay tees only when there is a key to file it under,
     # so an uncacheable request pays nothing for the cache existing.
+    #
+    # Action purpose: and the tee is bounded, because it was not. `capture[].add`
+    # grew with the whole reply, so a long generation was held in memory in full
+    # and then handed to `cacheStore`, which discards anything over
+    # `MaxCacheEntryBytes` — the buffer was unbounded to produce a value that was
+    # already certain to be thrown away. The cap is one byte past what the cache
+    # will take, so every reply that *can* be stored is still captured whole, and
+    # one that cannot is short by construction and refused below rather than
+    # filed as if it were complete. Only the copy is bounded; the client's stream
+    # is untouched.
     var captured = ""
     var capturePtr: ptr string = nil
     if cacheKey.len > 0: capturePtr = addr captured
     let outcome = upstream.forward(client, outbound, llamaHostS.get(), llamaPort,
-                                   capturePtr, diagHeaders)
+                                   capturePtr, diagHeaders,
+                                   captureMax = pipeline.MaxCacheEntryBytes + 1)
     # Action purpose: only a complete relay is stored, and only if it can be
     # replayed. A truncated one means the client went away mid-stream, and
     # filing a fragment to serve later as a whole answer is confidently wrong;
@@ -471,6 +482,26 @@ proc stop*() =
   if listenFd != osInvalidSocket:
     nativesockets.close(listenFd)
     listenFd = osInvalidSocket
+
+  # Action purpose: **the acceptors are deliberately not joined here, and this
+  # was measured rather than assumed.** An acceptor blocked in `accept` or
+  # mid-`peekPath` when the listener closes can still reach its
+  # `queues[...].send(cfd)` below, so joining them first — before any sentinel
+  # is queued — is the ordering that would close the race properly.
+  #
+  # It does not work on this platform. Closing a listening descriptor while
+  # another thread blocks in `accept(2)` on it is unspecified by POSIX, and on
+  # FreeBSD it does not wake that thread: `joinThread` here never returned, and
+  # `serve-selftest` hung on every one of three runs. `shutdown(2)` is no help
+  # either — it answers `ENOTCONN` on a listening socket. Waking them would take
+  # a self-connect to the bound address, which needs the address kept for
+  # shutdown and fails in its own ways on a LAN bind; that is a larger change
+  # than the leak it closes.
+  #
+  # So the race stays, and its consequence is handled where it can be: a
+  # descriptor queued after its class's workers have gone is closed by the drain
+  # in `joinAll` rather than left open. See there.
+
   # One sentinel per worker, so each blocking receive returns and its thread
   # exits rather than being killed mid-request.
   for c in RouteClass:
@@ -482,3 +513,22 @@ proc stop*() =
 proc joinAll*() =
   for i in 0 ..< routes.totalThreads():
     joinThread(classThreads[i])
+
+  # Action purpose: every worker has exited by here, so anything still in a
+  # queue is a descriptor no thread will ever take. An acceptor can enqueue one
+  # after the sentinels — `stop` says why that race cannot be closed on this
+  # platform — and a connection that is neither served nor closed holds its
+  # descriptor and leaves the peer waiting on a socket that will never answer.
+  # Closing it is not a substitute for serving it, but it is the difference
+  # between a client seeing a closed connection and one hanging until it times
+  # out.
+  #
+  # `tryRecv` and not `recv`: the queue is expected to be empty, and a blocking
+  # receive on an empty channel here would hang the shutdown this proc exists to
+  # complete.
+  for c in RouteClass:
+    while true:
+      let (got, fd) = queues[c].tryRecv()
+      if not got: break
+      if fd != osInvalidSocket:
+        try: nativesockets.close(fd) except CatchableError: discard

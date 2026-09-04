@@ -3738,6 +3738,56 @@ proc main() =
                 fssync.rmFileMissing and
               not fileExists(outside / "stolen.md"))
 
+      # Action purpose: **the static route had the same symlink hole this file's
+      # storage assertions were written for, and nothing tested it.**
+      # `http.resolveStatic` normalised lexically, which resolves `.` and `..`
+      # as text and knows nothing about links — so a symlink inside the served
+      # root pointing out of it produced a path that still began with the root,
+      # passed the prefix test, and was read through by `serveStatic`. Encoding
+      # cannot get past the lexical check; a symlink does not need to.
+      #
+      # Both directions are asserted, because a containment fix that refuses
+      # everything passes a refusal test on its own. The legitimate case is
+      # served *through* a symlinked root, which is the second half: comparing a
+      # resolved target against an unresolved root refuses every real path the
+      # moment the tree is reached through a link.
+      block staticRootContainmentSurvivesASymlink:
+        let sroot = base / "real" / "public"
+        createDir(sroot)
+        writeFile(sroot / "index.html", "<h1>ok</h1>")
+        # A link inside the served root, pointing at a directory outside it.
+        createSymlink(base / "outside", sroot / "out")
+
+        check("an ordinary file under the static root resolves",
+              http.resolveStatic(sroot, "/index.html") == sroot / "index.html")
+
+        # The same shape as the storage case: spelled inside the root, resolving
+        # outside it. `secret.txt` is the file the storage assertions plant.
+        var escaped = false
+        try: discard http.resolveStatic(sroot, "/out/secret.txt")
+        except HttpError: escaped = true
+        check("a static path through a symlinked directory is REFUSED", escaped)
+
+        # And through a root that is itself a symlink, which must still work.
+        let linkedRoot = base / "link" / "public"
+        check("a file under a symlinked static root still resolves",
+              http.resolveStatic(linkedRoot, "/index.html").len > 0)
+        var escapedThroughLink = false
+        try: discard http.resolveStatic(linkedRoot, "/out/secret.txt")
+        except HttpError: escapedThroughLink = true
+        check("...and the escape is still refused through it",
+              escapedThroughLink)
+
+        # The lexical guard this replaces must not have been lost: a sibling
+        # directory whose name merely starts with the root's is still refused.
+        createDir(base / "real" / "public-old")
+        writeFile(base / "real" / "public-old" / "leak.txt", "no")
+        var sibling = false
+        try: discard http.resolveStatic(sroot, "/../public-old/leak.txt")
+        except HttpError: sibling = true
+        check("a sibling directory sharing the root's prefix is REFUSED",
+              sibling)
+
       # Action purpose: a `data:` URI is filtered before it is decoded, and the
       # filter has to tell layout from corruption. Base64 is routinely
       # line-wrapped, so whitespace is not a defect and must survive; a
@@ -4576,8 +4626,43 @@ proc main() =
               not assetview.splitDataUrl("data:image/png;base64").isData)
         check("a decoder that is fed newlines still decodes",
               assetview.decodeBase64("aGVs\nbG8=") == (true, "hello"))
-        check("and a length that cannot be base64 is refused",
-              not assetview.decodeBase64("abc").ok)
+
+        # Action purpose: **this reader must accept exactly what the writer
+        # accepts.** `fssync.assetPayload` decides whether an asset is stored
+        # and `assetview.decodeBase64` decides whether it can be read back, so
+        # any rule one has and the other lacks is a file that saves and will not
+        # open. The two drifted once already, when the writer was relaxed to
+        # take unpadded base64 and this was left demanding a multiple of four.
+        #
+        # The pairs below are asserted against **both** procs in the same
+        # breath, so a future change to either that does not change the other
+        # fails here rather than in a viewer.
+        for payload in ["QQ==", "QQ", "abc", "aGVsbG8=", "aGVs\nbG8="]:
+          let reader = assetview.decodeBase64(payload)
+          let writer = fssync.contentWritesAFile("data:text/plain;base64," & payload)
+          check("reader and writer agree that `" & payload.replace("\n", "\\n") &
+                "` is storable", reader.ok and writer,
+                "reader.ok=" & $reader.ok & " writer=" & $writer)
+        for payload in ["QQ!", "abcde", "@@@@"]:
+          let reader = assetview.decodeBase64(payload)
+          let writer = fssync.contentWritesAFile("data:text/plain;base64," & payload)
+          check("reader and writer agree that `" & payload & "` is refused",
+                (not reader.ok) and (not writer),
+                "reader.ok=" & $reader.ok & " writer=" & $writer)
+
+        # `abc` is three characters, which is one byte short of a padded group
+        # and a perfectly good unpadded encoding of two bytes. The rule that
+        # refused it refused a payload the writer stores.
+        check("unpadded base64 is decoded, not refused",
+              assetview.decodeBase64("abc").ok)
+        check("and the one length base64 cannot produce is refused",
+              not assetview.decodeBase64("abcde").ok)
+        # The defect the writer was fixed for, in the reader: a stray character
+        # must not be dropped and the remainder decoded as though it were the
+        # whole payload.
+        check("a stray character is refused, not silently dropped",
+              not assetview.decodeBase64("QQ!").ok,
+              $assetview.decodeBase64("QQ!"))
 
       block viewerChoice:
         # The transition that matters: the same declared type with and without

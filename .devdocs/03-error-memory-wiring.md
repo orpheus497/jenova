@@ -1044,6 +1044,56 @@ Two more against the asset path this session had just changed, both real, both f
 Both are asserted in `fs-selftest`, and **both assertions were proven to fail with their fix
 reverted**: neutering `moveFileAssetMirror` fails three, and dropping the refusal fails one.
 
+### An eighth pass: a reader/writer split, a symlink hole, and one fix that was worse
+
+* **R-31 · `assetview.decodeBase64` no longer accepted what the writer stores.** Relaxing
+  `fssync.assetPayload` to take unpadded base64 (R-25) left the reader demanding a multiple of
+  four, so a payload `syncFileAsset` had stored came back `ok = false` and the viewer reported a
+  stored file as unreadable — a file that saves and will not open. The same split ran the other
+  way: the reader still dropped a stray character rather than refusing it, so `QQ!` read back as
+  `A`. Both rules are the writer's now, and `asset-selftest` asserts five payloads storable and
+  three refused **against both procs in the same breath**, so the next change to either that does
+  not change the other fails there rather than in a viewer.
+* **R-32 · the static route could be walked out of with a symlink** · severity: **high**.
+  `http.resolveStatic` normalised lexically, which resolves `.` and `..` as text and knows nothing
+  about links, so a symlink inside the served root pointing out of it produced a path that still
+  began with the root, passed the prefix test, and was read through by `serveStatic`. This is the
+  hole `fssync.resolveStoragePath` was fixed for — **at both ends**, and only one of the two files
+  had been done. Resolved compared against resolved now, with the root resolved too so a tree
+  reached through a link still serves. `fs-selftest` asserts the escape refused, the ordinary file
+  still served, the escape refused through a symlinked root as well, and the older sibling-prefix
+  guard intact. **Proven to fail with the fix reverted**: two assertions go red.
+* **R-33 · the response-cache tee was unbounded.** `capture[].add` grew with the whole reply while
+  `cacheStore` discards anything over `MaxCacheEntryBytes` — so a long generation was held in
+  memory in full to produce a value already certain to be thrown away. `upstream.forward` takes a
+  `captureMax` now, and the server passes one byte past the cache limit: everything storable is
+  still captured whole, and anything larger is short by construction and refused rather than filed
+  as if complete. The relay is untouched, so no cache decision can affect a client's stream.
+
+### The shutdown fix that was worse than the defect · **measured, not argued**
+
+The review also asked for the acceptor threads to be joined after closing the listener and before
+the worker sentinels are queued. The reasoning is right: an acceptor blocked in `accept` can still
+reach its `queues[...].send(cfd)` after the sentinels, and a descriptor queued once its class's
+workers have exited is neither served nor closed.
+
+**Implemented, and it hung.** Closing a listening descriptor while another thread blocks in
+`accept(2)` on it is unspecified by POSIX, and on FreeBSD it does not wake that thread:
+`joinThread` never returned and `serve-selftest` hung on **three runs out of three**, each time
+needing a timeout to kill. `shutdown(2)` is no help either — it answers `ENOTCONN` on a listening
+socket. Waking them would take a self-connect to the bound address, which means keeping that
+address for shutdown and fails in its own ways on a LAN bind.
+
+So the ordering is not taken, the reason is recorded at the site, and **the consequence is handled
+where it safely can be**: `joinAll` drains each queue with `tryRecv` after the workers have gone
+and closes any descriptor still sitting in one. That is the difference between a client seeing a
+closed connection and one hanging until it times out. It cannot hang, because `tryRecv` does not
+block. Verified: `serve-selftest` passes three runs out of three.
+
+**This is the second time in this branch a proposed fix was worse than what it replaced** — the
+first being the relay contract, where the implementation was right and the test wrong. Both were
+settled by running the thing rather than by reading it.
+
 ### Deferred, with the reason stated
 
 Three further findings from the same review are **not** taken here. None is introduced by this

@@ -124,6 +124,14 @@ just as readily as a comment. The honest version is the full list, accounted for
 | `https://github.com/orpheus497/jenova`, `…/issues` | `src/jenova/version.nim` | The About window's Website and Report an Issue links. Opened **in your browser, when you click them**, never fetched by Jenova |
 | `"http://"`, `"https://"` | `src/jenova/markdown.nim` | The scheme allowlist for rendering a link, not a destination |
 
-So the runtime performs an outbound request from exactly one module, `websearch.nim`, and one
-non-runtime path exists: two `github.com` links the About window can hand to your browser on a
-click.
+So **the native runtime** — `bin/jenova` and `bin/jenova-core`, the two binaries this table covers
+— performs an outbound request from exactly one module, `websearch.nim`, and one non-runtime path
+exists beside it: two `github.com` links the About window can hand to your browser on a click.
+
+**That sentence is about the Nim binaries and does not extend to the Web UI.** The browser client
+carries its own MCP implementation in `jca_web/src/lib/services/mcp.service.ts`, and once you
+configure a server there it sends requests from your browser — a path neither `grep` above reaches,
+because it is not in `src/`. It is off until you add a server yourself, and the section *MCP: not
+in either binary, but present in the Web UI* above states it in full. Counting modules in `src/`
+answers what Jenova's own process does; it does not answer what a page it serves can be configured
+to do.

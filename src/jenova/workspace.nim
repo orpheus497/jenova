@@ -11,9 +11,11 @@
 ## project level and to everything nested at workspace level; and files have no
 ## FOCUS concept at all.
 ##
-## Known limit: there is no token budget, so a large workspace can overflow the
-## context on its own. Bounding it here alone buys nothing while the history is
-## also untrimmed.
+## Known limit: there is no token budget here, so a large workspace can overflow
+## the context on its own. The second half of this note used to read "bounding it
+## here alone buys nothing while the history is also untrimmed" — the history is
+## trimmed now, and a request that dropped turns says so in `X-Jenova-Trimmed`,
+## so that is no longer a reason to leave this unbounded.
 
 import std/[strutils, tables]
 import ./db

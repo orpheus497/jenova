@@ -64,18 +64,31 @@ proc splitDataUrl*(content: string): tuple[isData: bool, mime, encoded: string] 
   (true, head, content[comma + 1 .. ^1])
 
 ## Function purpose: the base64 alphabet is filtered before decoding for the
-## reason `fssync.syncFileAsset` filters it — a stored URI can carry newlines
+## reason `fssync.assetPayload` filters it — a stored URI can carry newlines
 ## from whatever wrote it, and Nim's decoder does not skip them.
+##
+## Action purpose: **this must accept exactly what the writer accepts, and it
+## drifted.** `fssync.assetPayload` decides whether an asset is written; this
+## decides whether it can be read back. When the writer was relaxed to take
+## unpadded base64 — a tail of 2 or 3 characters, which decodes exactly — this
+## was left requiring a multiple of four, so a payload `syncFileAsset` had
+## stored happily came back `ok = false` here and the viewer reported a stored
+## file as unreadable. The same drift in the other direction let a stray
+## character be dropped rather than refused, so `QQ!` read back as `A`: bytes
+## nobody supplied, which is the defect the writer was fixed for.
+##
+## So the three rules are the writer's, deliberately: whitespace is layout and
+## is skipped, any other non-alphabet character is a refusal, and only a length
+## remainder of 1 — the one length base64 cannot produce — is rejected. An empty
+## payload decodes to no bytes and is not an error, because that is the ordinary
+## shape of a chat image's row.
 proc decodeBase64*(encoded: string): tuple[ok: bool, data: string] =
   var clean = newStringOfCap(encoded.len)
   for ch in encoded:
     if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}: clean.add ch
-  # A payload that had characters and has none after filtering held nothing the
-  # alphabet allows, which is a refusal and not an empty file. Without this the
-  # two are the same answer, and a corrupt URI would report as a stored asset
-  # with no content.
-  if clean.len == 0: return (encoded.len == 0, "")
-  if clean.len mod 4 != 0: return (false, "")
+    elif ch notin {' ', '\t', '\n', '\r'}: return (false, "")
+  clean = clean.strip(leading = false, chars = {'='})
+  if clean.len mod 4 == 1: return (false, "")
   try:
     (true, base64.decode(clean))
   except CatchableError:
