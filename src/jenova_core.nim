@@ -1635,6 +1635,231 @@ proc main() =
               markdown.parse("word\n".repeat(markdown.CodeCapLines + 4))
                 .allIt(not it.isLongCode))
 
+      block inlineMath:
+        # Action purpose: inline maths is the tier Pango can typeset — Greek,
+        # operators, scripts, and the italic-versus-upright distinction that
+        # tells a variable from an operator name. It is also the whole of what
+        # Pango can typeset, which is why the display forms below are stepped
+        # over rather than rendered.
+        proc md(x: string): string = markdown.inlineMarkup(x)
+        proc sup(x: string): string =
+          "<span rise='6000' size='smaller'>" & x & "</span>"
+        proc sub(x: string): string =
+          "<span rise='-3000' size='smaller'>" & x & "</span>"
+
+        check("a Greek name becomes its letter",
+              md("$\\alpha$") == "\u03B1", md("$\\alpha$"))
+        check("and so does a capital one",
+              md("$\\Omega$") == "\u03A9", md("$\\Omega$"))
+        check("the two spellings of epsilon stay distinct — they are " &
+              "separate letters in Unicode, not two styles of one",
+              md("$\\epsilon\\varepsilon$") == "\u03F5\u03B5",
+              md("$\\epsilon\\varepsilon$"))
+        let operators = md("$\\sum \\int \\pm \\times \\cdot " &
+                           "\\leq \\geq \\neq \\approx \\infty " &
+                           "\\to \\rightarrow \\partial \\nabla$")
+        check("the operators and relations a reply actually writes",
+              operators ==
+              "\u2211 \u222B \u00B1 \u00D7 \u22C5 \u2264 \u2265 " &
+              "\u2260 \u2248 \u221E \u2192 \u2192 \u2202 \u2207",
+              operators)
+
+        check("a single-character superscript",
+              md("$x^2$") == "<i>x</i>" & sup("2"), md("$x^2$"))
+        check("a single-character subscript",
+              md("$a_i$") == "<i>a</i>" & sub("<i>i</i>"), md("$a_i$"))
+        check("a braced superscript takes the whole group",
+              md("$x^{n+1}$") == "<i>x</i>" & sup("<i>n</i>+1"),
+              md("$x^{n+1}$"))
+        check("a sum carries both scripts",
+              md("$\\sum_{i=1}^{n}$") ==
+              "\u2211" & sub("<i>i</i>=1") & sup("<i>n</i>"),
+              md("$\\sum_{i=1}^{n}$"))
+        # The script tags are the older `rise` spelling rather than
+        # `<sup>`/`<sub>`, because `rise` is accepted by every Pango that
+        # accepts either and the target host's Pango version is not known
+        # here. Moving to the newer tags is a decision about that host, so it
+        # fails here rather than silently on it.
+        check("a script is spelled with rise rather than <sup>",
+              md("$x^2$").contains("rise=") and
+              not md("$x^2$").contains("<sup>"), md("$x^2$"))
+
+        # TeX sets a variable in italic and an operator name upright, and that
+        # is the one piece of real mathematical typography markup can express.
+        # An italic `sin` reads as s times i times n.
+        check("a variable is italic and a function name is upright",
+              md("$\\sin x$") == "sin <i>x</i>", md("$\\sin x$"))
+        check("and so are the other names TeX sets upright",
+              md("$\\cos \\log \\lim$") == "cos log lim",
+              md("$\\cos \\log \\lim$"))
+        check("a bare letter run is a product of variables, so all of it " &
+              "is italic",
+              md("$f(x)$") == "<i>f</i>(<i>x</i>)", md("$f(x)$"))
+
+        check("the paren delimiters render the same as the dollar ones",
+              md("\\(x^2\\)") == "<i>x</i>" & sup("2"), md("\\(x^2\\)"))
+
+        # Pango draws no line over a radicand, so nothing would mark where one
+        # ends: `\u221Ax+1` reads as the root of x, plus one.
+        check("a one-atom radicand needs no parentheses",
+              md("$\\sqrt{2}$") == "\u221A2", md("$\\sqrt{2}$"))
+        check("a longer one is parenthesised, because there is no vinculum",
+              md("$\\sqrt{x+1}$") == "\u221A(<i>x</i>+1)",
+              md("$\\sqrt{x+1}$"))
+
+        # A combining character follows the one it modifies in the text
+        # stream, so an accent needs no drawing — but it lands on exactly one
+        # character, which is why a wider one declines rather than sitting over
+        # the last letter and asserting something the formula does not.
+        check("an accent becomes a combining mark on its letter",
+              md("$\\hat{x}$") == "<i>x</i>\u0302", md("$\\hat{x}$"))
+        check("an accent over more than one letter stays as source",
+              md("$\\overline{AB}$") == "$\\overline{AB}$",
+              md("$\\overline{AB}$"))
+        check("a norm reads as its own pair of bars",
+              md("$\\|v\\|$") == "\u2016<i>v</i>\u2016", md("$\\|v\\|$"))
+
+        # The escaper the emphasis passes already use is the one that runs
+        # here: a second one would be a second place for a `<` to reach Pango
+        # unescaped, and Pango answers that by drawing nothing.
+        check("a comparison inside maths is escaped, not passed through",
+              md("$a < b$") == "<i>a</i> &lt; <i>b</i>", md("$a < b$"))
+        check("and so is an ampersand",
+              md("$a & b$") == "<i>a</i> &amp; <i>b</i>", md("$a & b$"))
+
+      block inlineMathRefusals:
+        # Action purpose: every one of these renders as its own source. A
+        # delimiter that is not a delimiter is the failure that matters most —
+        # turning prose into a formula is worse than not rendering one, because
+        # only the second tells the reader something was not understood.
+        proc md(x: string): string = markdown.inlineMarkup(x)
+
+        # An escaped delimiter is not maths. The Web UI names its two sources:
+        # the title of chapter 20 of The TeXbook, and the LaTeX line break.
+        check("an escaped paren does not open maths",
+              md("Definitions\\\\(also called macros)") ==
+              "Definitions\\(also called macros)",
+              md("Definitions\\\\(also called macros)"))
+        check("an escaped bracket is a line break, not display maths",
+              md("a \\\\[4pt] b") == "a \\[4pt] b", md("a \\\\[4pt] b"))
+        check("an escaped dollar is a price",
+              md("it costs \\$5") == "it costs $5", md("it costs \\$5"))
+
+        # A dollar inside a code span is never maths. Fenced blocks are already
+        # separate by the time this runs; the inline span is the half that is
+        # still inside the text.
+        check("a dollar inside a code span is not a delimiter",
+              md("`$x$` is code") == "<tt>$x$</tt> is code",
+              md("`$x$` is code"))
+
+        # Display maths is a block of its own and a later phase's work. A pass
+        # that ate the first `$` of a `$$` would leave the second one to open a
+        # formula running to the end of the line.
+        check("a display formula is left as its own source",
+              md("$$x = 1$$") == "$$x = 1$$", md("$$x = 1$$"))
+        check("and so is the bracket spelling of it",
+              md("\\[x = 1\\]") == "\\[x = 1\\]", md("\\[x = 1\\]"))
+
+        # A delimiter opens only where a non-blank follows it and closes only
+        # where a non-blank precedes it, which is the rule the emphasis passes
+        # already use and the one that keeps a pair of prices out of maths.
+        check("two prices are not one formula",
+              md("costs $5 and $10") == "costs $5 and $10",
+              md("costs $5 and $10"))
+        check("a delimiter followed by a space opens nothing",
+              md("$ x $") == "$ x $", md("$ x $"))
+
+        # A control sequence this renderer does not know declines the whole
+        # formula rather than dropping the parts it cannot draw. Fractions are
+        # the display tier's work, so this is also where that boundary is
+        # asserted rather than assumed.
+        check("an unknown control sequence leaves the formula as source",
+              md("$\\unknownmacro$") == "$\\unknownmacro$",
+              md("$\\unknownmacro$"))
+        check("a fraction is not inline maths, and stays readable as source",
+              md("$\\frac{a}{b}$") == "$\\frac{a}{b}$",
+              md("$\\frac{a}{b}$"))
+        check("an unclosed group is a formula still being typed",
+              md("$x_{ab$") == "$x_{ab$", md("$x_{ab$"))
+
+        # A formula that reaches across a code span or a link is a pair of
+        # delimiters that happen to sit either side of one, not a formula: the
+        # span and the href have already left the string and only their
+        # placeholders remain, so there is nothing left to typeset.
+        check("a formula that overlaps a code span is not a formula",
+              md("$a `b` c$") == "$a <tt>b</tt> c$", md("$a `b` c$"))
+        check("nor is one that overlaps a link",
+              md("$a [l](https://e.example/) b$") ==
+              "$a <a href=\"https://e.example/\">l</a> b$",
+              md("$a [l](https://e.example/) b$"))
+
+        check("no maths placeholder leaks into the markup",
+              not md("$x^2$ and $y_1$").contains('\x04'))
+
+      block streamingMath:
+        # Action purpose: a reply is drawn while it streams, so every prefix of
+        # a line carrying a formula is itself a line this renderer is handed. A
+        # half-open delimiter stays literal and must not take the rest of the
+        # line with it while the model is still typing.
+        proc md(x: string): string = markdown.inlineMarkup(x)
+        proc sup(x: string): string =
+          "<span rise='6000' size='smaller'>" & x & "</span>"
+
+        let full = "The value $\\alpha^2$ is fixed"
+        var unbalanced = 0
+        var truncated = 0
+        for n in 10 .. full.len:
+          let got = md(full[0 ..< n])
+          if not markdown.markupBalanced(got): inc unbalanced
+          if not got.startsWith("The value "): inc truncated
+        check("every prefix of a streaming formula is markup Pango accepts",
+              unbalanced == 0, $unbalanced & " of " & $(full.len - 9))
+        check("and no prefix loses the words before the delimiter",
+              truncated == 0, $truncated & " of " & $(full.len - 9))
+        check("an unclosed delimiter survives as one character of text",
+              md("$unclosed and more text") == "$unclosed and more text",
+              md("$unclosed and more text"))
+        check("it does not swallow the formula that closes after it",
+              md("$open and $x$") == "$open and <i>x</i>",
+              md("$open and $x$"))
+        check("the closed form renders once the delimiter arrives",
+              md(full) == "The value \u03B1" & sup("2") & " is fixed", md(full))
+
+      block mathAmongTheOtherPasses:
+        # Action purpose: the maths pass is lifted out and put back like a code
+        # span, between the links and the emphasis runs. Either side of that
+        # position is a defect: before the links, a `$` in a URL opens a
+        # formula; after the emphasis runs, a `*` inside one opens an italic
+        # across the rest of the line.
+        proc md(x: string): string = markdown.inlineMarkup(x)
+
+        check("emphasis still closes around a formula",
+              md("**bold $x$ here**") == "<b>bold <i>x</i> here</b>",
+              md("**bold $x$ here**"))
+        check("a dollar in a URL is part of the href, not a delimiter",
+              md("[a $b$](https://e.example/x$y)") ==
+              "<a href=\"https://e.example/x$y\">a <i>b</i></a>",
+              md("[a $b$](https://e.example/x$y)"))
+        check("two formulas on one line both render",
+              md("$\\alpha$ and $\\beta$") == "\u03B1 and \u03B2",
+              md("$\\alpha$ and $\\beta$"))
+
+        let fenced = markdown.parse("```\n$\\alpha$\n```")
+        check("maths inside a fence is never rendered",
+              fenced.len == 1 and fenced[0].kind == markdown.bkCode and
+              fenced[0].text == "$\\alpha$",
+              (if fenced.len == 1: fenced[0].text else: $fenced.len))
+        let heading = markdown.parse("# $\\alpha$")
+        check("a heading renders the maths inside it",
+              heading.len == 1 and
+              heading[0].text == "<big><b>\u03B1</b></big>",
+              (if heading.len == 1: heading[0].text else: $heading.len))
+        let cells = markdown.parse("| $x^2$ | b |\n|---|---|\n| 1 | 2 |")
+        check("and so does a table cell",
+              cells.len == 1 and cells[0].rows[0][0] ==
+              "<i>x</i><span rise='6000' size='smaller'>2</span>",
+              (if cells.len == 1: cells[0].rows[0][0] else: $cells.len))
+
       if bad == 0:
         echo ""
         echo "markdown-selftest: PASS"
