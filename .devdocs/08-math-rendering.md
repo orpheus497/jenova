@@ -250,25 +250,40 @@ window is better than it was.**
 > a child carrying both `x` and `y` needs no second packing rule — drawing is translate and
 > recurse. `MathFont` is `MathConstants` plus two closures, `measure` and `variants`, so the
 > module imports only `std/[strutils, tables]` and stays assertable without a font.
-| **M-3** (font half ✅) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw remains: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
+| **M-3** (font half ✅, metrics contract ✅) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw remains: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
 
-> **M-3's draw has a prerequisite this report never stated: the two modules do not share a
-> `MathConstants`, and nothing converts between them.** `mathfont.MathConstants`
-> (`mathfont.nim:157`, built by `readConstants` at `:341`) and `mathtex.MathConstants` are
-> **separate types of different shapes** — 24 fields against 45. The reader omits metrics that
-> stack, script, radical, delimiter, limit and matrix layout all consume, and maps display-style
-> fraction and radical values onto the non-display fields.
+> **M-3's draw had a prerequisite this report never stated, and it is now closed.** The two
+> modules declared *separate* `MathConstants` types — `mathfont`'s of 24 fields, `mathtex`'s of 44
+> — and nothing converted between them, so the mismatch could not fail: `readConstants` had no
+> caller and `renderMath`'s only caller was the self-test, which built its table by hand.
 >
-> **This is not a live defect today, which is why it is recorded here rather than fixed.** Nothing
-> imports `mathfont`, `readConstants` has no caller anywhere in the tree, and the only caller of
-> `renderMath` is `math-selftest`, which builds a `mathtex.MathFont` by hand
-> (`src/jenova_core.nim:1889`). The gap opens the moment M-3 wires a real font to the layout
-> engine, and closing it is part of that work: extend the reader to every field `mathtex` reads,
-> supply a documented default for each metric the MATH table does not carry (§6's correction 2
-> already names two of them), and convert text-style and display-style values **explicitly**
-> rather than letting one stand in for the other. Reusing a display-style constant in a text-style
-> position is the kind of error that renders plausibly and is wrong everywhere, which is the
-> failure mode §0 says a font question must not produce.
+> **The fix is not a bridge. It is one type.** A converter between two structures is a third thing
+> to keep in step, and the reason this went unnoticed is precisely that two declarations of the
+> same table drifted without either file being wrong on its own. `mathtex` declares
+> `MathConstants` — it is the consumer, and it is the pure half that stays assertable without a
+> font — and `mathfont` now imports it and fills it in. There is no second declaration to drift.
+> A field the layout adds is a compile error in the font module rather than a zero at run time.
+>
+> What the old reader actually did, recorded because the shape of it is the lesson: it filled 24
+> of the 44 fields, left 20 at zero, and read **five display-style constants into the text-style
+> fields beside them** — `FRACTION_NUMERATOR_DISPLAY_STYLE_SHIFT_UP` into `fractionNumeratorShiftUp`
+> and the same substitution for the denominator shift, both fraction gaps and the radical gap. A
+> display value in a text position renders *plausibly*: every inline fraction set with the shifts
+> of a displayed one. That is the error a reader distrusts last, which is why §0's argument — a
+> formula drawn badly is worse than one drawn plainly — applies to the metrics and not only to the
+> glyphs.
+>
+> **Guarded at compile time, because neither half of it is visible in output.** `mathfont` carries
+> a `static:` block asserting the constant ordinals against `hb_ot_math_constant_t`, asserting that
+> every text-style constant is immediately followed by its display-style counterpart (which is what
+> catches a transposition), walking `defaultConstants()` with `fieldPairs` to refuse any field left
+> at zero, and asserting that display-style values exceed their text-style partners. Reintroducing
+> the original mapping now **fails the build**, with the failing field named. Verified by doing it.
+>
+> Two values are still not font values and are stated as such: the `MATH` table has no matrix
+> column or row spacing, so those come from plain TeX — the `\quad` `\matrix` puts between columns,
+> and `\jot` between the lines of a display. §6's correction 2 predicted exactly this and it holds.
+
 | **M-4** | Polish: display-math alignment, `\begin{align}`, spacing classes (ord/op/bin/rel), and `docs/usage.md` stating exactly which LaTeX subset is supported | assertions per feature; **the doc must name what is *not* supported**, per §4.4 |
 
 **M-1 is the whole of the visible win for most replies.** M-2 is the real engineering and it is

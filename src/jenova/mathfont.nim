@@ -58,6 +58,10 @@
 
 import std/[os, strutils]
 import ./pkgconfig
+# For `MathConstants`, which this module fills in rather than mirroring. No
+# cycle: `mathtex` imports only `std`, which is what keeps it assertable
+# without a font.
+import ./mathtex
 
 # Through the template and not a bare `staticExec`, for the reason
 # `pkgconfig.nim` gives: `staticExec` discards the exit status, so on a machine
@@ -74,30 +78,41 @@ type
   HbPosition = cint
   HbCodepoint = uint32
 
-  ## `hb_ot_math_constant_t`, by ordinal. Only the constants the layout
-  ## actually consumes are named: an enum that mirrors all fifty-six would be
-  ## fifty-six chances to mistype an ordinal for no gain, and a wrong ordinal
-  ## reads a real value from the wrong field, which is the failure mode that
-  ## looks like a subtle layout bug rather than an error.
   MathConstant* = enum
+    ## `hb_ot_math_constant_t`, by ordinal. **Every constant `mathtex` reads is
+    ## named here and nothing else is**, which is the property that matters: an
+    ## enum mirroring all fifty-six would be fifty-six chances to mistype an
+    ## ordinal for no gain, and a wrong ordinal reads a real value from the
+    ## wrong field — the failure mode that looks like a subtle layout bug rather
+    ## than an error.
+    ##
+    ## The three percentages (0, 1, 55) are not font units. HarfBuzz returns
+    ## them as percentages whatever the font is scaled to, so they are the only
+    ## values here a caller must not scale by the em.
     mcScriptPercentScaleDown = 0
     mcScriptScriptPercentScaleDown = 1
+    mcDelimitedSubFormulaMinHeight = 2
     mcDisplayOperatorMinHeight = 3
     mcAxisHeight = 5
     mcSubscriptShiftDown = 8
     mcSubscriptTopMax = 9
     mcSubscriptBaselineDropMin = 10
     mcSuperscriptShiftUp = 11
+    mcSuperscriptShiftUpCramped = 12
     mcSuperscriptBottomMin = 13
     mcSuperscriptBaselineDropMax = 14
     mcSubSuperscriptGapMin = 15
+    mcSuperscriptBottomMaxWithSubscript = 16
     mcSpaceAfterScript = 17
     mcUpperLimitGapMin = 18
     mcUpperLimitBaselineRiseMin = 19
     mcLowerLimitGapMin = 20
     mcLowerLimitBaselineDropMin = 21
+    mcStackTopShiftUp = 22
     mcStackTopDisplayStyleShiftUp = 23
+    mcStackBottomShiftDown = 24
     mcStackBottomDisplayStyleShiftDown = 25
+    mcStackGapMin = 26
     mcStackDisplayStyleGapMin = 27
     mcFractionNumeratorShiftUp = 32
     mcFractionNumeratorDisplayStyleShiftUp = 33
@@ -108,13 +123,13 @@ type
     mcFractionRuleThickness = 38
     mcFractionDenominatorGapMin = 39
     mcFractionDenomDisplayStyleGapMin = 40
-    mcOverbarVerticalGap = 43
-    mcOverbarRuleThickness = 44
-    mcOverbarExtraAscender = 45
     mcRadicalVerticalGap = 49
     mcRadicalDisplayStyleVerticalGap = 50
     mcRadicalRuleThickness = 51
     mcRadicalExtraAscender = 52
+    mcRadicalKernBeforeDegree = 53
+    mcRadicalKernAfterDegree = 54
+    mcRadicalDegreeBottomRaisePercent = 55
 
 const
   ## `hb_direction_t`. `TTB` is what a growable delimiter grows along.
@@ -154,74 +169,146 @@ type
     path*: string      ## the file it came from, for the diagnostic that names it
     family*: string    ## the preference-list entry that matched
 
-  ## Everything `mathtex.nim` needs, in font units, resolved once.
-  ##
-  ## **A flat object rather than a proc taking a `MathFont`** so the layout
-  ## module can be handed a literal table in a self-test and never see a font
-  ## at all. That is the whole reason the geometry is assertable.
-  MathConstants* = object
-    axisHeight*: int
-    fractionRuleThickness*: int
-    fractionNumeratorShiftUp*: int
-    fractionDenominatorShiftDown*: int
-    fractionNumeratorGapMin*: int
-    fractionDenominatorGapMin*: int
-    superscriptShiftUp*: int
-    superscriptBottomMin*: int
-    subscriptShiftDown*: int
-    subscriptTopMax*: int
-    subSuperscriptGapMin*: int
-    spaceAfterScript*: int
-    scriptPercentScaleDown*: int
-    scriptScriptPercentScaleDown*: int
-    overbarRuleThickness*: int
-    overbarVerticalGap*: int
-    overbarExtraAscender*: int
-    radicalRuleThickness*: int
-    radicalVerticalGap*: int
-    radicalExtraAscender*: int
-    upperLimitGapMin*: int
-    lowerLimitGapMin*: int
-    displayOperatorMinHeight*: int
-    unitsPerEm*: int
 
-## Function purpose: the fallback table, used when no usable font is present.
+## Function purpose: the fallback table, used when no usable font is present,
+## and the source of the handful of values no font carries.
 ##
-## **These are not invented numbers.** They are Latin Modern Math's, which is
-## to say TeX's own, measured with `scratchpad/mathprobe.c` and normalised to
-## a 1000-unit em. They exist so the layout module is never handed zeroes —
-## the DejaVu failure mode this file is about — and so `math-selftest` has a
-## table to assert against without requiring a font on the test machine.
+## **The measured ones are not invented numbers.** They are Latin Modern
+## Math's — which is to say TeX's own — normalised to a 1000-unit em. They
+## exist so the layout module is never handed zeroes, the DejaVu failure mode
+## this file is about, and so `math-selftest` has a table to assert against
+## without requiring a font on the test machine.
+##
+## **Two of them are not font values at all and must not be read as such.**
+## The OpenType `MATH` table has no constant for matrix column or row spacing,
+## because TeX does not keep those in a font either: it takes them from
+## `\arraycolsep` and friends. So `matrixColumnGap` is plain TeX's own — the
+## `\quad` that `\matrix` puts between columns, one em — and `matrixRowGap` is
+## `\jot`, the 3pt at a 10pt design size that `\openup` adds between the lines
+## of a display. Both are stated here rather than derived from a face, and a
+## font that ships neither is not thereby deficient.
 ##
 ## A caller that has no usable font should render plain text rather than draw
 ## with these; they are a floor for the *layout*, not a licence to draw with
 ## the wrong glyphs.
 proc defaultConstants*(): MathConstants =
   MathConstants(
-    axisHeight: 250,
-    fractionRuleThickness: 40,
-    fractionNumeratorShiftUp: 394,
-    fractionDenominatorShiftDown: 394,
-    fractionNumeratorGapMin: 40,
-    fractionDenominatorGapMin: 40,
-    superscriptShiftUp: 363,
-    superscriptBottomMin: 108,
-    subscriptShiftDown: 247,
-    subscriptTopMax: 344,
-    subSuperscriptGapMin: 160,
-    spaceAfterScript: 41,
+    unitsPerEm: float(UnitsPerEm),
+
+    # Percentages, not font units.
     scriptPercentScaleDown: 70,
     scriptScriptPercentScaleDown: 55,
-    overbarRuleThickness: 40,
-    overbarVerticalGap: 120,
-    overbarExtraAscender: 40,
-    radicalRuleThickness: 40,
-    radicalVerticalGap: 48,
-    radicalExtraAscender: 40,
-    upperLimitGapMin: 100,
-    lowerLimitGapMin: 200,
+    radicalDegreeBottomRaisePercent: 60,
+
+    delimitedSubFormulaMinHeight: 1200,
     displayOperatorMinHeight: 1800,
-    unitsPerEm: UnitsPerEm)
+    axisHeight: 250,
+
+    subscriptShiftDown: 247,
+    subscriptTopMax: 344,
+    subscriptBaselineDropMin: 200,
+    superscriptShiftUp: 363,
+    superscriptShiftUpCramped: 289,
+    superscriptBottomMin: 108,
+    superscriptBaselineDropMax: 386,
+    subSuperscriptGapMin: 160,
+    superscriptBottomMaxWithSubscript: 400,
+    spaceAfterScript: 41,
+
+    upperLimitGapMin: 100,
+    upperLimitBaselineRiseMin: 300,
+    lowerLimitGapMin: 200,
+    lowerLimitBaselineDropMin: 600,
+
+    stackTopShiftUp: 451,
+    stackTopDisplayStyleShiftUp: 780,
+    stackBottomShiftDown: 480,
+    stackBottomDisplayStyleShiftDown: 690,
+    stackGapMin: 120,
+    stackDisplayStyleGapMin: 300,
+
+    fractionNumeratorShiftUp: 394,
+    fractionNumeratorDisplayStyleShiftUp: 680,
+    fractionDenominatorShiftDown: 394,
+    fractionDenominatorDisplayStyleShiftDown: 680,
+    fractionNumeratorGapMin: 40,
+    fractionNumDisplayStyleGapMin: 120,
+    fractionRuleThickness: 40,
+    fractionDenominatorGapMin: 40,
+    fractionDenomDisplayStyleGapMin: 120,
+
+    radicalVerticalGap: 48,
+    radicalDisplayStyleVerticalGap: 180,
+    radicalRuleThickness: 40,
+    radicalExtraAscender: 40,
+    # TeX's own: 5/18 em before the degree and -10/18 em after it.
+    radicalKernBeforeDegree: 278,
+    radicalKernAfterDegree: -556,
+
+    # Not font values. See the note above.
+    matrixColumnGap: 1000,
+    matrixRowGap: 300)
+
+# Action purpose: **checked when this file compiles, not when a test runs.**
+# A mistyped ordinal reads a real value from the wrong field, which the header
+# names as the failure that looks like a subtle layout bug rather than an
+# error; and a field left out of `defaultConstants` hands the layout a zero,
+# which is the DejaVu failure this module exists to prevent, arriving from
+# inside instead. Neither is visible in output — one renders plausibly and the
+# other renders confidently — so both are settled before the program exists.
+static:
+  # The ordinals, against `hb_ot_math_constant_t`. Spot-checked at the two ends
+  # and at every constant whose neighbour differs only in style, since those are
+  # the pairs a transposition would silently swap.
+  doAssert ord(mcScriptPercentScaleDown) == 0
+  doAssert ord(mcRadicalDegreeBottomRaisePercent) == 55
+  doAssert ord(mcAxisHeight) == 5
+  doAssert ord(mcFractionRuleThickness) == 38
+
+  # In OpenType every text-style constant is immediately followed by its
+  # display-style counterpart. Asserting the relation rather than the numbers
+  # is what catches the two being read into each other's fields.
+  doAssert ord(mcStackTopDisplayStyleShiftUp) == ord(mcStackTopShiftUp) + 1
+  doAssert ord(mcStackBottomDisplayStyleShiftDown) ==
+           ord(mcStackBottomShiftDown) + 1
+  doAssert ord(mcStackDisplayStyleGapMin) == ord(mcStackGapMin) + 1
+  doAssert ord(mcFractionNumeratorDisplayStyleShiftUp) ==
+           ord(mcFractionNumeratorShiftUp) + 1
+  doAssert ord(mcFractionDenominatorDisplayStyleShiftDown) ==
+           ord(mcFractionDenominatorShiftDown) + 1
+  doAssert ord(mcFractionNumDisplayStyleGapMin) ==
+           ord(mcFractionNumeratorGapMin) + 1
+  doAssert ord(mcFractionDenomDisplayStyleGapMin) ==
+           ord(mcFractionDenominatorGapMin) + 1
+  doAssert ord(mcRadicalDisplayStyleVerticalGap) ==
+           ord(mcRadicalVerticalGap) + 1
+
+  # Every field of the layout's table carries a value. `fieldPairs` walks the
+  # object rather than a list written out here, so a field `mathtex` adds fails
+  # this the moment it is added — which is the guarantee the two separate types
+  # could never give.
+  block everyConstantHasAValue:
+    let d = defaultConstants()
+    for name, value in d.fieldPairs:
+      doAssert value != 0.0, "defaultConstants leaves " & name & " at zero"
+
+  # And the six style pairs are the right way round in the defaults themselves:
+  # a displayed formula is set with more room than an inline one, never less.
+  block displayIsRoomierThanText:
+    let d = defaultConstants()
+    doAssert d.stackTopDisplayStyleShiftUp > d.stackTopShiftUp
+    doAssert d.stackBottomDisplayStyleShiftDown > d.stackBottomShiftDown
+    doAssert d.stackDisplayStyleGapMin > d.stackGapMin
+    doAssert d.fractionNumeratorDisplayStyleShiftUp > d.fractionNumeratorShiftUp
+    doAssert d.fractionDenominatorDisplayStyleShiftDown >
+             d.fractionDenominatorShiftDown
+    doAssert d.fractionNumDisplayStyleGapMin > d.fractionNumeratorGapMin
+    doAssert d.fractionDenomDisplayStyleGapMin > d.fractionDenominatorGapMin
+    doAssert d.radicalDisplayStyleVerticalGap > d.radicalVerticalGap
+
+  # The one value that is legitimately negative, asserted so a future "repair
+  # every non-positive constant" guard cannot quietly overwrite it.
+  doAssert defaultConstants().radicalKernAfterDegree < 0
 
 ## Function purpose: how many pre-drawn larger versions of a glyph the font
 ## carries, growing downward. Zero means a delimiter can never be stretched to
@@ -356,44 +443,116 @@ proc chooseFont*(): tuple[found: bool, font: MathFont] =
 ## file that does not change while the program runs, and re-reading them per
 ## rendered block would be the same mistake as re-decoding the sidebar logo
 ## on every canvas frame.
+##
+## Action purpose: **every field is filled from its own constant, and this is
+## the half that was wrong.** An earlier form declared a second, smaller
+## `MathConstants` of its own and filled twenty-four of the layout's
+## forty-four fields — leaving twenty at zero, and, worse, reading five
+## *display-style* constants into the *text-style* fields beside them:
+## `FRACTION_NUMERATOR_DISPLAY_STYLE_SHIFT_UP` into `fractionNumeratorShiftUp`,
+## and the same substitution for the denominator shift, both fraction gaps and
+## the radical gap. A display-style value in a text-style position renders
+## plausibly and is wrong everywhere — an inline fraction set with the shifts
+## of a displayed one — which is the class of error a reader distrusts last.
+##
+## It could not have been caught by reading either file alone, because the two
+## `MathConstants` were different types that never met. There is one type now:
+## `mathtex` declares the contract and this fills it in, so a field the layout
+## adds is a compile error here rather than a zero at run time.
+##
+## The three percentages are passed through unscaled — HarfBuzz returns them as
+## percentages whatever the font's scale is — and the two matrix values come
+## from `defaultConstants`, because no font carries them.
 proc readConstants*(f: MathFont): MathConstants =
   if not f.usable(): return defaultConstants()
-  result = MathConstants(
-    axisHeight: f.constant(mcAxisHeight),
-    fractionRuleThickness: f.constant(mcFractionRuleThickness),
-    fractionNumeratorShiftUp: f.constant(mcFractionNumeratorDisplayStyleShiftUp),
-    fractionDenominatorShiftDown:
-      f.constant(mcFractionDenominatorDisplayStyleShiftDown),
-    fractionNumeratorGapMin: f.constant(mcFractionNumDisplayStyleGapMin),
-    fractionDenominatorGapMin: f.constant(mcFractionDenomDisplayStyleGapMin),
-    superscriptShiftUp: f.constant(mcSuperscriptShiftUp),
-    superscriptBottomMin: f.constant(mcSuperscriptBottomMin),
-    subscriptShiftDown: f.constant(mcSubscriptShiftDown),
-    subscriptTopMax: f.constant(mcSubscriptTopMax),
-    subSuperscriptGapMin: f.constant(mcSubSuperscriptGapMin),
-    spaceAfterScript: f.constant(mcSpaceAfterScript),
-    scriptPercentScaleDown: f.constant(mcScriptPercentScaleDown),
-    scriptScriptPercentScaleDown: f.constant(mcScriptScriptPercentScaleDown),
-    overbarRuleThickness: f.constant(mcOverbarRuleThickness),
-    overbarVerticalGap: f.constant(mcOverbarVerticalGap),
-    overbarExtraAscender: f.constant(mcOverbarExtraAscender),
-    radicalRuleThickness: f.constant(mcRadicalRuleThickness),
-    radicalVerticalGap: f.constant(mcRadicalDisplayStyleVerticalGap),
-    radicalExtraAscender: f.constant(mcRadicalExtraAscender),
-    upperLimitGapMin: f.constant(mcUpperLimitGapMin),
-    lowerLimitGapMin: f.constant(mcLowerLimitGapMin),
-    displayOperatorMinHeight: f.constant(mcDisplayOperatorMinHeight),
-    unitsPerEm: UnitsPerEm)
-
-  # A font may leave an individual constant at zero even when the table is
-  # otherwise sound. The two scale-down percentages are the ones that matter:
-  # a zero there collapses every script to nothing, which is a blank
-  # exponent rather than an ugly one. The defaults are TeX's.
   let d = defaultConstants()
+  result = MathConstants(
+    unitsPerEm: float(UnitsPerEm),
+
+    scriptPercentScaleDown: float(f.constant(mcScriptPercentScaleDown)),
+    scriptScriptPercentScaleDown:
+      float(f.constant(mcScriptScriptPercentScaleDown)),
+    radicalDegreeBottomRaisePercent:
+      float(f.constant(mcRadicalDegreeBottomRaisePercent)),
+
+    delimitedSubFormulaMinHeight:
+      float(f.constant(mcDelimitedSubFormulaMinHeight)),
+    displayOperatorMinHeight: float(f.constant(mcDisplayOperatorMinHeight)),
+    axisHeight: float(f.constant(mcAxisHeight)),
+
+    subscriptShiftDown: float(f.constant(mcSubscriptShiftDown)),
+    subscriptTopMax: float(f.constant(mcSubscriptTopMax)),
+    subscriptBaselineDropMin: float(f.constant(mcSubscriptBaselineDropMin)),
+    superscriptShiftUp: float(f.constant(mcSuperscriptShiftUp)),
+    superscriptShiftUpCramped: float(f.constant(mcSuperscriptShiftUpCramped)),
+    superscriptBottomMin: float(f.constant(mcSuperscriptBottomMin)),
+    superscriptBaselineDropMax:
+      float(f.constant(mcSuperscriptBaselineDropMax)),
+    subSuperscriptGapMin: float(f.constant(mcSubSuperscriptGapMin)),
+    superscriptBottomMaxWithSubscript:
+      float(f.constant(mcSuperscriptBottomMaxWithSubscript)),
+    spaceAfterScript: float(f.constant(mcSpaceAfterScript)),
+
+    upperLimitGapMin: float(f.constant(mcUpperLimitGapMin)),
+    upperLimitBaselineRiseMin: float(f.constant(mcUpperLimitBaselineRiseMin)),
+    lowerLimitGapMin: float(f.constant(mcLowerLimitGapMin)),
+    lowerLimitBaselineDropMin:
+      float(f.constant(mcLowerLimitBaselineDropMin)),
+
+    # Each of these six pairs is read into the field of its own style. Getting
+    # one crossed is the defect described above.
+    stackTopShiftUp: float(f.constant(mcStackTopShiftUp)),
+    stackTopDisplayStyleShiftUp:
+      float(f.constant(mcStackTopDisplayStyleShiftUp)),
+    stackBottomShiftDown: float(f.constant(mcStackBottomShiftDown)),
+    stackBottomDisplayStyleShiftDown:
+      float(f.constant(mcStackBottomDisplayStyleShiftDown)),
+    stackGapMin: float(f.constant(mcStackGapMin)),
+    stackDisplayStyleGapMin: float(f.constant(mcStackDisplayStyleGapMin)),
+
+    fractionNumeratorShiftUp: float(f.constant(mcFractionNumeratorShiftUp)),
+    fractionNumeratorDisplayStyleShiftUp:
+      float(f.constant(mcFractionNumeratorDisplayStyleShiftUp)),
+    fractionDenominatorShiftDown:
+      float(f.constant(mcFractionDenominatorShiftDown)),
+    fractionDenominatorDisplayStyleShiftDown:
+      float(f.constant(mcFractionDenominatorDisplayStyleShiftDown)),
+    fractionNumeratorGapMin: float(f.constant(mcFractionNumeratorGapMin)),
+    fractionNumDisplayStyleGapMin:
+      float(f.constant(mcFractionNumDisplayStyleGapMin)),
+    fractionRuleThickness: float(f.constant(mcFractionRuleThickness)),
+    fractionDenominatorGapMin: float(f.constant(mcFractionDenominatorGapMin)),
+    fractionDenomDisplayStyleGapMin:
+      float(f.constant(mcFractionDenomDisplayStyleGapMin)),
+
+    radicalVerticalGap: float(f.constant(mcRadicalVerticalGap)),
+    radicalDisplayStyleVerticalGap:
+      float(f.constant(mcRadicalDisplayStyleVerticalGap)),
+    radicalRuleThickness: float(f.constant(mcRadicalRuleThickness)),
+    radicalExtraAscender: float(f.constant(mcRadicalExtraAscender)),
+    radicalKernBeforeDegree: float(f.constant(mcRadicalKernBeforeDegree)),
+    radicalKernAfterDegree: float(f.constant(mcRadicalKernAfterDegree)),
+
+    # No font supplies these. See `defaultConstants`.
+    matrixColumnGap: d.matrixColumnGap,
+    matrixRowGap: d.matrixRowGap)
+
+  # Action purpose: a font may leave an individual constant at zero even when
+  # the table is otherwise sound, and only the percentages are worth repairing
+  # rather than trusting.
+  #
+  # A zero scale-down collapses every script to nothing — a blank exponent
+  # rather than an ugly one — and a zero degree-raise puts an index on the
+  # radical's baseline. **The rest are left exactly as the font gives them**,
+  # including zero and including negative: `radicalKernAfterDegree` is
+  # legitimately negative in every TeX-derived face, so a guard that treated
+  # "not positive" as "missing" would overwrite a correct value with a default.
   if result.scriptPercentScaleDown == 0:
     result.scriptPercentScaleDown = d.scriptPercentScaleDown
   if result.scriptScriptPercentScaleDown == 0:
     result.scriptScriptPercentScaleDown = d.scriptScriptPercentScaleDown
+  if result.radicalDegreeBottomRaisePercent == 0:
+    result.radicalDegreeBottomRaisePercent = d.radicalDegreeBottomRaisePercent
 
 ## Function purpose: what to tell the user when no font passed. Names the
 ## files looked for and where, because "maths is not available" over a machine

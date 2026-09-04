@@ -37,7 +37,8 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               assetview, http, upstream, websearch, version, inspect, mathtex]
+               assetview, http, upstream, websearch, version, inspect, mathtex,
+               mathfont]
 
 const
   Version = version.Version
@@ -2443,6 +2444,50 @@ proc main() =
         check("laying the same tree out twice gives the same numbers",
               near(only(lay("\\frac{1}{2}").box).ascent,
                    only(lay("\\frac{1}{2}").box).ascent))
+
+      # Action purpose: **the layout is driven by the table `mathfont` actually
+      # produces, not only by the fixture above.** Every assertion up to here
+      # uses a hand-written `MathConstants` of round numbers, which is what
+      # makes them readable — and is also how a font module supplying a
+      # different shape of table went unnoticed. `mathfont` used to declare a
+      # second `MathConstants` of its own with twenty of these forty-four
+      # fields missing, and read five display-style constants into the
+      # text-style fields beside them; nothing connected the two, so nothing
+      # could disagree.
+      #
+      # There is one type now — `mathtex` declares it and `mathfont` fills it
+      # in — so this block is the proof that the real table lays a formula out
+      # rather than a proof about numbers. It uses the same measure and variant
+      # closures, so any difference here is the constants and nothing else.
+      block theFontModulesOwnTableDrivesTheLayout:
+        let real = mathfont.defaultConstants()
+        check("mathfont reports the em this module lays out in",
+              real.unitsPerEm == 1000.0, $real.unitsPerEm)
+
+        let realFont = mathtex.MathFont(constants: real, measure: measure,
+                                        variants: variants)
+        let laid = mathtex.renderMath("\\frac{a+b}{c}", realFont, Size, true)
+        check("a fraction lays out against mathfont's own constants",
+              laid.ok, "renderMath refused it")
+        check("...and has height, so no constant arrived as a zero",
+              laid.box.ascent > 0.0 and laid.box.descent > 0.0,
+              $laid.box.ascent & " / " & $laid.box.descent)
+
+        # The defect that would have survived a "does it render" check: a
+        # display-style value read into a text-style field makes the two styles
+        # identical. They must not be.
+        let disp = mathtex.renderMath("\\frac{a+b}{c}", realFont, Size, true)
+        let inline = mathtex.renderMath("\\frac{a+b}{c}", realFont, Size, false)
+        check("a displayed fraction is taller than the same one inline",
+              disp.box.ascent > inline.box.ascent,
+              $disp.box.ascent & " vs " & $inline.box.ascent)
+
+        # And a radical, which is the other place the crossed mapping landed.
+        let dispR = mathtex.renderMath("\\sqrt{x}", realFont, Size, true)
+        let inlineR = mathtex.renderMath("\\sqrt{x}", realFont, Size, false)
+        check("a displayed radical is taller than the same one inline",
+              dispR.box.ascent > inlineR.box.ascent,
+              $dispR.box.ascent & " vs " & $inlineR.box.ascent)
 
       if bad == 0:
         echo ""
