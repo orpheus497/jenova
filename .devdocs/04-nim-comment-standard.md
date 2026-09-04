@@ -1,7 +1,8 @@
 # Report 04 — The Nim comment standard: audit and cleanup plan
 
 **Status:** analysis complete, **no source changed** — this is the plan you asked for
-**Scope:** `src/**/*.nim`, `tests/**/*.nim` — **37 files, 21,874 lines**. Nothing else.
+**Scope:** `src/**/*.nim`, `tests/**/*.nim` — **37 files, 21,874 lines** at the commit measured;
+**44 files, 29,534 lines** at the branch head, see §1. Nothing else.
 Explicitly out of scope: `jca_web/`, `jvim/`, `bin/`, `etc/`, `hardware-profiles/`,
 `external/`, `docs/`, `README.md`.
 **Measured at commit:** `c8fb564` on `claude/gui-webui-parity-audit-avmj8w`. The branch is under
@@ -30,22 +31,33 @@ The decision is now made: **option 3 — strip them** — widened to the whole c
 
 Measured, not sampled:
 
-| Measure | Value |
-|---|---|
-| Nim files (`src/` + `tests/`) | **37** |
-| Total lines | **21,874** |
-| Comment lines (`^\s*#`) | **7,106 — 32.5% of the file set** |
-| ├─ `##` documentation comments | 3,928 |
-| └─ `#` plain comments | 3,178 |
-| Trailing comments (code then `#`) | 103 |
-| `#[ … ]#` multiline comments | **0** (the codebase does not use them) |
-| Prefixed comments (`Script`/`Function`/`Action purpose:`) | **557** (37 / 310 / 210) |
-| Lines inside those prefixed blocks | **3,823** |
-| Other inline comment lines | **3,283** |
-| Routine declarations (`proc`/`func`/`template`/`macro`/`method`/`iterator`/`converter`) | **776** |
-| ├─ FFI declarations (`importc`/`dynlib`/`header:`, incl. inside `{.push .}`) | 82 |
-| ├─ With a comment line immediately above | 357 |
-| └─ **With no comment above** | **338** (of which **205 are top-level**) |
+The first column is the original census at `c8fb564`. **The second is the same measurement re-run
+against the branch head**, because the report warned these move and they have: the tree has grown
+by seven files and a third again as many lines since, so a plan sized against the left column
+would be sized wrong.
+
+| Measure | At `c8fb564` | Re-measured at head |
+|---|---|---|
+| Nim files (`src/` + `tests/`) | **37** | **44** |
+| Total lines | **21,874** | **29,534** |
+| Comment lines (`^\s*#`) | **7,106 — 32.5% of the file set** | **9,227 — 31.2%** |
+| ├─ `##` documentation comments | 3,928 | 4,522 |
+| └─ `#` plain comments | 3,178 | 4,705 |
+| Trailing comments (code then `#`) | 103 | 192 |
+| `#[ … ]#` multiline comments | **0** (the codebase does not use them) | **0** — still none |
+| Prefixed comments (`Script`/`Function`/`Action purpose:`) | **557** (37 / 310 / 210) | **1,102** (44 / 634 / 424) |
+| Routine declarations (`proc`/`func`/`template`/`macro`/`method`/`iterator`/`converter`) | **776** | **983** |
+| ├─ With no comment line immediately above | **338** (of which **205 are top-level**) | **269** |
+
+Two of those rows are worth reading against each other. **Prefixed comments have doubled while
+undocumented routines have fallen by 69** — the coverage inversion §2's D-05 names is being
+corrected from the under-commented end, which is the half worth correcting. The comment share of
+the file set has drifted *down* slightly, 32.5% to 31.2%, so the growth has not been prose.
+
+> The re-measured FFI row is omitted rather than guessed: a count of `importc`/`dynlib`/`header:`
+> on the declaration line alone gives 30, which is not comparable to the original 82 because that
+> figure included declarations inheriting the pragma from an enclosing `{.push .}`. Re-deriving it
+> needs the push-block walk the original used, and no conclusion here turns on it.
 
 **Average size of a prefixed block:**
 
@@ -63,11 +75,17 @@ The five largest single comment blocks in the tree: `gui.nim:1` (56 lines), `wor
 routines with nothing above them at all**). Both halves are the same defect — comment volume is
 not being spent where it buys anything.
 
+> **The under-commented half is the one that has moved.** At head, routines with nothing above
+> them are down to 269 out of 983 — 69 fewer in absolute terms across a file set a third larger.
+> The over-commented half has not: prefixed blocks have doubled to 1,102. Batches 1 and 2 added
+> coverage where it was missing without cutting volume where it was excessive, so of the two
+> halves named here only one is being worked.
+
 ---
 
 ## 2. The defect classes
 
-### D-01 · The explanatory apparatus cites documents that do not exist · **severity: high**
+### D-01 · The explanatory apparatus cites documents that do not exist · **severity: high** · **largely done**
 
 `.devdocs/PLANS.md` and `.devdocs/TODOS.md` were deleted in commit `c5111ce`
 (*"Remove AGENTS.md file containing operational directives…"*), together with ten other process
@@ -82,22 +100,37 @@ ls: cannot access 'PLANS.md': No such file or directory
 ls: cannot access 'TODOS.md': No such file or directory
 ```
 
-What still points at them, in `src/`:
+What still points at them, in `src/` — as first measured, and as it stands now:
 
-| Dangling | Count |
-|---|---|
-| `PLANS.md` by name | 16 |
-| `TODOS.md` by name | 4 |
-| `.devdocs/` by path | 3 |
-| **Bare labels** (`G-30`, `D-BQ`, `A-17`, `T-17`, `N-30`, `S-1`, `W-01`, `E-01` …) | **689 references, 142 distinct labels** |
+| Dangling | At `c8fb564` | Now |
+|---|---|---|
+| `PLANS.md` by name | 16 | **0** |
+| `TODOS.md` by name | 4 | **0** |
+| `.devdocs/` by path | 3 | **0** |
+| **Bare labels** (`G-30`, `D-BQ`, `A-17`, `T-17`, `N-30`, `S-1`, `W-01`, `E-01` …) | **689 references, 142 distinct labels** | **18 references, 14 distinct** |
 
-Not one of the 142 labels is defined anywhere in the repository. Spot-checked against `docs/`,
-`.devdocs/` and every `*.md`: `D-AF`, `D-BD`, `Q-24`, `G-31`, `A-61`, `B-13` resolve to **zero**
-files. The two that do appear in a `.md` (`T-17`, `N-30`) appear only inside `.devdocs/03`,
-which is itself quoting the code.
+**This finding has substantially been carried out.** Option 3 — strip — was chosen and applied:
+689 label references became 18, and the three document references became none. The four `TODOS.md`
+mentions that survive are in `tests/*.sh`, outside the `src/` scope measured here and recorded in
+report 01's D-11.
 
-Worst concentrations: `gui.nim` **251**, `jenova_core.nim` **131**, `pipeline.nim` **54**,
-`api.nim` **39**, `fssync.nim` **27**.
+**And the class changed as well as the count.** Eight of the fourteen surviving labels now resolve
+to a report that exists — `E-06`, `P-A5`, `P-E8`, `M-3`, `V-04`, `V-10`, `V-16` and the `G-30`
+discussed in reports 01 and 02 — so following one lands somewhere. That is the outcome §3.4 asks
+for, not the defect this finding names. **Six do not resolve to anything: `A-7`, `B-17`, `D-CD`,
+`G-31`, `X-A`, and `AGPL-3`** — the last being a licence identifier the regex catches rather than
+a label at all, and `G-31`/`A-7` matching only because this report quotes them as examples. So the
+true remainder is four dangling labels across `src/`, down from 689.
+
+**As originally measured:** not one of the 142 labels was defined anywhere in the repository.
+Spot-checked against `docs/`, `.devdocs/` and every `*.md`, `D-AF`, `D-BD`, `Q-24`, `G-31`, `A-61`
+and `B-13` resolved to **zero** files; the two that appeared in a `.md` at all (`T-17`, `N-30`)
+appeared only inside `.devdocs/03`, which was itself quoting the code.
+
+Worst concentrations then: `gui.nim` **251**, `jenova_core.nim` **131**, `pipeline.nim` **54**,
+`api.nim` **39**, `fssync.nim` **27**. Now: `jenova_core.nim` **6**, `gui.nim` **6**,
+`mathfont.nim` **3**, and one each in `version.nim`, `fssync.nim` and `api.nim` — and the
+`mathfont.nim` three are `P-A5`, `M-3` and a report reference, which resolve.
 
 **Fifteen matches are legitimate and must survive**: `SHA-256` (×9), `PDF-1` (×4, inside literal
 PDF headers such as `jenova_core.nim:839`), `UTF-8` (×1), `SHA-1` (×1). A blind regex sweep
@@ -223,7 +256,9 @@ the block below reads clearly, the comment is deleted, not shortened.
 
 ### 3.5 Target
 
-Applying the budgets to the current structure:
+Applying the budgets to the current structure. **The "Now" column is the `c8fb564` census**, which
+is what the targets were derived from; §1's second column has the head figures, and the gap
+between the two is the progress batches 1 and 2 made rather than a change to the budgets:
 
 | | Now | Target |
 |---|---|---|
