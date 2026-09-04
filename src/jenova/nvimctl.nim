@@ -72,8 +72,19 @@ proc editorEnv*(p: Paths, host: string, port, llamaPort, embedPort: int,
 proc socketPath*(p: Paths): string =
   p.state / SocketName
 
-## Function purpose: `complete` is false only on the deadline, so the caller can
-## tell a slow editor from a finished one and kill the former.
+## Function purpose: `complete` says the child closed its output — the only
+## state in which the data read is the whole answer. It is false on the deadline
+## AND on a `poll` failure, which the previous wording ("false only on the
+## deadline") did not admit.
+##
+## Action purpose: the two are not distinguished in the result, and that is
+## deliberate rather than an omission: the caller's response to both is the
+## same — terminate the child and answer "no document" — so a second flag would
+## be read by nobody. What DID need separating is `EINTR`, which is not a
+## failure at all. A signal arriving during the wait made `poll` answer -1, and
+## treating that as a deadline killed a perfectly healthy editor's query. It is
+## retried against the remaining time instead, so only a real error ends the
+## read early.
 proc readUntilDeadline(fd: FileHandle, timeoutMs: int):
     tuple[data: string, complete: bool] =
   var buf = newString(4096)
@@ -85,6 +96,7 @@ proc readUntilDeadline(fd: FileHandle, timeoutMs: int):
     var pfd = TPollfd(fd: fd.cint, events: POLLIN, revents: 0)
     let ready = poll(addr pfd, 1.Tnfds, remaining.cint)
     if ready < 0:
+      if errno == EINTR: continue   # a signal, not a failure — the deadline stands
       return (result.data, false)
     if ready == 0:
       return (result.data, false)          # deadline expired with nothing to read

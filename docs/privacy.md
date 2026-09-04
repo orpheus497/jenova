@@ -91,8 +91,9 @@ Two habits matter anyway:
 
 ## Auditing this yourself
 
-Every claim above is checkable. The two DuckDuckGo hosts are the only ones the runtime itself ever
-*addresses* — model downloads and package updates are commands you run, not things it does.
+Every claim above is checkable. The two DuckDuckGo hosts are the only **direct URL targets** in the
+runtime — the only hosts it ever constructs a request *for*. Model downloads and package updates are
+commands you run, not things it does.
 
 **Redirects are followed, so a request can end at a third host.** `websearch.fetchUrl` runs
 `curl -sL` (`-L` follows redirects) or base `fetch(1)`, which follows them too. DuckDuckGo can

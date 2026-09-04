@@ -124,8 +124,30 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
   var pending = ""
   var splicing = extraHeaders.len > 0
   while true:
-    let n = up.recv(addr chunk[0], chunk.len)
-    if n <= 0:
+    # Action purpose: `n < 0` and `n == 0` are different endings and were
+    # treated as one. This socket is unbuffered and not TLS, so `net.recv`
+    # hands back the raw syscall result rather than raising — the receive
+    # timeout set above therefore arrived as -1/`EAGAIN`, `n <= 0` read it as a
+    # clean close, and a stream cut off mid-generation was reported
+    # `roComplete`. That answer is what the response cache stores: a fragment
+    # filed to be replayed later as a whole reply. Zero still means the upstream
+    # closed properly; anything negative means it did not.
+    #
+    # The `try` is belt and braces rather than the mechanism — a buffered or TLS
+    # socket does raise here, and a timeout escaping after the head is on the
+    # wire would be a 500 written into the middle of a response body.
+    var n = 0
+    var recvFailed = false
+    try:
+      n = up.recv(addr chunk[0], chunk.len)
+    except CatchableError:
+      recvFailed = true
+    if recvFailed or n < 0:
+      # Nothing relayed yet is indistinguishable to the client from an upstream
+      # that never answered, and the tail of the function already says so.
+      if relayed == 0 and pending.len == 0: break
+      return roTruncated
+    if n == 0:
       break
 
     if splicing:

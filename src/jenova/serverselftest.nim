@@ -60,8 +60,12 @@ proc httpGet(path: string): string =
   data
 
 ## Function purpose: measures the spacing of server-sent events, which is the
-## quantity that distinguishes a stalled stream from a slow one. Resolved to
-## `recv` granularity — see the note at the batch below for what that costs.
+## quantity that distinguishes a stalled stream from a slow one.
+##
+## Action purpose: the spacing is taken from the SERVER's own timestamps, not
+## from when the client saw the bytes. `/debug/stream` already stamps every
+## record with `epochTime()` at the moment it sends it, so the quantity this
+## phase is actually about is on the wire and does not have to be inferred.
 proc streamClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
@@ -72,46 +76,61 @@ proc streamClient(arg: ClientArg) {.thread.} =
            "Host: 127.0.0.1\r\nConnection: close\r\n\r\n")
     var buf = ""
     var chunk = newString(4096)
-    var last = 0.0
+    ## The previous record's SERVER send time, in ms. Negative until the first
+    ## record arrives, which is what makes "no predecessor" a state rather than
+    ## a special case at index zero.
+    var lastSent = -1.0
     var gaps: seq[float]
     var sawHead = false
     while true:
       let n = s.recv(addr chunk[0], chunk.len)
       if n <= 0: break
-      let t = nowMs()
       buf.add chunk[0 ..< n]
       if not sawHead:
         let i = buf.find("\r\n\r\n")
         if i < 0: continue
         buf = buf[i + 4 .. ^1]
         sawHead = true
-        last = t
-      # One `recv` can carry several records, and a timestamp taken per `recv`
-      # cannot say when each of them arrived. Charging the whole elapsed time to
-      # the first and nothing to the rest is what this replaces: a client that
-      # coalesced three events at a 50 ms interval produced gaps of 150, 0 and 0,
-      # and the 150 failed a 125 ms budget the server had not exceeded.
+      # Action purpose: one `recv` can carry several records, so a timestamp
+      # taken per `recv` cannot say when each of them was sent. Sharing the
+      # elapsed time evenly across the batch — what this replaces — is not a
+      # conservative approximation, it is a smoothing one: a server that sent
+      # three records 40 ms apart and then stalled 400 ms reports four gaps of
+      # 130 ms instead of one of 400, and a stall is exactly what this phase
+      # exists to catch. Averaging hides it in proportion to how well the
+      # network coalesced, which is the opposite of what a measurement should do.
       #
-      # The elapsed time is shared across the records the read delivered, which
-      # is the most the measurement supports. Recv granularity is the floor on
-      # what this can resolve, and it is a client-side floor.
-      var batch = 0
+      # Every gap is a difference of two SERVER send times, so nothing about
+      # this measurement depends on when the client happened to wake up.
       while true:
         let i = buf.find("\r\n\r\n")
         if i < 0: break
         let rec = buf[0 ..< i]
         buf = buf[i + 4 .. ^1]
-        if rec.startsWith("data:"):
-          inc batch
-          r.events.inc
-      if batch > 0:
-        let share = (t - last) / batch.float
-        for k in 0 ..< batch:
-          # The very first record of the stream has no predecessor to be spaced
-          # from; `last` was set to the head's arrival.
-          if r.events == batch and k == 0: continue
-          gaps.add share
-        last = t
+        if not rec.startsWith("data:"): continue
+        r.events.inc
+        # The stamp is seconds as a float; the marker is matched rather than the
+        # body parsed, because a JSON parser here would be a dependency of the
+        # measurement on the thing being measured.
+        var sent = -1.0
+        let k = rec.find("\"t\":")
+        if k >= 0:
+          var stop = k + 4
+          while stop < rec.len and rec[stop] in {'0' .. '9', '.', '-', '+', 'e', 'E'}:
+            inc stop
+          sent = try: parseFloat(rec[k + 4 ..< stop]) * 1000.0
+                 except ValueError: -1.0
+        # Action purpose: a record with no readable stamp is counted and then
+        # left out of the spacing, rather than falling back to its arrival time.
+        # The two are different clocks — the server stamps with `epochTime`,
+        # arrival is `getMonoTime` — so substituting one for the other does not
+        # degrade the measurement, it fabricates a gap of whatever the offset
+        # between the two clocks happens to be. `/debug/stream` stamps every
+        # record it sends, so this is unreachable short of a malformed one.
+        if sent < 0: continue
+        # The first record has no predecessor to be spaced from.
+        if lastSent >= 0: gaps.add sent - lastSent
+        lastSent = sent
     for g in gaps:
       r.avgGapMs += g
       if g > r.maxGapMs: r.maxGapMs = g

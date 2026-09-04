@@ -2337,6 +2337,26 @@ proc main() =
           check("without an active link the first in collation order wins",
                 models.agentModel(spare) == spare / "alpha.gguf",
                 models.agentModel(spare))
+          # A slot that does not resolve is not a model. `symlinkExists` is an
+          # lstat, so a dangling `active.gguf` satisfied it and its own path was
+          # handed to `lifecycle` to load — while the scan that exists for
+          # exactly this case never ran. The link is made to a name that was
+          # never created, which is what a deleted or renamed source leaves.
+          createSymlink(spare / "vanished.gguf", spare / models.ActiveLink)
+          check("the fixture really is a dangling link",
+                symlinkExists(spare / models.ActiveLink) and
+                not fileExists(spare / models.ActiveLink))
+          check("a dangling active link falls through to the scan",
+                models.agentModel(spare) == spare / "alpha.gguf",
+                models.agentModel(spare))
+          # And a link that DOES resolve is still the answer, or the fix would
+          # have replaced one wrong result with another.
+          removeFile(spare / models.ActiveLink)
+          createSymlink("zulu.gguf", spare / models.ActiveLink)
+          check("a resolving active link still wins over collation order",
+                models.agentModel(spare) == spare / models.ActiveLink,
+                models.agentModel(spare))
+          removeFile(spare / models.ActiveLink)
           # A backup must not win that fallback either. `X.old.gguf` is a backup
           # by `isBackup` and a model by the `.gguf` suffix, and it sorts ahead
           # of `zulu` — so before this it was what `agentModel` answered and
@@ -2402,6 +2422,36 @@ proc main() =
         # that step fail: `.old` is tested with `fileExists` and `symlinkExists`,
         # so a directory of that name is not seen as taken and the move is
         # attempted against it.
+        # Action purpose: a switch is a read-modify-write over a directory and
+        # nothing serialized it — two interleaving corrupt the slot rather than
+        # merely racing to it.
+        #
+        # **What is asserted here is the file lock's round trip, not exclusion.**
+        # POSIX record locks belong to the process, so a second `lockf` from
+        # this test always succeeds and a "switch refuses while I hold it" check
+        # would pass or fail for reasons unrelated to the code. Proving the
+        # cross-process half needs a second process and the cross-thread half
+        # needs a racing thread; neither is available to a single-threaded
+        # self-test, and a check that cannot fail for the right reason is worse
+        # than none. What is checkable is that the lock is real and does not
+        # wedge the ordinary path.
+        block theSwitchLockIsTakenAndReleased:
+          let fd = models.lockSwitch(home / "models")
+          check("the switch lock can be taken", fd >= 0)
+          models.unlockSwitch(fd)
+          check("and the lock file lives outside the slot directory",
+                fileExists(home / "models" / ".switch.lock") and
+                not fileExists(home / "models" / "agent" / ".switch.lock"))
+          # Taken and released again, so a switch after one is not blocked by
+          # the descriptor the previous holder left.
+          let again = models.lockSwitch(home / "models")
+          check("and is free again once released", again >= 0)
+          models.unlockSwitch(again)
+          let after = models.switchToPath(home, beta)
+          check("and an ordinary switch still goes through under it",
+                after.target == "beta.gguf", after.target)
+          discard models.switchToPath(home, alpha)
+
         block aPreserveThatCannotHappenAbortsTheSwitch:
           let
             slot = home / "models" / "agent" / models.ActiveLink
