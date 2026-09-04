@@ -398,6 +398,38 @@ proc syncFileAsset*(id, name, content, folderId, projectId,
   gitAdd(workspaces / ws, path)
   true
 
+## Function purpose: the read back for an asset, which is what lets the window
+## open a file it filed rather than only list it. The mirror is preferred over
+## the row because it is the file: `syncFileAsset` decodes a `data:` URI on the
+## way out, so reading here gives bytes where the column gives base64, and an
+## asset edited in place by anything else is read as it now stands.
+##
+## Action purpose: the path comes from the writer's own resolution, for the
+## reason `readNoteMirror` says so — a reader that rebuilt it would drift from
+## the writer the first time sanitising changed. `size` is returned alongside so
+## a caller can refuse to read something too large without having read it.
+proc readFileAssetMirror*(id, name, folderId, projectId, workspaceId: string):
+    tuple[found: bool, size: int64, content: string] =
+  let (path, _) = assetPath(id, name, folderId, projectId, workspaceId)
+  if path.len == 0 or not fileExists(path): return (false, 0, "")
+  try:
+    let size = getFileSize(path)
+    (true, size, readFile(path))
+  except IOError, OSError:
+    (false, 0, "")
+
+## Function purpose: the size of an asset's mirror without reading it, so the
+## window can decide whether opening it is affordable before it commits to the
+## read.
+proc fileAssetMirrorSize*(id, name, folderId, projectId, workspaceId: string):
+    tuple[found: bool, size: int64] =
+  let (path, _) = assetPath(id, name, folderId, projectId, workspaceId)
+  if path.len == 0 or not fileExists(path): return (false, 0)
+  try:
+    (true, getFileSize(path))
+  except IOError, OSError:
+    (false, 0)
+
 # ---------------------------------------------------------------------------
 # Trash — move to trash rather than unlink
 # ---------------------------------------------------------------------------
