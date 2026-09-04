@@ -23,6 +23,12 @@
 #
 #   compile + link  ->  the C-level errors `nim check` is blind to
 #   --check         ->  GTK init, the stylesheet, and every widget's build hook
+#                       the startup tree reaches
+#   panels open     ->  the bodies of the seven overlay panels and the editor
+#                       page, which the startup tree does not reach: each sits
+#                       behind an `if app.<x>Open:` that is false when the
+#                       window opens, so no gate on any host had ever run a
+#                       `beforeBuild` hook inside one
 #   run + type      ->  the layout, which only exists once a window is mapped
 #   seed + copy     ->  the transcript, which drew nothing in any earlier run
 #   seed markdown   ->  the code-block and table widgets, which nothing had ever
@@ -43,8 +49,11 @@
 #               they offer, and `gui.nim` uses `ToastOverlay`, which is only on
 #               the latter. The guard below says so rather than letting it
 #               surface as an undeclared identifier.
-#   JENOVA_GUI_NO_RUN=1 — build and `--check` only, skipping the mapped-window
-#                         step. For a host with the toolkit but no X server.
+#   JENOVA_GUI_NO_RUN=1 — build and `--check` both trees, skipping the
+#                         mapped-window step. For a host with the toolkit but
+#                         no X server. Both `--check`s still need a display, so
+#                         with none set they are skipped too and this tier is
+#                         a compile and a link.
 #
 # Requirements beyond `gui_check.sh`: the GTK4, libadwaita, GtkSourceView, VTE
 # and D-Bus **development** packages, because this one really does compile C.
@@ -56,10 +65,57 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NIM=${NIM:-nim}
-# The same switches `jenova_core.nimble` compiles with. Kept in step with it by
-# hand: a build harness that builds something other than the shipped
-# configuration proves nothing about the shipped configuration.
+NIMBLE=$ROOT/jenova_core.nimble
+# The same switches `jenova_core.nimble` compiles with. A build harness that
+# builds something other than the shipped configuration proves nothing about the
+# shipped configuration — so these are not merely kept in step by hand, which is
+# what let a dead `-d:gtk48` outlive the owlkettle pin in `gui_check.sh`; they
+# are compared against the `.nimble` below and this run stops if they differ.
 FLAGS="-d:release -d:gtkminor=10 -d:adwminor=4 --hints:off"
+# `--mm:arc` on the GUI only, exactly as `jenova_core.nimble` does it. The
+# reason is at the compile below.
+GUI_MM="--mm:arc"
+
+## Every `-d:` and `--mm:` switch in the `.nimble`'s flag constants.
+##
+## Read out of the `const NimFlags`/`const GuiFlags` definitions and nowhere
+## else: that file's prose says "No `-d:gtk48` beside it" in as many words, so a
+## scrape of the whole file would compare this script against a comment about
+## the build rather than against the build.
+nimble_switches() {
+  awk '
+    /^const (NimFlags|GuiFlags)/ { grab = 1 }
+    grab {
+      sub(/#.*/, "")
+      n = split($0, t, /[ \t"&]+/)
+      for (i = 1; i <= n; i++)
+        if (t[i] ~ /^-d:/ || t[i] ~ /^--mm:/) print t[i]
+      if ($0 !~ /&[ \t]*$/) grab = 0
+    }
+  ' "$1" | sort -u
+}
+
+want=$(nimble_switches "$NIMBLE")
+mine=$(for f in $FLAGS $GUI_MM; do
+         case $f in -d:*|--mm:*) echo "$f" ;; esac
+       done | sort -u)
+# An empty answer is a broken scrape, not agreement. Without this the comparison
+# would pass by finding nothing on both sides the day the `.nimble` renames its
+# constants, which is the same silent drift it exists to stop.
+if [ -z "$want" ]; then
+  echo "gui_build: no -d:/--mm: switches found in $NIMBLE."
+  echo "gui_build: the flag constants were renamed or reshaped, so this script"
+  echo "gui_build: can no longer tell whether it builds what nimble builds."
+  echo "gui_build: FAIL"
+  exit 1
+fi
+if [ "$want" != "$mine" ]; then
+  echo "gui_build: this script does not build what jenova_core.nimble does."
+  echo "gui_build: nimble: $(echo "$want" | tr '\n' ' ')"
+  echo "gui_build: here:   $(echo "$mine" | tr '\n' ' ')"
+  echo "gui_build: FAIL"
+  exit 1
+fi
 
 # `sed -n 1p` and not `head -1`: head closes the pipe as soon as it has its
 # line, `nim` takes SIGPIPE mid-write, and Nim's `syncio` turns that into
@@ -100,38 +156,25 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-# `SCRATCH` is what the trap is allowed to delete, and it is set only where a
-# directory was actually created here. On FreeBSD `SRC` is the working tree
-# itself, so `SRC` must never reach an `rm -rf` — the two are kept as separate
-# variables for exactly that reason and not merged back.
-SCRATCH=
-if [ "$(uname -s)" = "FreeBSD" ]; then
-  SRC=$ROOT
-else
-  SRC=$(mktemp -d)
-  SCRATCH=$SRC
-  trap 'rm -rf "$SCRATCH"' EXIT
-  cp -r "$ROOT/src" "$SRC/"
-  # As in `gui_check.sh`: the guards refuse to compile off FreeBSD by design,
-  # and off FreeBSD is exactly where this script earns its keep. They are
-  # neutralised in the copy and never in the tree.
-  grep -rl "when not defined(freebsd)" "$SRC/src" | while read -r f; do
-    sed -i.bak 's/when not defined(freebsd):/when false:/' "$f" && rm -f "$f.bak"
-  done
-fi
+# The binaries under test are built from the tree itself, on every host, so what
+# passes here is what a reader can go and look at. The one step that builds
+# something else is the panel variant, which has to change a source line to do
+# its job and says so where it copies.
+SRC=$ROOT
 
 OUT=$(mktemp -d)
-trap 'rm -rf $SCRATCH "$OUT"' EXIT
+trap 'rm -rf "$OUT"' EXIT
 
 # Action purpose: a cache inside this run's own temp directory, thrown away
 # with it. Nim's default cache is keyed on the *project name*, not the project
 # path, so `~/.cache/nim/jenova_core_r` is shared by every copy of this tree on
-# the machine — and the copy above is a fresh `mktemp -d` on every run. A cache
-# holding objects from a different copy of these sources links with ~20
-# `undefined reference to` errors for generic instantiations
-# (`hasKey__jenovaZmarkdown_u2147` and its like), ending in `final link failed:
-# bad value`. That reads as a defect in `markdown.nim`, names a file nothing is
-# wrong with, and is why this gate cannot share a cache with anything.
+# the machine, and the panel variant below is a second copy of these sources
+# inside this very run. A cache holding objects from a different copy of these
+# sources links with ~20 `undefined reference to` errors for generic
+# instantiations (`hasKey__jenovaZmarkdown_u2147` and its like), ending in
+# `final link failed: bad value`. That reads as a defect in `markdown.nim`,
+# names a file nothing is wrong with, and is why this gate cannot share a cache
+# with anything.
 NIMCACHE="$OUT/nimcache"
 
 echo "gui_build: compiling jenova-core"
@@ -139,16 +182,17 @@ cd "$SRC"
 "$NIM" c $FLAGS --nimcache:"$NIMCACHE/core" --path:src \
   --out:"$OUT/jenova-core" src/jenova_core.nim
 
-# `--mm:arc` on the GUI only, exactly as `jenova_core.nimble` does it, and for
-# the reason recorded there: owlkettle's `EventObj.widget` is a strong reference
-# back to the state that owns the event, so ORC's cycle collector can free a
-# widget state GTK still holds. Building this with a different memory
-# management than the shipped binary would test a program that is not shipped.
+# `$GUI_MM` is `--mm:arc`, on the GUI only, exactly as `jenova_core.nimble` does
+# it, and for the reason recorded there: owlkettle's `EventObj.widget` is a
+# strong reference back to the state that owns the event, so ORC's cycle
+# collector can free a widget state GTK still holds. Building this with a
+# different memory management than the shipped binary would test a program that
+# is not shipped.
 #
 # Its own cache directory beside the first: these are two separate programs
 # built with different memory management, and one directory cannot hold both.
 echo "gui_build: compiling jenova"
-"$NIM" c $FLAGS --mm:arc --nimcache:"$NIMCACHE/gui" --path:src \
+"$NIM" c $FLAGS $GUI_MM --nimcache:"$NIMCACHE/gui" --path:src \
   --out:"$OUT/jenova" src/jenova_gui.nim
 
 # Two roots, because `paths.resolve` reads two variables and they mean
@@ -181,7 +225,17 @@ mkdir -p "$JH/.system" "$JH/Workspaces"
 #
 # Seeded over the same `/api/db/*` routes `test_api_db.sh` uses, rather than by
 # writing SQL, so the schema has one owner and this cannot drift from it.
-SEED_PORT=18788
+# **Derived, not fixed.** 18788 and 18787 were constants, so two gates on one
+# host asked for the same pair: the second `jenova-core serve` loses the bind,
+# this run's `seed_post` calls land in the *other* run's database, and this
+# run's transcript stays empty — reported far below as "no message drew", which
+# reads as a rendering defect and is not one. It cost one session three red runs.
+# A stride of two keeps one run's pair from overlapping the next one's. A
+# collision that happens anyway is not silent: `jenova-core serve` exits 1 with
+# `Address already in use` rather than sharing the socket, so the readiness wait
+# below finds the process gone and prints the server's own reason.
+SEED_PORT=$(( 18000 + ($$ % 2000) * 2 ))
+RUN_PORT=$(( SEED_PORT + 1 ))
 SEED_MSGS=6
 seed_text() {
   # Message 4 is the assistant turn that is actually *markdown*, and until it
@@ -306,6 +360,114 @@ run_check() {
     return 1
   fi
   grep -q "window tree built" "$OUT/check.out"
+}
+
+## The panel bodies `--check` above cannot reach.
+##
+## **`--check` builds the startup tree, and that is less than it looks.** All
+## seven overlay panels are inserted unconditionally, which makes it tempting to
+## say they are constructed. Only their shells are: each body sits behind an
+## `if app.<x>Open:` — `trashPanel` is the pattern — and every one of those
+## flags is false when the window opens, as is the one that swaps the chat for
+## the editor page. So the `beforeBuild` hook of every widget *inside* a panel
+## had never run, under any gate, on any host. A crash or a bad Pango string in
+## one of them is exactly what `--check` exists to catch, and it could not — the
+## first run of this step found a settings help string spelled `<think>`, which
+## Pango refuses whole and draws as an empty row.
+##
+## This is the gate's job rather than each reader's. Two people found the hole
+## independently and one worked around it by hand, compiling variants whose
+## state defaults open each panel; a workaround that has to be rediscovered
+## guards nothing between the rediscoveries.
+##
+## One variant with every guard forced rather than one per panel: the bodies do
+## not interact — they are siblings in an overlay, each reading its own slice of
+## the state — so building them together runs the same set of hooks in one
+## compile instead of eight, which is 21 s on this gate rather than three
+## minutes. When it fails, the traceback or the GTK warning names the widget,
+## which is what a per-panel bisection would have been for.
+##
+## **What it does not reach:** a widget inside a `for` over a state sequence
+## that is still empty — a trash row, a model row, a file row. Forcing the flag
+## opens the panel; it does not invent the data, and inventing it here would
+## mean this script deciding what a `TrashItem` looks like.
+panel_guards() {
+  cat <<'GUARDS'
+app.settingsOpen
+app.hardwareOpen
+app.modelsOpen
+app.trashOpen
+app.filesOpen
+app.inspectorOpen
+app.editorOpen
+app.assetOpen.len > 0
+app.previewAtt.payload.len > 0
+GUARDS
+}
+
+run_panel_variant() {
+  VSRC=$OUT/panels
+  rm -rf "$VSRC"
+  cp -r "$ROOT/src" "$VSRC"
+  G=$VSRC/jenova/gui.nim
+
+  # Every guard has to be found. A `sed` that matched nothing would leave the
+  # variant identical to the binary already checked, and this step would then
+  # report a pass for work it did not do — which is the same class of defect as
+  # the missing driver this file's `--check` step was written to replace. A
+  # renamed flag stops the gate and says so.
+  missing=
+  OLDIFS=$IFS
+  IFS='
+'
+  for g in $(panel_guards); do
+    if grep -qF "if $g:" "$G"; then
+      # `.` is the only metacharacter these guards carry, but the escape covers
+      # the set so a future guard cannot quietly become a pattern.
+      esc=$(printf '%s' "$g" | sed 's/[.[\*^$\/&]/\\&/g')
+      sed -i.bak "s/if $esc:/if true:/g" "$G" && rm -f "$G.bak"
+    else
+      missing="$missing
+gui_build:   if $g:"
+    fi
+  done
+  IFS=$OLDIFS
+  if [ -n "$missing" ]; then
+    echo "gui_build: these panel guards are no longer in gui.nim:$missing"
+    echo "gui_build: the variant would build less than this step claims, so"
+    echo "gui_build: panel_guards() has to be brought back in step with the"
+    echo "gui_build: window before it can pass."
+    return 1
+  fi
+
+  echo "gui_build: compiling jenova with every overlay panel open"
+  if ! "$NIM" c $FLAGS $GUI_MM --nimcache:"$NIMCACHE/panels" \
+       --path:"$VSRC" --out:"$OUT/jenova-panels" "$VSRC/jenova_gui.nim" \
+       >"$OUT/panels-build.log" 2>&1; then
+    tail -40 "$OUT/panels-build.log"
+    echo "gui_build: the panel variant did not compile."
+    return 1
+  fi
+
+  # Redirected and not piped, and the GTK complaints are read, for the reasons
+  # `run_check` gives: a pipeline hides the exit status, and GTK reports a
+  # stylesheet or Pango failure on stderr while still exiting 0.
+  rc=0
+  JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 CANVAS=0 \
+    "$OUT/jenova-panels" --check >"$OUT/panels.out" 2>"$OUT/panels.err" || rc=$?
+  cat "$OUT/panels.out"
+  if [ "$rc" -ne 0 ]; then
+    echo "gui_build: the panel variant's --check exited $rc"
+    cat "$OUT/panels.err"
+    return 1
+  fi
+  if grep -Eq "CRITICAL|WARNING \*\*: .*css|Theme parser|error parsing markup" \
+     "$OUT/panels.err"; then
+    echo "gui_build: GTK complained while building the panel bodies:"
+    grep -E "CRITICAL|WARNING|Theme parser|markup" "$OUT/panels.err"
+    return 1
+  fi
+  grep -q "window tree built" "$OUT/panels.out"
 }
 
 # ---------------------------------------------------------------------------
@@ -589,32 +751,14 @@ if [ "${JENOVA_GUI_NO_RUN:-}" = "1" ]; then
   # the build-only mode was the mode least able to report a failure.
   if [ -n "${DISPLAY:-}" ]; then
     run_check || { echo "gui_build: FAIL (--check)"; exit 1; }
+    run_panel_variant || { echo "gui_build: FAIL (--check, panels open)"; exit 1; }
   fi
   echo "gui_build: PASS (build only)"
   exit 0
 fi
 
-if [ -z "${DISPLAY:-}" ]; then
-  have Xvfb || {
-    echo "gui_build: no DISPLAY and no Xvfb — cannot map a window."
-    echo "gui_build: set JENOVA_GUI_NO_RUN=1 to accept the build-only result."
-    echo "gui_build: FAIL"
-    exit 1
-  }
-  # A display number unlikely to collide with a developer's own session.
-  DISPLAY=:87
-  export DISPLAY
-  Xvfb "$DISPLAY" -screen 0 "${W}x${H}x24" >/dev/null 2>&1 &
-  XPID=$!
-  # `$SCRATCH` and never `$SRC`, for the reason given where it is set: on
-  # FreeBSD `SRC` is the working tree, and this trap would have deleted the
-  # repository. Empty there, so this reduces to removing the output directory.
-  trap 'kill $XPID 2>/dev/null; rm -rf $SCRATCH "$OUT"' EXIT
-  # Xvfb answers before it is listening; a short settle is cheaper and more
-  # reliable than racing the first connection.
-  sleep 2
-fi
-
+# Asked before the display is started, because `xwininfo` is what proves the
+# display came up and this block is the reason it has to be present by then.
 have import && have convert && have xwininfo && have xdotool && have xclip && have nc || {
   echo "gui_build: ImageMagick's import/convert, xwininfo, xdotool, xclip and nc"
   echo "gui_build: are needed to prove the window works. xclip reads back what the"
@@ -624,9 +768,68 @@ have import && have convert && have xwininfo && have xdotool && have xclip && ha
   exit 1
 }
 
+if [ -z "${DISPLAY:-}" ]; then
+  have Xvfb || {
+    echo "gui_build: no DISPLAY and no Xvfb — cannot map a window."
+    echo "gui_build: set JENOVA_GUI_NO_RUN=1 to accept the build-only result."
+    echo "gui_build: FAIL"
+    exit 1
+  }
+  # **A display number this run picks, and then proves it got.** A fixed `:87`
+  # meant two gates on one host shared one screen: the second Xvfb refuses a
+  # display that is already active and exits, `xdotool` then types into the
+  # other run's window and `import` photographs it, and both runs fail with
+  # something that reads like a defect in `shortcuts.nim`.
+  #
+  # The number starts from this shell's pid so two runs rarely ask for the same
+  # one. That alone would only make the collision rarer, so the answer is
+  # verified rather than assumed: the lock file is checked to skip numbers that
+  # are obviously taken, and then `xwininfo` has to reach the server *this* run
+  # started. A number that fails either test is abandoned for the next one, so a
+  # collision costs a second rather than a red run.
+  base=$(( 40 + $$ % 60 ))
+  XPID=
+  i=0
+  while [ "$i" -lt 20 ]; do
+    d=$(( 40 + (base - 40 + i) % 60 ))
+    i=$((i + 1))
+    [ -e "/tmp/.X11-unix/X$d" ] && continue
+    [ -e "/tmp/.X$d-lock" ] && continue
+    Xvfb ":$d" -screen 0 "${W}x${H}x24" >/dev/null 2>&1 &
+    cand=$!
+    j=0
+    while [ "$j" -lt 20 ]; do
+      # An Xvfb that lost the race has already exited; there is nothing to wait
+      # for and the next number is one line away.
+      kill -0 "$cand" 2>/dev/null || break
+      if xwininfo -root -display ":$d" >/dev/null 2>&1; then
+        XPID=$cand
+        DISPLAY=":$d"
+        break
+      fi
+      sleep 0.25 2>/dev/null || sleep 1
+      j=$((j + 1))
+    done
+    [ -n "$XPID" ] && break
+    kill "$cand" 2>/dev/null || true
+  done
+  [ -n "$XPID" ] || {
+    echo "gui_build: no free display number answered after 20 tries."
+    echo "gui_build: FAIL"
+    exit 1
+  }
+  export DISPLAY
+  echo "gui_build: display $DISPLAY, Xvfb pid $XPID"
+  trap 'kill $XPID 2>/dev/null; rm -rf "$OUT"' EXIT
+fi
+
 run_check || { echo "gui_build: FAIL (--check)"; exit 1; }
+run_panel_variant || { echo "gui_build: FAIL (--check, panels open)"; exit 1; }
 
 echo "gui_build: running the window"
+# `RUN_PORT` is set beside `SEED_PORT` above, where the reason it is derived
+# rather than fixed is recorded.
+#
 # `JENOVA_PORT` and not `PORT`, which is the name the configuration file
 # *writes*: `etc/jenova.conf:39` is `PORT="${JENOVA_PORT:-8080}"`, so a bare
 # `PORT` in the environment is unconditionally replaced by 8080 the moment the
@@ -634,7 +837,7 @@ echo "gui_build: running the window"
 # comment here claimed it had one of its own — and two gates run at once, or a
 # gate run beside a live `jenova`, then fought over 8080. The seeding server
 # above already uses the working name; this is the same spelling.
-RUN_PORT=18787
+#
 # Asserted rather than assumed, because the failure above was silent: the window
 # came up, bound the wrong port and passed. `jenova-core config` resolves the
 # same file the window does, so a future divergence between the conf's variable

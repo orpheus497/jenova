@@ -5163,10 +5163,13 @@ proc main() =
       # surfaces. They are now response headers, spliced in after the status
       # line by `upstream.spliceHeaders`.
       #
-      # That splice sits on the path every generated token takes, and this
-      # is the only thing that can assert it: there is no llama-server here and
-      # a relay that damages a response head does not fail a compile, it fails
-      # a conversation.
+      # That splice sits on the path every generated token takes, and a relay
+      # that damages a response head does not fail a compile, it fails a
+      # conversation. This asserts `spliceHeaders` alone, which is the half that
+      # can be reasoned about without a socket; the loop around it — the
+      # accumulation across packets, the short-`send` retry, the tail flush and
+      # the response-cache tee — is driven end to end by `serve-selftest`'s
+      # fourth phase against a fake upstream.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
         if cond: echo "  ok   ", label
