@@ -1,17 +1,21 @@
 ## Script function and purpose: evidence that the server neither serializes nor
-## lets one saturated route class starve another. Those are separate failures:
-## a shared pool that never blocks still goes dark once enough long-lived
-## streams occupy every worker, so a server can hold a stream's cadence under
-## load and still fail to answer a health check. The third phase is what
-## justifies per-class pools, and it is the one that fails silently.
+## lets one saturated route class starve another, and that the relay under it
+## does not damage what it carries. Those are separate failures: a shared pool
+## that never blocks still goes dark once enough long-lived streams occupy every
+## worker, so a server can hold a stream's cadence under load and still fail to
+## answer a health check. The third phase is what justifies per-class pools, and
+## it is the one that fails silently; the fourth is the only thing in the tree
+## that executes `upstream.forward`.
 
-import std/[net, strformat, strutils, os, monotimes, atomics]
+import std/[net, nativesockets, posix, strformat, strutils, os, monotimes,
+            atomics, tables]
 import ./server
 import ./routes
 import ./db
+import ./http
+import ./upstream
 
 const
-  TestPort = 18642
   StreamEvents = 24
   StreamInterval = 40
   LoadClients = 4
@@ -31,6 +35,12 @@ type
     avgGapMs: float
     ops: int
     failed: bool
+
+## The port phases 1 to 3 talk to. Not a constant, and that is the point: a
+## fixed 18642 meant two `nimble suites` runs on one host bound the same socket,
+## and the loser reported a server defect it did not have. `freePort` is asked
+## once, before anything binds, and every client below reads the answer.
+var TestPort = 0
 
 var streamResult: ClientResult
 var loadResults: array[16, ClientResult]
@@ -161,6 +171,305 @@ proc holdClient(arg: ClientArg) {.thread.} =
     r.failed = true
   loadResults[arg.id] = r
 
+## Function purpose: a port nothing on this host holds at the moment it is
+## asked for. The kernel picks it rather than this file naming one, because a
+## named one is free only until a second copy of the suite names the same.
+proc freePort(): int =
+  let s = newSocket(buffered = false)
+  defer: s.close()
+  s.bindAddr(Port(0), "127.0.0.1")
+  s.getLocalAddr()[1].int
+
+# ---------------------------------------------------------------------------
+# Phase 4: the relay, against a fake upstream
+# ---------------------------------------------------------------------------
+# Action purpose: `upstream.forward` carries every generated token, and until
+# this existed nothing executed it. `relay-selftest` asserts `spliceHeaders`,
+# which is the pure half; the half that can damage a conversation is the loop
+# around it — the accumulation that holds bytes back while a status line is
+# incomplete, the short-`send` retry, the tail that flushes a reply too short to
+# hold a status line, and the tee the response cache is filed from. None of
+# those is reachable without two sockets and something on the other end, so
+# there is a fake upstream here and the relay is driven end to end.
+#
+# The head is fed in seven-byte packets because that is the case that finds
+# splice defects: a head that always arrives whole never exercises the
+# accumulation, and every one of the failures above is a boundary error.
+
+const
+  ## Small enough that no response head can arrive in one `recv`.
+  RelayPacket = 7
+  ## Waited between two head packets. The relay is blocked in `recv` on a
+  ## loopback socket with Nagle disabled, so the packet written before the pause
+  ## has been delivered by the time the next one is written — which makes the
+  ## split across `recv` calls a property of this script rather than of the
+  ## scheduler.
+  RelayPauseMs = 4
+  ## Well past `upstream.RelayChunk` (16 KB), so the steady-state path runs a
+  ## dozen times and a partial `send` has room to be mishandled.
+  RelayBodyBytes = 200 * 1024
+  RelayStatus = "HTTP/1.1 200 OK\r\n"
+  RelayHeadRest = "Content-Type: text/event-stream\r\n" &
+                  "Cache-Control: no-cache\r\n" &
+                  "X-Upstream-Own: kept\r\n\r\n"
+  RelayExtra = "X-Jenova-Trimmed: 3\r\nX-Jenova-Rag-Hits: 5\r\n"
+
+type
+  FakeUpstreamArg = object
+    ## The listener crosses the thread boundary as a descriptor and the strings
+    ## as `ptr`, for the reason `server.acceptor` takes a `SocketHandle`: a
+    ## `{.thread.}` proc may not touch a global holding garbage-collected
+    ## memory, and neither an integer nor a pointer is one.
+    listenFd: SocketHandle
+    slow: int            ## how many leading bytes go out a packet at a time
+    reply: ptr string    ## exactly what this upstream puts on the wire
+    request: ptr string  ## what it read back, which is the rebuilt request
+    failed: ptr bool
+
+  RelayReaderArg = object
+    fd: SocketHandle
+    sink: ptr string     ## every byte the relay wrote to the client
+    failed: ptr bool
+
+  RelayRun = object
+    outcome: upstream.RelayOutcome
+    client: string
+    captured: string
+    request: string
+    failed: bool
+
+## Function purpose: the upstream half — accepts one connection, reads the
+## request the relay rebuilt, and answers with a scripted reply whose first
+## `slow` bytes are dribbled out `RelayPacket` at a time.
+proc fakeUpstream(arg: FakeUpstreamArg) {.thread.} =
+  try:
+    let lis = newSocket(arg.listenFd, Domain.AF_INET, SockType.SOCK_STREAM,
+                        Protocol.IPPROTO_TCP, buffered = false)
+    var c: Socket
+    lis.accept(c)
+    # Action purpose: Nagle would coalesce the seven-byte writes below into one
+    # segment, and a fragmented head is the whole subject of this phase.
+    setSockOptInt(c.getFd, posix.IPPROTO_TCP, posix.TCP_NODELAY, 1)
+    var chunk = newString(4096)
+    # Action purpose: read to the end of the *body*, not the head. `buildRequest`
+    # emits head and body in one string, so stopping at the blank line usually
+    # takes the body with it and sometimes does not — and the assertion below
+    # is that the body arrived, which cannot rest on usually.
+    var want = -1
+    while true:
+      if want < 0:
+        let e = arg.request[].find("\r\n\r\n")
+        if e >= 0:
+          var clen = 0
+          let head = arg.request[][0 ..< e].toLowerAscii
+          let k = head.find("content-length:")
+          if k >= 0:
+            var stop = k + len("content-length:")
+            while stop < head.len and head[stop] == ' ': inc stop
+            let start = stop
+            while stop < head.len and head[stop] in {'0' .. '9'}: inc stop
+            clen = try: parseInt(head[start ..< stop]) except ValueError: 0
+          want = e + 4 + clen
+      if want >= 0 and arg.request[].len >= want: break
+      let n = c.recv(addr chunk[0], chunk.len)
+      if n <= 0: break
+      arg.request[].add chunk[0 ..< n]
+    var i = 0
+    while i < arg.reply[].len:
+      let n = if i < arg.slow: min(RelayPacket, arg.slow - i)
+              else: arg.reply[].len - i
+      c.send((arg.reply[])[i ..< i + n])
+      i += n
+      if i < arg.slow: sleep(RelayPauseMs)
+    # The relay ends on the upstream closing; without this it waits out its
+    # receive timeout instead.
+    c.close()
+  except CatchableError:
+    arg.failed[] = true
+
+## Function purpose: the client half — drains what the relay writes, so a
+## 200 KB body cannot fill the socket buffer and deadlock the relay against a
+## reader that is not running yet.
+proc relayReader(arg: RelayReaderArg) {.thread.} =
+  try:
+    let s = newSocket(arg.fd, Domain.AF_INET, SockType.SOCK_STREAM,
+                      Protocol.IPPROTO_TCP, buffered = false)
+    var chunk = newString(16384)
+    while true:
+      let n = s.recv(addr chunk[0], chunk.len)
+      if n <= 0: break
+      arg.sink[].add chunk[0 ..< n]
+  except CatchableError:
+    arg.failed[] = true
+
+## Function purpose: one request through `upstream.forward` against a fake
+## upstream that answers `reply`, returning everything the three parties saw.
+##
+## Action purpose: both listeners bind port 0 and are asked what they got. A
+## fixed port here would make two `nimble suites` runs on one host fight over
+## it and report the collision as a relay defect.
+proc driveRelay(reply, extraHeaders: string, slow: int, body = ""): RelayRun =
+  var replyBuf = reply
+  var request = ""
+  var upFailed = false
+  var readerFailed = false
+  var sink = ""
+
+  let upLis = newSocket(buffered = false)
+  upLis.setSockOpt(OptReuseAddr, true)
+  upLis.bindAddr(Port(0), "127.0.0.1")
+  upLis.listen()
+  let upPort = upLis.getLocalAddr()[1]
+
+  # Action purpose: `forward` writes the response into a socket it is handed, so
+  # the "client" has to be one end of a real connection this proc holds the
+  # other end of. A loopback pair is the only way to read back exactly the bytes
+  # a client would have seen.
+  let cLis = newSocket(buffered = false)
+  cLis.setSockOpt(OptReuseAddr, true)
+  cLis.bindAddr(Port(0), "127.0.0.1")
+  cLis.listen()
+  let cRead = newSocket(buffered = false)
+  cRead.connect("127.0.0.1", cLis.getLocalAddr()[1])
+  var cWrite: Socket
+  cLis.accept(cWrite)
+  cLis.close()
+
+  var ut: Thread[FakeUpstreamArg]
+  var rt: Thread[RelayReaderArg]
+  createThread(ut, fakeUpstream, FakeUpstreamArg(
+    listenFd: upLis.getFd, slow: slow, reply: addr replyBuf,
+    request: addr request, failed: addr upFailed))
+  createThread(rt, relayReader, RelayReaderArg(
+    fd: cRead.getFd, sink: addr sink, failed: addr readerFailed))
+
+  var req = Request(meth: "POST", path: "/v1/chat/completions",
+                    query: "stream=true", body: body)
+  req.headers["Content-Type"] = "application/json"
+
+  var captured = ""
+  result.outcome = upstream.forward(cWrite, req, "127.0.0.1", upPort.int,
+                                    addr captured, extraHeaders)
+  # The reader ends on this close, so it is the close and not a timeout that
+  # decides how long this phase takes.
+  cWrite.close()
+  joinThread(rt)
+  joinThread(ut)
+  cRead.close()
+  upLis.close()
+
+  result.client = sink
+  result.captured = captured
+  result.request = request
+  result.failed = upFailed or readerFailed
+
+## Function purpose: a body large enough to exercise the steady-state relay,
+## shaped like the event stream the real upstream sends so a defect that
+## depends on the framing has something to trip over.
+proc relayBody(): string =
+  result = ""
+  var i = 0
+  while result.len < RelayBodyBytes:
+    result.add &"data: {{\"i\":{i},\"text\":\"token {i} of a long generation\"}}\r\n\r\n"
+    inc i
+
+## Function purpose: phase 4's assertions; returns the number that failed so the
+## caller can fold it into the run's exit status.
+proc relayPhase(): int =
+  result = 0
+  var bad = 0
+  proc check(label: string, cond: bool, detail = "") =
+    if cond: echo "           ok   ", label
+    else:
+      echo "           FAIL ", label,
+           (if detail.len > 0: "\n                " & detail else: "")
+      inc bad
+
+  let body = relayBody()
+  let head = RelayStatus & RelayHeadRest
+  echo &"  phase 4  relay: a {head.len}-byte head in {RelayPacket}-byte packets, " &
+       &"a {body.len div 1024} KB body"
+
+  block splicedHead:
+    let run = driveRelay(head & body, RelayExtra, head.len,
+                         """{"messages":[{"role":"user","content":"hi"}]}""")
+    check("the fake upstream and the reader both ran", not run.failed)
+    check("a complete relay reports roComplete", run.outcome == upstream.roComplete,
+          $run.outcome)
+    # Written out rather than computed with `spliceHeaders`, so this is an
+    # independent statement of what the client must see and not the function
+    # under test agreeing with itself.
+    let wanted = RelayStatus & RelayExtra & RelayHeadRest & body
+    check("the client's bytes are the status line, then the diagnostics, " &
+          "then the upstream's own head, then the body — exactly",
+          run.client == wanted,
+          &"client {run.client.len} bytes, wanted {wanted.len}")
+    check("a 200 KB body relays whole and unaltered",
+          run.client.len >= body.len and run.client.endsWith(body))
+    check("the response-cache tee is the client's bytes, byte for byte",
+          run.captured == run.client,
+          &"tee {run.captured.len} bytes, client {run.client.len}")
+    check("the request the upstream read carries the body and closes the " &
+          "connection",
+          run.request.contains("""{"messages":""") and
+          run.request.contains("Connection: close") and
+          run.request.contains("/v1/chat/completions?stream=true"),
+          run.request)
+
+  block noHeadersIsByteIdentical:
+    # The path every request without diagnostics takes, and the one a mistake in
+    # the splice is most likely to damage invisibly: with nothing to insert,
+    # `forward` must not so much as buffer a byte.
+    let reply = head & body
+    let run = driveRelay(reply, "", head.len)
+    check("with no headers to add the client gets the upstream's bytes " &
+          "unchanged", run.client == reply,
+          &"client {run.client.len} bytes, upstream {reply.len}")
+    check("and the tee matches those bytes too", run.captured == reply)
+
+  block shorterThanAStatusLine:
+    # An upstream that dies mid-status-line leaves those bytes in the
+    # accumulation, and dropping them turns a short reply into no reply at all.
+    const Stub = "HTTP/1.1 200 O"
+    let run = driveRelay(Stub, RelayExtra, Stub.len)
+    check("a reply too short to hold a status line still reaches the client",
+          run.client == Stub, run.client)
+    check("and is teed", run.captured == Stub)
+    check("and counts as a relay, not an unavailable upstream",
+          run.outcome == upstream.roComplete, $run.outcome)
+
+  block theProbeIsBounded:
+    # The one direction the splice is allowed to fail in: an upstream that sends
+    # no CRLF for longer than `MaxStatusLineProbe` costs the caller its
+    # diagnostic header and must cost the stream nothing.
+    let reply = repeat("X", upstream.MaxStatusLineProbe + 64) & "\r\nbody\r\n"
+    let run = driveRelay(reply, RelayExtra, reply.len)
+    check("past the probe bound the stream is relayed undamaged",
+          run.client == reply,
+          &"client {run.client.len} bytes, upstream {reply.len}")
+    check("...having lost only the header it could not place",
+          not run.client.contains("X-Jenova-Trimmed"))
+
+  block silentUpstream:
+    # An upstream that accepts and then says nothing is the same operational
+    # state as one that is not running, and the client has to be told so rather
+    # than left holding an empty 200.
+    let run = driveRelay("", RelayExtra, 0)
+    check("an upstream that answers nothing becomes a 502",
+          run.outcome == upstream.roUnavailable and
+          run.client.startsWith("HTTP/1.1 502") and
+          run.client.contains("upstream unavailable"), run.client)
+    check("and nothing is filed in the response cache", run.captured.len == 0)
+
+  if bad == 0:
+    echo &"           PASS: the relay spliced, streamed and teed a " &
+         &"{body.len div 1024} KB reply whose head arrived {RelayPacket} " &
+         &"bytes at a time"
+  else:
+    echo &"           FAIL: {bad} relay properties do not hold"
+  echo ""
+  result = bad
+
 ## Function purpose: the entry point behind `jenova-core serve-selftest`;
 ## returns a process exit status so the suite can be run from a script.
 proc run*(dbPath, staticRoot: string): int =
@@ -176,6 +485,9 @@ proc run*(dbPath, staticRoot: string): int =
     echo "        Run `nimble web` first, or `nimble suites`, which does."
     return 1
   db.initDb(dbPath)
+  # Asked before the server starts and before any client is created, so all
+  # four phases and every worker thread below read one answer.
+  TestPort = freePort()
   discard server.start("127.0.0.1", TestPort, staticRoot, enableDebug = true)
   echo "  ", server.describe()
   sleep(200)
@@ -244,6 +556,10 @@ proc run*(dbPath, staticRoot: string): int =
 
   server.stop()
 
+  # Phase 4 needs no server: it is two loopback sockets and the relay between
+  # them, so it runs after this one is down and cannot be blamed for its load.
+  let relayBad = relayPhase()
+
   if idle.failed or loaded.failed:
     echo "  FAIL: a client raised"; result = 1
   elif loaded.events < StreamEvents:
@@ -273,3 +589,7 @@ proc run*(dbPath, staticRoot: string): int =
            &"(max gap {loaded.maxGapMs:.1f} ms vs {idle.maxGapMs:.1f} ms idle)"
       echo &"  PASS: health and static stayed responsive while another class " &
            &"was saturated ({healthMs:.1f} ms, {staticMs:.1f} ms)"
+  # Folded in last rather than short-circuiting the chain above: the pool
+  # verdict and the relay verdict are independent, and a reader who has one
+  # failure in hand still wants to know about the other.
+  if relayBad > 0: result = 1
