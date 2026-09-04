@@ -37,7 +37,7 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               assetview, http, upstream, websearch, version, inspect]
+               assetview, http, upstream, websearch, version, inspect, mathtex]
 
 const
   Version = version.Version
@@ -75,7 +75,7 @@ proc usage() =
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
   echo "              models-selftest, fs-selftest, composer-selftest,"
   echo "              convmd-selftest, asset-selftest, lifecycle-selftest,"
-  echo "              relay-selftest, inspect-selftest"
+  echo "              relay-selftest, inspect-selftest, math-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -1641,6 +1641,590 @@ proc main() =
         quit(0)
       echo ""
       echo "markdown-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "math-selftest":
+      # Action purpose: `mathtex.nim` turns LaTeX into positioned boxes and a
+      # later phase draws them with Cairo. Everything that can be wrong about a
+      # formula is wrong here, in arithmetic, and none of it is visible in a
+      # screenshot — a numerator half a rule-thickness too low looks like a
+      # font choice. So the module imports nothing from the toolkit, links into
+      # this binary, and every number below was worked out from the rules of
+      # Appendix G before the code was run.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      # A fixture font, not a real one. Every constant is a round number in
+      # units of 1/1000 em so that each expected value below can be recomputed
+      # on paper; real metrics would make the assertions unreadable and
+      # therefore unmaintainable. The shape of the table is Latin Modern's.
+      let mc = mathtex.MathConstants(
+        unitsPerEm: 1000.0,
+        scriptPercentScaleDown: 70.0, scriptScriptPercentScaleDown: 50.0,
+        delimitedSubFormulaMinHeight: 1200.0, displayOperatorMinHeight: 1800.0,
+        axisHeight: 250.0,
+        subscriptShiftDown: 150.0, subscriptTopMax: 350.0,
+        subscriptBaselineDropMin: 50.0,
+        superscriptShiftUp: 400.0, superscriptShiftUpCramped: 300.0,
+        superscriptBottomMin: 125.0, superscriptBaselineDropMax: 350.0,
+        subSuperscriptGapMin: 200.0, superscriptBottomMaxWithSubscript: 400.0,
+        spaceAfterScript: 40.0,
+        upperLimitGapMin: 200.0, upperLimitBaselineRiseMin: 300.0,
+        lowerLimitGapMin: 200.0, lowerLimitBaselineDropMin: 600.0,
+        stackTopShiftUp: 450.0, stackTopDisplayStyleShiftUp: 700.0,
+        stackBottomShiftDown: 550.0, stackBottomDisplayStyleShiftDown: 700.0,
+        stackGapMin: 150.0, stackDisplayStyleGapMin: 300.0,
+        fractionNumeratorShiftUp: 400.0,
+        fractionNumeratorDisplayStyleShiftUp: 680.0,
+        fractionDenominatorShiftDown: 400.0,
+        fractionDenominatorDisplayStyleShiftDown: 680.0,
+        fractionNumeratorGapMin: 50.0, fractionNumDisplayStyleGapMin: 150.0,
+        fractionRuleThickness: 50.0,
+        fractionDenominatorGapMin: 50.0, fractionDenomDisplayStyleGapMin: 150.0,
+        radicalVerticalGap: 60.0, radicalDisplayStyleVerticalGap: 180.0,
+        radicalRuleThickness: 50.0, radicalExtraAscender: 50.0,
+        radicalKernBeforeDegree: 300.0, radicalKernAfterDegree: -200.0,
+        radicalDegreeBottomRaisePercent: 60.0,
+        matrixColumnGap: 350.0, matrixRowGap: 200.0)
+
+      # Counting runes by their lead bytes rather than importing `std/unicode`:
+      # that module re-exports `strip`, `split` and `toLower` under the names
+      # `strutils` already gives this file, and an ambiguity error in an unrelated
+      # proc is a high price for one call.
+      proc runeCount(s: string): int =
+        for ch in s:
+          if (uint8(ch) and 0xC0'u8) != 0x80'u8: inc result
+
+      # A flat font: half an em wide per glyph, 0.7 em up and 0.2 em down, and
+      # an italic correction of 0.08 em on anything set italic.
+      let measure = proc (text: string, size: float,
+                          upright: bool): mathtex.GlyphBox =
+        mathtex.GlyphBox(width: float(runeCount(text)) * 0.5 * size,
+                         ascent: 0.7 * size, descent: 0.2 * size,
+                         italicCorrection: (if upright: 0.0 else: 0.08 * size))
+
+      # Four vertical variants at 1, 1.5, 2 and 3 em, which is the shape of a
+      # real face's variant list and enough to tell "picked the one that fits"
+      # from "picked the biggest".
+      const StretchAt = [1.0, 1.5, 2.0, 3.0]
+      let stretchy = ["(", ")", "[", "]", "{", "}", "√", "∑", "∫", "∥", "∣"]
+      let variants = proc (text: string,
+                           size: float): seq[mathtex.MathVariant] =
+        if text notin stretchy: return @[]
+        for factor in StretchAt:
+          let ext = factor * size
+          result.add mathtex.MathVariant(
+            width: 0.5 * size, ascent: 0.8 * ext, descent: 0.2 * ext,
+            italicCorrection: (if text in ["∑", "∫"]: 0.05 * ext else: 0.0))
+
+      let font = mathtex.MathFont(constants: mc, measure: measure,
+                                  variants: variants)
+      const Size = 20.0
+
+      # The axis is where a fraction bar, a grown delimiter and a big operator
+      # all have to agree, so it is read from the table rather than written out
+      # at each assertion that depends on it.
+      let axis = mathtex.du(mc, mc.axisHeight, Size)
+      proc near(a, b: float): bool = abs(a - b) < 1.0e-6
+      proc n2(v: float): string = formatFloat(v, ffDecimal, 4)
+      proc lay(src: string, display = true): mathtex.MathLayout =
+        mathtex.renderMath(src, font, Size, display)
+      proc only(b: mathtex.MathBox): mathtex.MathBox =
+        # Every layout is rooted in the row that holds the formula; a formula of
+        # one item is that row's single child.
+        if b.kind == mathtex.bxList and b.children.len == 1: b.children[0] else: b
+      proc collect(b: mathtex.MathBox, acc: var seq[mathtex.MathBox]) =
+        if b.kind == mathtex.bxGlyph: acc.add b
+        elif b.kind == mathtex.bxList:
+          for c in b.children: collect(c, acc)
+      proc glyphOf(b: mathtex.MathBox, text: string): mathtex.MathBox =
+        var acc: seq[mathtex.MathBox]
+        collect(b, acc)
+        for g in acc:
+          if g.text == text: return g
+        mathtex.MathBox(kind: mathtex.bxList)
+
+      block styleTransitions:
+        # The eight styles are most of what makes maths look like maths rather
+        # than small text raised a bit, and every one of these is a transition
+        # that a naive implementation gets wrong in the same direction.
+        check("a superscript in display style is set in script style",
+              mathtex.supStyle(mathtex.msDisplay) == mathtex.msScript)
+        check("a superscript in script style is set in scriptscript",
+              mathtex.supStyle(mathtex.msScript) == mathtex.msScriptScript)
+        check("scriptscript is the floor: its own superscript is scriptscript",
+              mathtex.supStyle(mathtex.msScriptScript) == mathtex.msScriptScript)
+        check("crampedness survives the transition to a superscript",
+              mathtex.supStyle(mathtex.msTextCramped) == mathtex.msScriptCramped)
+        check("a subscript is always cramped, even under an uncramped base",
+              mathtex.subStyle(mathtex.msDisplay) == mathtex.msScriptCramped)
+        check("a subscript of scriptscript stays cramped scriptscript",
+              mathtex.subStyle(mathtex.msScriptScript) ==
+                mathtex.msScriptScriptCramped)
+        check("a numerator in display style drops to text style",
+              mathtex.numStyle(mathtex.msDisplay) == mathtex.msText)
+        check("a denominator is the cramped form of the numerator's style",
+              mathtex.denStyle(mathtex.msDisplay) == mathtex.msTextCramped)
+        check("a numerator in text style drops to script style",
+              mathtex.numStyle(mathtex.msText) == mathtex.msScript)
+        check("cramping an already cramped style changes nothing",
+              mathtex.cramped(mathtex.msDisplayCramped) ==
+                mathtex.msDisplayCramped)
+        check("display and text differ, and are not distinguished by size",
+              mathtex.msDisplay != mathtex.msText and
+              near(mathtex.styleSize(mc, Size, mathtex.msDisplay),
+                   mathtex.styleSize(mc, Size, mathtex.msText)))
+        check("script style is 70 percent of the base size",
+              near(mathtex.styleSize(mc, Size, mathtex.msScript), 14.0),
+              n2(mathtex.styleSize(mc, Size, mathtex.msScript)))
+        check("scriptscript style is 50 percent of the base size",
+              near(mathtex.styleSize(mc, Size, mathtex.msScriptScript), 10.0),
+              n2(mathtex.styleSize(mc, Size, mathtex.msScriptScript)))
+        check("...and does not shrink again below that floor",
+              near(mathtex.styleSize(mc, Size,
+                     mathtex.supStyle(mathtex.msScriptScript)), 10.0))
+
+      block scriptSizesStopShrinking:
+        # Four levels of exponent. Without the floor the innermost would be
+        # 20 * 0.7 * 0.7 * 0.7 = 6.86 points and then smaller still.
+        let b = lay("x^{y^{z^{w}}}").box
+        check("the base of a four-deep exponent is set at the base size",
+              near(glyphOf(b, "x").fontSize, 20.0), n2(glyphOf(b, "x").fontSize))
+        check("the first exponent is script size",
+              near(glyphOf(b, "y").fontSize, 14.0), n2(glyphOf(b, "y").fontSize))
+        check("the second is scriptscript size",
+              near(glyphOf(b, "z").fontSize, 10.0), n2(glyphOf(b, "z").fontSize))
+        check("the third is scriptscript again, not smaller",
+              near(glyphOf(b, "w").fontSize, 10.0), n2(glyphOf(b, "w").fontSize))
+
+      block fractionOnTheAxis:
+        let f = only(lay("\\frac{1}{2}").box)
+        check("a fraction lays out as numerator, rule, denominator",
+              f.kind == mathtex.bxList and f.children.len == 3 and
+              f.children[1].kind == mathtex.bxRule)
+        let rule = f.children[1]
+        let num = f.children[0]
+        let den = f.children[2]
+        # axisHeight is 250/1000 of 20pt = 5pt, and the rule's own baseline is
+        # its centre, so the bar sitting on the axis is exactly y = -5.
+        check("the rule's centre sits on the maths axis",
+              near(rule.y, -axis) and near(axis, 5.0), n2(rule.y))
+        check("the rule is the font's fraction thickness, centred on its baseline",
+              near(rule.ascent, 0.5) and near(rule.descent, 0.5),
+              n2(rule.ascent) & " / " & n2(rule.descent))
+        check("the numerator is raised by the font's display shift, unmodified",
+              near(num.y, -13.6), n2(num.y))
+        check("the denominator is dropped by the same display shift",
+              near(den.y, 13.6), n2(den.y))
+        check("the numerator clears the rule by more than the minimum gap",
+              near((rule.y - rule.ascent) - (num.y + num.descent), 4.1),
+              n2((rule.y - rule.ascent) - (num.y + num.descent)))
+        check("the denominator clears the rule by the same amount",
+              near((den.y - den.ascent) - (rule.y + rule.descent), 4.1),
+              n2((den.y - den.ascent) - (rule.y + rule.descent)))
+        check("the fraction is as wide as its widest part and no wider",
+              near(f.width, 10.0), n2(f.width))
+        check("numerator and denominator are centred on the rule",
+              near(num.x, 0.0) and near(den.x, 0.0))
+        check("the fraction's extent is shift plus part, both ways",
+              near(f.ascent, 27.6) and near(f.descent, 17.6),
+              n2(f.ascent) & " / " & n2(f.descent))
+
+      block fractionMinimumGapBites:
+        # In text style the numerator drops to script size, which puts its
+        # bottom above the rule and leaves the font's shift too small. The
+        # minimum gap is what has to push it, and the clearance afterwards is
+        # exactly that minimum rather than something larger.
+        let f = only(lay("\\frac{1}{2}", display = false).box)
+        let num = f.children[0]
+        let den = f.children[2]
+        let rule = f.children[1]
+        check("in text style the numerator is set at script size",
+              near(glyphOf(num, "1").fontSize, 14.0))
+        check("the font's text-style shift alone would breach the minimum gap",
+              8.0 - num.descent < 5.5)
+        check("so the numerator is pushed past the font's shift",
+              near(num.y, -9.3), n2(num.y))
+        check("...to exactly the font's minimum numerator gap and no further",
+              near((rule.y - rule.ascent) - (num.y + num.descent), 1.0),
+              n2((rule.y - rule.ascent) - (num.y + num.descent)))
+        check("the denominator already cleared, so its shift is left alone",
+              near(den.y, 8.0), n2(den.y))
+        check("display style raises the numerator further than text style does",
+              only(lay("\\frac{1}{2}").box).children[0].y < num.y)
+
+      block simultaneousScriptsStack:
+        # The defect this prevents: a superscript and a subscript written as
+        # `x^2_i` set one after the other, or set at their own shifts and
+        # overlapping in the middle.
+        let s = only(lay("x^2_i").box)
+        check("scripts lay out as base, superscript, subscript",
+              s.kind == mathtex.bxList and s.children.len == 3)
+        let base = s.children[0]
+        let sup = s.children[1]
+        let sub = s.children[2]
+        check("the base keeps its own italic correction",
+              near(base.italicCorrection, 1.6), n2(base.italicCorrection))
+        check("the superscript is raised past the font's plain shift",
+              near(sup.y, -10.8), n2(sup.y))
+        check("the subscript is dropped past the font's plain shift",
+              near(sub.y, 5.8), n2(sub.y))
+        check("the gap between them is exactly the font's minimum, not less",
+              near((sub.y - sub.ascent) - (sup.y + sup.descent), 4.0),
+              n2((sub.y - sub.ascent) - (sup.y + sup.descent)))
+        check("they do not overlap: the subscript's top is below the superscript",
+              (sub.y - sub.ascent) > (sup.y + sup.descent))
+        check("the superscript rose exactly to its permitted lowest bottom",
+              near(sup.y + sup.descent, -8.0), n2(sup.y + sup.descent))
+        check("they stack rather than sit side by side: same start, bar italics",
+              near(sup.x - sub.x, base.italicCorrection),
+              n2(sup.x) & " vs " & n2(sub.x))
+        check("only the superscript takes the italic correction",
+              near(sub.x, base.width) and near(sup.x, base.width + 1.6))
+        check("both scripts are set in script size",
+              near(glyphOf(sup, "2").fontSize, 14.0) and
+              near(glyphOf(sub, "i").fontSize, 14.0))
+        check("the box is base plus the wider script plus the font's trailing space",
+              near(s.width, 19.4), n2(s.width))
+
+      block crampedStyleLowersSuperscripts:
+        # A superscript inside a radical must not be raised into the over-rule,
+        # which is the whole reason the cramped styles exist.
+        let plain = only(lay("x^2").box)
+        let inside = only(lay("\\sqrt{x^2}").box)
+        # surd, radicand, rule -- and the radicand is the row holding the
+        # scripted x, whose own second child is the superscript that moved.
+        let scripted = inside.children[1].children[0]
+        check("an uncramped superscript uses the font's plain shift",
+              near(plain.children[1].y, -8.0), n2(plain.children[1].y))
+        check("inside a radical the same superscript is set cramped",
+              near(scripted.children[1].y, -7.0), n2(scripted.children[1].y))
+        check("...and a cramped superscript is raised less than a plain one",
+              scripted.children[1].y > plain.children[1].y)
+
+      block radicalCoversItsRadicand:
+        let r = only(lay("\\sqrt{2}").box)
+        check("a radical lays out as surd, radicand, over-rule",
+              r.kind == mathtex.bxList and r.children.len == 3 and
+              r.children[0].kind == mathtex.bxGlyph and
+              r.children[2].kind == mathtex.bxRule)
+        let surd = r.children[0]
+        let rad = r.children[1]
+        let rule = r.children[2]
+        check("the surd is the first variant tall enough, not the biggest",
+              surd.variant == 1, $surd.variant)
+        # What the surd has to span, read off the boxes: from the top of the
+        # over-rule down to the foot of the radicand.
+        let span = (rad.y + rad.descent) - (rule.y - rule.ascent)
+        check("the variant below it could not have spanned rule to radicand",
+              (StretchAt[0] * Size) < span, n2(span))
+        check("the chosen variant does span it",
+              (surd.ascent + surd.descent) >= span,
+              n2(surd.ascent + surd.descent) & " vs " & n2(span))
+        check("no assembly is needed once a variant fits",
+              near(surd.stretchTo, 0.0))
+        check("the over-rule is the font's radical thickness",
+              near(rule.ascent + rule.descent, 1.0),
+              n2(rule.ascent + rule.descent))
+        check("the rule sits at the top of the surd, not on the baseline",
+              near(surd.y - surd.ascent, rule.y - rule.ascent),
+              n2(surd.y - surd.ascent) & " vs " & n2(rule.y - rule.ascent))
+        check("half the slack from an oversized variant goes into the gap",
+              near((rad.y - rad.ascent) - (rule.y + rule.descent), 7.3),
+              n2((rad.y - rad.ascent) - (rule.y + rule.descent)))
+        check("the surd hangs at least as low as the radicand does",
+              (surd.y + surd.descent) >= (rad.y + rad.descent))
+        check("the radicand starts after the surd",
+              near(rad.x, surd.width) and rad.x > 0.0)
+        check("the extra ascender is added above the rule",
+              near(r.ascent, 23.3), n2(r.ascent))
+        check("the radicand is set cramped, so nothing rises into the rule",
+              near(glyphOf(r, "2").fontSize, 20.0))
+
+      block radicalDegree:
+        let r = only(lay("\\sqrt[3]{2}").box)
+        check("a degree adds a fourth box, before the surd",
+              r.kind == mathtex.bxList and r.children.len == 4)
+        let deg = r.children[0]
+        check("the degree is set two sizes down, at scriptscript",
+              near(glyphOf(deg, "3").fontSize, 10.0),
+              n2(glyphOf(deg, "3").fontSize))
+        check("the degree sits after the font's before-kern",
+              near(deg.x, 6.0), n2(deg.x))
+        check("the surd is moved right by the degree's whole advance",
+              near(r.children[1].x, 7.0), n2(r.children[1].x))
+        check("the degree is raised off the surd's foot by the font's percentage",
+              near(deg.y, -12.3), n2(deg.y))
+        check("a degree widens the radical by exactly its advance",
+              near(r.width, 27.0), n2(r.width))
+
+      block delimitersGrowToFit:
+        let small = only(lay("\\left(x\\right)").box)
+        let big = only(lay("\\left(\\frac{1}{2}\\right)").box)
+        check("a fence lays out as open, body, close",
+              small.kind == mathtex.bxList and small.children.len == 3)
+        check("a short body still meets the font's minimum delimited height",
+              small.children[0].variant == 1, $small.children[0].variant)
+        check("a taller body picks a taller variant",
+              big.children[0].variant == 3, $big.children[0].variant)
+        # A delimiter has to reach as far from the axis as the furthest part of
+        # its body does, on both sides, which is what keeps it symmetric.
+        let reach = 2.0 * max(big.children[1].ascent - axis,
+                              big.children[1].descent + axis)
+        check("the variant below it would not have reached round the body",
+              (StretchAt[2] * Size) < reach, n2(reach))
+        check("both halves of a fence are the same size",
+              big.children[0].variant == big.children[2].variant and
+              near(big.children[0].ascent, big.children[2].ascent))
+        check("a delimiter is centred on the axis, not on the baseline",
+              near(big.children[0].ascent - axis,
+                   big.children[0].descent + axis),
+              n2(big.children[0].ascent) & " / " & n2(big.children[0].descent))
+        check("the grown delimiter covers the body it encloses",
+              big.children[0].ascent >= big.children[1].ascent and
+              big.children[0].descent >= big.children[1].descent)
+        check("the body starts after the opening delimiter",
+              near(big.children[1].x, big.children[0].width))
+        check("a null delimiter draws nothing and takes no width",
+              only(lay("\\left.x\\right)").box).children.len == 2)
+
+      block delimiterFallsBackToAssembly:
+        # Nothing in the font is tall enough here. The engine must say so rather
+        # than quietly draw the largest variant it has and leave a fence that
+        # ends halfway down its own contents.
+        let b = only(lay("\\left(\\frac{\\frac{1}{2}}{\\frac{1}{2}}\\right)").box)
+        let open = b.children[0]
+        check("with no variant tall enough the largest is taken",
+              open.variant == StretchAt.len - 1, $open.variant)
+        check("...and the height it must be assembled to is recorded",
+              near(open.stretchTo, 66.8), n2(open.stretchTo))
+        check("the recorded height exceeds every variant the font offers",
+              open.stretchTo > StretchAt[^1] * Size)
+        check("...and is what the body actually needs on both sides of the axis",
+              near(open.stretchTo, 2.0 * max(b.children[1].ascent - axis,
+                                             b.children[1].descent + axis)))
+
+      block bigOperatorTakesLimits:
+        let s = only(lay("\\sum_{i}^{n}").box)
+        check("a big operator with limits lays out as operator, upper, lower",
+              s.kind == mathtex.bxList and s.children.len == 3)
+        let op = s.children[0]
+        let upper = s.children[1]
+        let lower = s.children[2]
+        let minOp = mathtex.du(mc, mc.displayOperatorMinHeight, Size)
+        check("in display style the operator grows to the font's minimum height",
+              op.variant == 2 and (op.ascent + op.descent) >= minOp,
+              $op.variant & " at " & n2(op.ascent + op.descent))
+        check("the variant below it is shorter than that minimum",
+              (StretchAt[1] * Size) < minOp, n2(minOp))
+        check("the operator is centred on the axis",
+              near(op.ascent - axis, op.descent + axis),
+              n2(op.ascent) & " / " & n2(op.descent))
+        check("the upper limit sits above the operator's top",
+              (upper.y + upper.descent) <= (op.y - op.ascent))
+        check("...by exactly the font's upper limit gap",
+              near((op.y - op.ascent) - (upper.y + upper.descent), 4.0),
+              n2((op.y - op.ascent) - (upper.y + upper.descent)))
+        check("the upper limit's baseline is where the gap put it",
+              near(upper.y, -31.8), n2(upper.y))
+        check("the lower limit sits below the operator's bottom",
+              (lower.y - lower.ascent) >= (op.y + op.descent))
+        check("...by exactly the font's lower limit gap",
+              near((lower.y - lower.ascent) - (op.y + op.descent), 4.0),
+              n2((lower.y - lower.ascent) - (op.y + op.descent)))
+        check("the lower limit's baseline is where the gap put it",
+              near(lower.y, 28.8), n2(lower.y))
+        check("limits are set in script size, not at the operator's size",
+              near(glyphOf(upper, "n").fontSize, 14.0) and
+              near(glyphOf(lower, "i").fontSize, 14.0))
+        check("the limits are offset from each other by the italic correction",
+              near((upper.x + upper.width / 2.0) -
+                   (lower.x + lower.width / 2.0), 2.0),
+              n2((upper.x + upper.width / 2.0) - (lower.x + lower.width / 2.0)))
+        check("no child is placed left of the operator's own origin",
+              upper.x >= 0.0 and lower.x >= 0.0 and op.x >= 0.0)
+
+      block limitsAreAStyleDecision:
+        let textStyle = only(lay("\\sum_{i}^{n}", display = false).box)
+        let op = textStyle.children[0]
+        let sup = textStyle.children[1]
+        check("in text style the same operator sets its scripts beside it",
+              (sup.y + sup.descent) > (op.y - op.ascent),
+              n2(sup.y + sup.descent) & " vs " & n2(op.y - op.ascent))
+        check("...to the right of the operator, past its italic correction",
+              near(sup.x, op.width + 1.6), n2(sup.x))
+        check("in text style the operator is not grown",
+              op.variant == -1, $op.variant)
+
+      block integralDoesNotTakeLimits:
+        # The plan named the integral among the operators that set limits above
+        # and below. TeX and KaTeX both give it \nolimits and put its bounds
+        # beside the sign; this follows them, and \limits is how a reader asks
+        # for the other.
+        let plain = only(lay("\\int_{0}^{1}").box)
+        let forced = only(lay("\\int\\limits_{0}^{1}").box)
+        check("an integral in display style sets its bounds beside the sign",
+              (plain.children[1].y + plain.children[1].descent) >
+                (plain.children[0].y - plain.children[0].ascent))
+        check("...to the right of it",
+              plain.children[1].x >= plain.children[0].width)
+        check("the integral sign itself is still grown in display style",
+              plain.children[0].variant == 2, $plain.children[0].variant)
+        check("\\limits moves the same bounds above and below",
+              (forced.children[1].y + forced.children[1].descent) <=
+                (forced.children[0].y - forced.children[0].ascent))
+        check("\\nolimits takes them back off a summation",
+              (only(lay("\\sum\\nolimits_{i}^{n}").box).children[1].y +
+               only(lay("\\sum\\nolimits_{i}^{n}").box).children[1].descent) >
+              (only(lay("\\sum\\nolimits_{i}^{n}").box).children[0].y -
+               only(lay("\\sum\\nolimits_{i}^{n}").box).children[0].ascent))
+        check("\\limits after something that is not an operator is refused",
+              not lay("x\\limits^2").ok)
+
+      block matrixRowsAndColumns:
+        let m = only(lay("\\begin{matrix} a & b \\\\ c & d \\end{matrix}").box)
+        check("a two by two matrix lays out four cells",
+              m.kind == mathtex.bxList and m.children.len == 4)
+        check("the columns are aligned: cell 0 and cell 2 share an x",
+              near(m.children[0].x, m.children[2].x) and
+              near(m.children[1].x, m.children[3].x))
+        check("the second column starts after the first plus the column gap",
+              near(m.children[1].x, 17.0), n2(m.children[1].x))
+        check("the rows are separated by descent, gap and ascent",
+              near(m.children[2].y - m.children[0].y, 22.0),
+              n2(m.children[2].y - m.children[0].y))
+        check("the array is centred on the axis, not on its first baseline",
+              near(m.ascent - axis, m.descent + axis),
+              n2(m.ascent) & " / " & n2(m.descent))
+        check("the matrix is as wide as its columns and their gap",
+              near(m.width, 27.0), n2(m.width))
+        check("cells are set in text style, so a display fraction cannot swell a row",
+              near(glyphOf(m, "a").fontSize, 20.0))
+
+      block matrixDelimitersGrow:
+        let p = only(lay("\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}").box)
+        check("pmatrix wraps the array in parentheses",
+              p.kind == mathtex.bxList and p.children.len == 3)
+        check("the parentheses grow to the array they hold",
+              p.children[0].variant == 2, $p.children[0].variant)
+        let reach = 2.0 * max(p.children[1].ascent - axis,
+                              p.children[1].descent + axis)
+        check("...and the next variant down would have been too short",
+              (StretchAt[1] * Size) < reach, n2(reach))
+        check("the fence is as wide as both delimiters and the array",
+              near(p.width, 47.0), n2(p.width))
+        let parsed = mathtex.parseMath("\\begin{matrix}a\\\\b\\\\\\end{matrix}")
+        check("a trailing row separator does not add an empty row",
+              parsed.ok and parsed.root.items.len == 1 and
+              parsed.root.items[0].kind == mathtex.mnMatrix and
+              parsed.root.items[0].rows.len == 2,
+              (if parsed.ok: $parsed.root.items[0].rows.len else: parsed.error))
+
+      block malformedInputIsRefused:
+        # Each of these has to be a refusal rather than a best effort. A formula
+        # laid out from a half-read tree is confident and wrong, and the reader
+        # has no way to tell it from one that is right.
+        proc refused(label, src: string) =
+          let r = lay(src)
+          check(label, not r.ok and r.error.len > 0,
+                (if r.ok: "accepted" else: r.error))
+        refused("an unclosed group is refused", "{a")
+        refused("a stray closing brace is refused", "a}")
+        refused("a fraction with only one argument is refused", "\\frac{a}")
+        refused("a fraction with no arguments at all is refused", "\\frac")
+        refused("a superscript with no argument is refused", "x^")
+        refused("a subscript with no argument is refused", "x_")
+        refused("two superscripts on one base are refused", "x^2^3")
+        refused("two subscripts on one base are refused", "x_1_2")
+        refused("a radical with no radicand is refused", "\\sqrt")
+        refused("an unclosed radical degree is refused", "\\sqrt[3{x}")
+        refused("\\left with no \\right is refused", "\\left( x")
+        refused("\\right with no \\left is refused", "x \\right)")
+        refused("\\left on something that is not a delimiter is refused",
+                "\\left x y \\right)")
+        refused("an unterminated environment is refused",
+                "\\begin{pmatrix} a")
+        refused("an environment closed by the wrong name is refused",
+                "\\begin{pmatrix}a\\end{bmatrix}")
+        refused("an environment outside the subset is refused by name",
+                "\\begin{align}x\\end{align}")
+        refused("a lone backslash names no command and is refused", "a \\")
+        check("the refusal names the environment it could not handle",
+              "align" in lay("\\begin{align}x\\end{align}").error)
+        check("a refusal carries no box, rather than an empty one",
+              not lay("{a").ok and lay("{a").box.width == 0.0)
+        check("a well-formed formula is not refused", lay("\\frac{1}{2}").ok)
+
+      block unknownCommandsSurviveAsSource:
+        # Out of scope is not the same as dropped. `\wobble` is not in the
+        # subset, so it lays out as the seven characters that were written --
+        # a reader can see what the model asked for and that it was not honoured.
+        let r = lay("\\wobble")
+        check("an unknown command is laid out rather than refused", r.ok)
+        check("...as its own literal source, not as nothing",
+              glyphOf(r.box, "\\wobble").text == "\\wobble")
+        check("...at the width of that source",
+              near(glyphOf(r.box, "\\wobble").width, 70.0),
+              n2(glyphOf(r.box, "\\wobble").width))
+        let mixed = lay("a \\wobble b")
+        check("an unknown command does not swallow what follows it",
+              mixed.ok and glyphOf(mixed.box, "b").text == "b")
+        check("the source of an unknown command round-trips through the tree",
+              mathtex.parseMath("\\wobble").root.items[0].text == "\\wobble")
+        check("mhchem is not in the subset and is not pretended to be",
+              lay("\\ce{H2O}").ok and
+              glyphOf(lay("\\ce{H2O}").box, "\\ce").text == "\\ce")
+
+      block parsingTheEverydaySubset:
+        check("a Greek name becomes its letter, set italic in lower case",
+              glyphOf(lay("\\alpha").box, "α").text == "α" and
+              not glyphOf(lay("\\alpha").box, "α").upright)
+        check("an upper case Greek letter is set upright, as TeX sets it",
+              glyphOf(lay("\\Omega").box, "Ω").upright)
+        check("a bare letter is a variable and is set italic",
+              not glyphOf(lay("x").box, "x").upright)
+        check("a digit is not a variable and is set upright",
+              glyphOf(lay("2").box, "2").upright)
+        check("a run of digits is one shaped run, not one box per digit",
+              near(glyphOf(lay("123").box, "123").width, 30.0),
+              n2(glyphOf(lay("123").box, "123").width))
+        check("a function name is set upright as a word",
+              glyphOf(lay("\\sin x").box, "sin").upright and
+              near(glyphOf(lay("\\sin x").box, "sin").width, 30.0))
+        check("a single-token fraction argument is accepted, as in LaTeX",
+              mathtex.describe(mathtex.parseMath("\\frac12").root) ==
+                "\\frac{1}{2}",
+              mathtex.describe(mathtex.parseMath("\\frac12").root))
+        check("a prime becomes a superscript rather than a raised apostrophe",
+              mathtex.describe(mathtex.parseMath("f'").root) == "f^{′}",
+              mathtex.describe(mathtex.parseMath("f'").root))
+        check("\\text sets its argument upright",
+              glyphOf(lay("\\text{d}").box, "d").upright)
+        check("a spacing command widens the row without drawing anything",
+              near(only(lay("a\\quad b").box).width -
+                   only(lay("a b").box).width, 20.0),
+              n2(only(lay("a\\quad b").box).width -
+                 only(lay("a b").box).width))
+        check("\\displaystyle inside a row switches the style of what follows",
+              only(lay("\\displaystyle\\frac{1}{2}", display = false).box)
+                .children[0].y < only(lay("\\frac{1}{2}", display = false).box)
+                .children[0].y)
+        check("\\binom is a stack under parentheses, with no rule between",
+              only(lay("\\binom{n}{k}").box).children.len == 3 and
+              only(lay("\\binom{n}{k}").box).children[1].children.len == 2)
+        check("laying the same tree out twice gives the same numbers",
+              near(only(lay("\\frac{1}{2}").box).ascent,
+                   only(lay("\\frac{1}{2}").box).ascent))
+
+      if bad == 0:
+        echo ""
+        echo "math-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "math-selftest: FAIL (", bad, ")"
       quit(1)
     of "workspace-selftest":
       # Action purpose: the `notes` and `fileAssets` tables, `isFocusNote`
