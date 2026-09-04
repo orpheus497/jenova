@@ -385,9 +385,22 @@ transcript_renders() {
 ##   catching for its own sake.
 ##
 ## The comparison is `maxima` of the pixel difference, not a mean or a
-## deviation: any changed pixel at all is a pass, so there is no threshold to
-## tune. `CANVAS=0` is set on the run, so nothing else in the window moves
-## between the two photographs.
+## deviation — one changed pixel anywhere in the band is enough, so the measure
+## does not dilute with the size of the band the way a mean does.
+##
+## **There is still a threshold, and the comment used to deny it.** The test is
+## `> 0.05`, not `> 0`, because the band is captured from a live X server: PNG
+## quantisation and the software renderer's dithering move the odd pixel by a
+## least-significant bit between two shots of an unchanged window, so a literal
+## `> 0` passes against a composer that took no input at all. 0.05 is ~13 levels
+## out of 255 — far above that noise and far below the change a line of typed
+## text makes, which saturates the measure at 1.0. It is a floor on noise, not a
+## tuned separation between two observed answers: the failing case here measures
+## 0, and the note above about a threshold picked after seeing both numbers is
+## about the mean-based version this replaced.
+##
+## `CANVAS=0` is set on the run, so nothing else in the window moves between the
+## two photographs.
 composer_reachable() {
   set -- $(window_geometry)
   [ $# -eq 4 ] || { echo "gui_build: no application window on $DISPLAY"; return 1; }
@@ -508,7 +521,14 @@ composer_reachable() {
 
 if [ "${JENOVA_GUI_NO_RUN:-}" = "1" ]; then
   echo "gui_build: JENOVA_GUI_NO_RUN=1, skipping the mapped-window step"
-  if [ -n "${DISPLAY:-}" ]; then run_check; fi
+  # The status is propagated, not swallowed by the `if`. As a condition,
+  # `run_check`'s answer was discarded — so on a host with a display but a
+  # `--check` that crashed, or one GTK filled with criticals, this printed PASS
+  # and exited 0. That is the one path a CI runner without an X server takes, so
+  # the build-only mode was the mode least able to report a failure.
+  if [ -n "${DISPLAY:-}" ]; then
+    run_check || { echo "gui_build: FAIL (--check)"; exit 1; }
+  fi
   echo "gui_build: PASS (build only)"
   exit 0
 fi

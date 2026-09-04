@@ -3,7 +3,18 @@
 ## model keys from here when the conf files leave them empty, and the window
 ## calls `switchModel` directly, so changing models spawns nothing.
 
-import std/[algorithm, os, strutils]
+import std/[algorithm, locks, os, posix, strutils]
+
+# Action purpose: `std/posix` binds `fcntl` and `lockf` but none of the flag
+# constants they take, so these come from the headers rather than being written
+# as numbers a libc could disagree with. Same declarations `lifecycle.nim`
+# makes, and for the same reason — they cannot be shared, because `lifecycle`
+# reaches this module through `config` and importing it back is a cycle.
+let
+  FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
+  FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
+  LockTry {.importc: "F_TLOCK", header: "<unistd.h>".}: cint
+  LockRelease {.importc: "F_ULOCK", header: "<unistd.h>".}: cint
 
 type
   ModelKind* = enum
@@ -57,6 +68,13 @@ proc findModel*(dir: string): string =
     # and for the draft and embed directories.
     if path.isBackup:
       continue
+    # Action purpose: it has to RESOLVE. `walkDir` reports a dangling symlink as
+    # `pcLinkToFile`, so a broken `active.gguf` was a candidate here — and it
+    # sorts ahead of most real names, so the fallback that exists to rescue a
+    # broken slot answered with the broken slot. `fileExists` follows the link,
+    # which is the difference between a name and a model.
+    if not fileExists(path):
+      continue
     found.add path
   if found.len == 0:
     return ""
@@ -74,9 +92,17 @@ const ActiveLink* = "active.gguf"
 ## and by collation order where it has not. The fallback is for directories no
 ## switch has touched: an install predating `ActiveLink`, or one the operator
 ## fills by hand.
+##
+## Action purpose: the slot counts only when it RESOLVES. `symlinkExists` is an
+## lstat, so a dangling `active.gguf` — its source deleted, renamed or on a
+## detached volume — satisfied it, and the link's own path was handed to
+## `lifecycle` as the model to load. The fallback that exists for exactly this
+## situation was never reached, and `llama-server` failed on a path the operator
+## could see in the directory. `fileExists` follows the link, so a good one is
+## still the answer and a broken one falls through to the scan.
 proc agentModel*(agentDir: string): string =
   let active = agentDir / ActiveLink
-  if symlinkExists(active) or fileExists(active):
+  if fileExists(active):
     return active
   findModel(agentDir)
 
@@ -122,6 +148,67 @@ proc targetModel*(jcaHome, target: string): string =
     raise newException(ModelError, "no .gguf model found in " & dir)
   found.sort()
   found[0]
+
+const
+  SwitchLockName = ".switch.lock"
+    ## Kept in `models/` and not in `models/agent/`, so the slot directory holds
+    ## models and nothing else — several scans and one assertion read that
+    ## directory whole.
+  SwitchLockTries = 100
+  SwitchLockRetryMs = 10
+
+## Function purpose: a switch is a read-modify-write over a directory — scan
+## what is there, move the replacement in, then clear what it displaced — and
+## none of it was serialized. Two of them interleaving is not a lost update but
+## a corrupted one: the temporary link carries the pid, so two THREADS of one
+## process build the same name and each removes the other's, and two PROCESSES
+## scan `existing` before either has moved anything and then each tries to
+## displace entries the other already renamed. `switchModel` is reachable from
+## the window and from `jenova-core models switch` at the same time, so this is
+## an ordinary two-terminal race rather than a theoretical one.
+##
+## Action purpose: `lockf` for the reason `lifecycle.lockStart` gives — the
+## kernel drops it when the holder exits, so a switch killed half way leaves
+## nothing to clean up, which an `O_EXCL` lock file would not. The wait is a
+## bounded retry and not a blocking one: a holder wedged mid-switch must not
+## hang the caller, and one second of waiting is worth more than an indefinite
+## hang. `-1` means the lock was not taken, and the caller refuses on it.
+## Action purpose: **two mechanisms, because one of them cannot do both jobs.**
+## POSIX record locks belong to the *process*: a second `lockf` from another
+## thread of the same process succeeds immediately, so the file lock excludes
+## other `jenova-core` and `jenova` processes and nothing else. The mutex is
+## what serializes the window's own threads against each other. Neither is
+## redundant — drop the file lock and two terminals interleave, drop the mutex
+## and the window races itself.
+var switchMutex: Lock
+initLock(switchMutex)
+
+proc lockSwitch*(modelsDir: string): cint =
+  result = -1
+  try:
+    let fd = posix.open((modelsDir / SwitchLockName).cstring,
+                        O_WRONLY or O_CREAT, 0o644.Mode)
+    if fd < 0: return -1
+    # Not inherited by anything this process spawns later.
+    discard fcntl(fd, FdSetFd, FdCloexec)
+    for _ in 0 ..< SwitchLockTries:
+      if lockf(fd, LockTry, 0) == 0: return fd
+      os.sleep(SwitchLockRetryMs)
+    discard posix.close(fd)
+    result = -1
+  except CatchableError:
+    result = -1
+
+## Function purpose: released explicitly rather than left to process exit,
+## because the window holds the process open for hours after a switch.
+##
+## Exported with its partner for the reason `lifecycle.lockStart` is: the
+## exclusion is invisible in `switchToPath`'s result, so calling the lock
+## directly is the only way to see it at all.
+proc unlockSwitch*(fd: cint) =
+  if fd < 0: return
+  discard lockf(fd, LockRelease, 0)
+  discard posix.close(fd)
 
 ## Function purpose: the one place the cleanup warning is worded, so the two
 ## entry points cannot disagree about whether a switch that could not tidy up
@@ -209,6 +296,28 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # it is idempotent, and a refusal below leaves an empty directory this module
   # owns and would have made anyway.
   createDir(agentDir)
+
+  # Action purpose: everything below mutates the slot directory, so the lock is
+  # taken here — after the validation that needs no lock and before the first
+  # thing that writes. `defer` and not an explicit release at each exit: there
+  # are five `raise` sites past this point and one of them was already a
+  # late-added abort, so releasing by hand is a line someone forgets.
+  #
+  # Failing closed, exactly as `lifecycle.lockStart` does: a switch that cannot
+  # establish it is alone must not proceed on the assumption that it is.
+  # The mutex first and the file lock inside it, released in the reverse order
+  # by `defer`'s LIFO. Two threads that both reach the file lock would both take
+  # it — see the note on `switchMutex` — so the mutex has to be the outer one.
+  acquire(switchMutex)
+  defer: release(switchMutex)
+
+  let switchLock = lockSwitch(modelsDir)
+  if switchLock < 0:
+    raise newException(ModelError,
+      "another model switch is in progress, or " &
+      (modelsDir / SwitchLockName) & " could not be locked")
+  defer: unlockSwitch(switchLock)
+
   let agentReal = try: agentDir.expandFilename except OSError: agentDir
   if modelPath.isRelativeTo(agentDir) or targetReal.isRelativeTo(agentReal):
     raise newException(ModelError,
