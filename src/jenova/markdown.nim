@@ -84,7 +84,9 @@ proc inlineSpan(s: string, delim: string, tag: string): string =
 ## to be able to take back. `[` and `]` are deliberately absent: `\[` opens
 ## display math in every model that writes any, and consuming the backslash here
 ## would destroy the delimiter before anything can decide what to do with it.
-const Escapable = {'*', '_', '~', '`', '\\'}
+## `$` is present for the opposite reason: lifting `\$` out here is what makes
+## an escaped dollar a price rather than the opening of a formula.
+const Escapable = {'*', '_', '~', '`', '\\', '$'}
 
 ## Function purpose: whether the markup handed to Pango is one Pango will
 ## accept. Pango's parser is XML-shaped and rejects the whole string on a single
@@ -130,6 +132,438 @@ proc markupBalanced*(s: string): bool =
       i = semi + 1
     else: i.inc
   stack.len == 0
+
+## Superscript and subscript are spelled with `rise` rather than `<sup>`/`<sub>`
+## because `rise` is accepted by every Pango that accepts either and the target
+## host's Pango version is not known here. The displacements are measured, not
+## chosen: against Pango 1.52.1 they place the script within one pixel of
+## `<sup>`/`<sub>` at every size from 9pt to 16pt, which covers the whole range
+## a desktop UI font is set at.
+const
+  MathSup = "<span rise='6000' size='smaller'>"
+  MathSub = "<span rise='-3000' size='smaller'>"
+  MathScriptEnd = "</span>"
+
+## Function purpose: the character a TeX control sequence names, or the empty
+## string for one this renderer does not know — an unknown name is what makes a
+## formula decline as a whole rather than render half of itself.
+proc mathSymbol(name: string): string =
+  case name
+  # The `var` forms are separate Unicode letters rather than styles, and TeX
+  # spells them the other way round from the reading order most people expect:
+  # `\epsilon` is the lunate one.
+  of "alpha": "α"
+  of "beta": "β"
+  of "gamma": "γ"
+  of "delta": "δ"
+  of "epsilon": "ϵ"
+  of "varepsilon": "ε"
+  of "zeta": "ζ"
+  of "eta": "η"
+  of "theta": "θ"
+  of "vartheta": "ϑ"
+  of "iota": "ι"
+  of "kappa": "κ"
+  of "lambda": "λ"
+  of "mu": "μ"
+  of "nu": "ν"
+  of "xi": "ξ"
+  of "omicron": "ο"
+  of "pi": "π"
+  of "varpi": "ϖ"
+  of "rho": "ρ"
+  of "varrho": "ϱ"
+  of "sigma": "σ"
+  of "varsigma": "ς"
+  of "tau": "τ"
+  of "upsilon": "υ"
+  of "phi": "ϕ"
+  of "varphi": "φ"
+  of "chi": "χ"
+  of "psi": "ψ"
+  of "omega": "ω"
+  of "digamma": "ϝ"
+  of "Gamma": "Γ"
+  of "Delta": "Δ"
+  of "Theta": "Θ"
+  of "Lambda": "Λ"
+  of "Xi": "Ξ"
+  of "Pi": "Π"
+  of "Sigma": "Σ"
+  of "Upsilon": "Υ"
+  of "Phi": "Φ"
+  of "Psi": "Ψ"
+  of "Omega": "Ω"
+  # Large operators. They render at text size here because Pango has no
+  # display style, so a sum sign is the same height as the letters beside it.
+  of "sum": "∑"
+  of "prod": "∏"
+  of "coprod": "∐"
+  of "int": "∫"
+  of "iint": "∬"
+  of "iiint": "∭"
+  of "oint": "∮"
+  of "bigcup": "⋃"
+  of "bigcap": "⋂"
+  of "bigoplus": "⨁"
+  of "bigotimes": "⨂"
+  of "surd": "√"
+  # Binary operators.
+  of "pm": "±"
+  of "mp": "∓"
+  of "times": "×"
+  of "div": "÷"
+  of "cdot": "⋅"
+  of "ast": "∗"
+  of "star": "⋆"
+  of "circ": "∘"
+  of "bullet": "∙"
+  of "oplus": "⊕"
+  of "ominus": "⊖"
+  of "otimes": "⊗"
+  of "oslash": "⊘"
+  of "odot": "⊙"
+  of "cap": "∩"
+  of "cup": "∪"
+  of "sqcap": "⊓"
+  of "sqcup": "⊔"
+  of "vee", "lor": "∨"
+  of "wedge", "land": "∧"
+  of "setminus": "∖"
+  of "backslash": "∖"
+  of "triangleleft": "◁"
+  of "triangleright": "▷"
+  # Relations.
+  of "leq", "le": "≤"
+  of "geq", "ge": "≥"
+  of "neq", "ne": "≠"
+  of "equiv": "≡"
+  of "sim": "∼"
+  of "simeq": "≃"
+  of "cong": "≅"
+  of "approx": "≈"
+  of "asymp": "≍"
+  of "propto": "∝"
+  of "doteq": "≐"
+  of "ll": "≪"
+  of "gg": "≫"
+  of "prec": "≺"
+  of "succ": "≻"
+  of "preceq": "⪯"
+  of "succeq": "⪰"
+  of "subset": "⊂"
+  of "supset": "⊃"
+  of "subseteq": "⊆"
+  of "supseteq": "⊇"
+  of "sqsubseteq": "⊑"
+  of "sqsupseteq": "⊒"
+  of "in": "∈"
+  of "notin": "∉"
+  of "ni": "∋"
+  of "mid": "∣"
+  of "parallel": "∥"
+  of "perp": "⊥"
+  of "models": "⊨"
+  of "vdash": "⊢"
+  of "dashv": "⊣"
+  # Arrows.
+  of "to", "rightarrow": "→"
+  of "leftarrow", "gets": "←"
+  of "Rightarrow": "⇒"
+  of "Leftarrow": "⇐"
+  of "leftrightarrow": "↔"
+  of "Leftrightarrow": "⇔"
+  of "longrightarrow": "⟶"
+  of "longleftarrow": "⟵"
+  of "implies", "Longrightarrow": "⟹"
+  of "iff", "Longleftrightarrow": "⟺"
+  of "mapsto": "↦"
+  of "hookrightarrow": "↪"
+  of "uparrow": "↑"
+  of "downarrow": "↓"
+  of "nearrow": "↗"
+  of "searrow": "↘"
+  # Symbols and named constants.
+  of "infty": "∞"
+  of "partial": "∂"
+  of "nabla": "∇"
+  of "forall": "∀"
+  of "exists": "∃"
+  of "nexists": "∄"
+  of "neg", "lnot": "¬"
+  of "emptyset", "varnothing": "∅"
+  of "aleph": "ℵ"
+  of "hbar": "ℏ"
+  of "ell": "ℓ"
+  of "Re": "ℜ"
+  of "Im": "ℑ"
+  of "wp": "℘"
+  of "imath": "ı"
+  of "jmath": "ȷ"
+  of "angle": "∠"
+  of "measuredangle": "∡"
+  of "triangle": "△"
+  of "square": "□"
+  of "top": "⊤"
+  of "bot": "⊥"
+  of "degree": "°"
+  of "prime": "′"
+  of "therefore": "∴"
+  of "because": "∵"
+  of "checkmark": "✓"
+  of "dagger": "†"
+  of "ldots", "dots": "…"
+  of "cdots": "⋯"
+  of "vdots": "⋮"
+  of "ddots": "⋱"
+  # Delimiters. These are the fixed-size forms; growing one to fit its contents
+  # needs the font's own glyph variants and is not something markup can ask for.
+  of "langle": "⟨"
+  of "rangle": "⟩"
+  of "lfloor": "⌊"
+  of "rfloor": "⌋"
+  of "lceil": "⌈"
+  of "rceil": "⌉"
+  of "lbrace": "{"
+  of "rbrace": "}"
+  # Explicit spaces, which a model writes to correct spacing TeX would not
+  # otherwise give it.
+  of "quad": " "
+  of "qquad": "  "
+  of "thinspace": " "
+  else: ""
+
+## Function purpose: the names TeX sets upright instead of italic. That is the
+## one piece of real mathematical typography markup can express — upright marks
+## an operator and italic marks a variable, so an italic `sin` reads as s times
+## i times n.
+proc mathUpright(name: string): bool =
+  case name
+  of "arccos", "arcsin", "arctan", "arg", "cos", "cosh", "cot", "coth",
+     "csc", "deg", "det", "dim", "exp", "gcd", "hom", "inf", "ker", "lg",
+     "lim", "liminf", "limsup", "ln", "log", "max", "min", "Pr", "sec",
+     "sin", "sinh", "sup", "tan", "tanh": true
+  else: false
+
+## Function purpose: the double-struck letter `\mathbb` names, for the sets a
+## reply actually mentions. Only the letters Unicode gives a character to, so an
+## unknown one declines the formula rather than drawing a plain capital that
+## means something else.
+proc mathDoubleStruck(letter: char): string =
+  case letter
+  of 'C': "ℂ"
+  of 'H': "ℍ"
+  of 'N': "ℕ"
+  of 'P': "ℙ"
+  of 'Q': "ℚ"
+  of 'R': "ℝ"
+  of 'Z': "ℤ"
+  of 'E': "𝔼"
+  of 'F': "𝔽"
+  of 'K': "𝕂"
+  else: ""
+
+# Mutually recursive: an argument is a run of items and an item can take an
+# argument, so both names exist before either body.
+proc mathItem(src: string, i: var int, stop: int, dst: var string,
+              upright: bool, atoms: var int): bool
+proc mathRun(src: string, i: var int, stop: int, dst: var string,
+             upright: bool, atoms: var int): bool
+
+## Function purpose: what TeX takes after `^`, `_` or `\sqrt` — a braced group,
+## a control sequence or a single character — so `x^2` and `x^{n+1}` are one
+## code path rather than two.
+proc mathArg(src: string, i: var int, stop: int, dst: var string,
+             upright: bool, atoms: var int): bool =
+  if i >= stop: return false
+  if src[i] != '{':
+    return mathItem(src, i, stop, dst, upright, atoms)
+  var depth = 0
+  var j = i
+  while j < stop:
+    if src[j] == '{': depth.inc
+    elif src[j] == '}':
+      depth.dec
+      if depth == 0: break
+    j.inc
+  # An unclosed group is a formula still being typed, and rendering half of it
+  # would show a subscript that is about to grow.
+  if j >= stop: return false
+  var k = i + 1
+  if not mathRun(src, k, j, dst, upright, atoms): return false
+  i = j + 1
+  true
+
+## Function purpose: one atom of a formula. `atoms` counts what was emitted at
+## this level, because a radical has to know whether its radicand is one thing
+## or several and Pango draws no line over it to say.
+proc mathItem(src: string, i: var int, stop: int, dst: var string,
+              upright: bool, atoms: var int): bool =
+  let c = src[i]
+  case c
+  of '&':
+    # `escape` has already run, so `<`, `>` and `&` arrive as entities. They are
+    # copied whole: splitting `&lt;` across an italic tag would make Pango
+    # reject the entity and draw the line empty.
+    let semi = src.find(';', i + 1)
+    if semi < 0 or semi >= stop: return false
+    dst.add src[i .. semi]
+    atoms.inc
+    i = semi + 1
+    true
+  of 'a' .. 'z', 'A' .. 'Z':
+    if upright: dst.add c
+    else: dst.add "<i>" & c & "</i>"
+    atoms.inc
+    i.inc
+    true
+  of '0' .. '9':
+    # A whole numeral is one atom: `\sqrt{10}` has a single radicand, not two.
+    while i < stop and src[i] in {'0' .. '9'}: dst.add src[i]; i.inc
+    atoms.inc
+    true
+  of '\'':
+    dst.add "′"
+    atoms.inc
+    i.inc
+    true
+  of '{':
+    mathArg(src, i, stop, dst, upright, atoms)
+  of '}':
+    # A closing brace with nothing open is a formula this renderer has
+    # misread, and guessing past it is how half a formula gets drawn.
+    false
+  of '^', '_':
+    # A script binds to what precedes it, so it adds no atom of its own.
+    dst.add(if c == '^': MathSup else: MathSub)
+    var k = i + 1
+    var inner = 0
+    if not mathArg(src, k, stop, dst, upright, inner): return false
+    dst.add MathScriptEnd
+    i = k
+    true
+  of '\\':
+    var j = i + 1
+    var name = ""
+    while j < stop and src[j] in {'a' .. 'z', 'A' .. 'Z'}: name.add src[j]; j.inc
+    if name.len == 0:
+      # A control sequence whose name is punctuation: TeX's literal braces and
+      # its explicit spacing, which is what a model writes to correct spacing
+      # that a real typesetter would have got right on its own.
+      if j >= stop: return false
+      case src[j]
+      of '{', '}', '%', '#': dst.add src[j]; atoms.inc
+      of ',', ';', ':': dst.add " "
+      of '!': discard
+      of ' ': dst.add " "
+      of '&':
+        # A source ampersand reached `escape` before this pass did.
+        if not src.substr(j, min(j + 4, stop - 1)).startsWith("&amp;"):
+          return false
+        dst.add "&amp;"
+        atoms.inc
+        j += 4
+      else: return false
+      i = j + 1
+      return true
+    i = j
+    if name == "sqrt":
+      dst.add "√"
+      atoms.inc
+      if i < stop and src[i] == '{':
+        var inner = ""
+        var innerAtoms = 0
+        var k = i
+        if not mathArg(src, k, stop, inner, upright, innerAtoms): return false
+        i = k
+        # Pango has no vinculum, so nothing marks where the radicand ends. A
+        # radicand of more than one atom is parenthesised, or `√x+1` reads as
+        # the square root of x, plus one.
+        if innerAtoms > 1: dst.add "(" & inner & ")"
+        else: dst.add inner
+      return true
+    if name == "mathbb":
+      # One letter only, because the double-struck alphabet is the reason this
+      # exists and a longer group would be a set name, not a set.
+      if i + 2 < stop and src[i] == '{' and src[i + 2] == '}':
+        let g = mathDoubleStruck(src[i + 1])
+        if g.len == 0: return false
+        dst.add g
+        atoms.inc
+        i += 3
+        return true
+      return false
+    case name
+    # A size or fence command styles the delimiter that follows it, and the
+    # delimiter renders itself; there is nothing left for these to emit.
+    of "left", "right", "big", "Big", "bigg", "Bigg",
+       "bigl", "bigr", "Bigl", "Bigr", "displaystyle", "textstyle", "limits":
+      return true
+    of "text", "mathrm", "operatorname", "mathsf", "mathtt":
+      var k = i
+      if not mathArg(src, k, stop, dst, true, atoms): return false
+      i = k
+      return true
+    of "mathbf", "mathit":
+      let tag = if name == "mathbf": "b" else: "i"
+      dst.add "<" & tag & ">"
+      var k = i
+      if not mathArg(src, k, stop, dst, true, atoms): return false
+      i = k
+      dst.add "</" & tag & ">"
+      return true
+    else: discard
+    if mathUpright(name):
+      dst.add name
+      atoms.inc
+      return true
+    let sym = mathSymbol(name)
+    if sym.len == 0: return false
+    dst.add sym
+    atoms.inc
+    true
+  of ' ', '\t':
+    dst.add ' '
+    i.inc
+    true
+  of '$':
+    # A dollar inside a formula is a delimiter the scanner did not pair, which
+    # means the formula was never closed where it looked closed.
+    false
+  else:
+    if c < ' ':
+      # A placeholder byte from the code-span, link or backslash pass. Maths
+      # that overlaps one of those is not maths.
+      return false
+    dst.add c
+    # A UTF-8 continuation byte is the tail of a character already counted.
+    if (c.uint8 and 0xC0'u8) != 0x80'u8: atoms.inc
+    i.inc
+    true
+
+## Function purpose: renders `src[i ..< stop]`, failing as a whole rather than
+## in part, so a formula either arrives correct or stays visible as its source.
+proc mathRun(src: string, i: var int, stop: int, dst: var string,
+             upright: bool, atoms: var int): bool =
+  while i < stop:
+    if not mathItem(src, i, stop, dst, upright, atoms): return false
+  true
+
+## Function purpose: the Pango markup for one inline formula's already-escaped
+## source, or the empty string when this renderer declines it. The caller then
+## leaves the source visible: a formula rendered wrongly does not tell the
+## reader to distrust it, and an unrendered one does.
+proc mathMarkup(src: string): string =
+  if src.len == 0: return ""
+  var i = 0
+  var atoms = 0
+  var dst = newStringOfCap(src.len * 6)
+  if not mathRun(src, i, src.len, dst, false, atoms): return ""
+  # The same guard the whole line ends on, applied to the fragment, so a
+  # formula that cannot be marked up costs its own delimiters rather than every
+  # word around it.
+  if not markupBalanced(dst): return ""
+  dst
 
 const LinkSchemes = ["http://", "https://"]
 
@@ -237,7 +671,75 @@ proc inlineMarkup*(line: string): string =
       linked.add text
     j = shut + 1
 
-  result = linked
+  # Action purpose: inline maths is lifted out like a code span and put back
+  # after the emphasis passes, because a formula is dense in the characters
+  # those passes eat and one `*` in `$a*b$` would open an italic run across the
+  # rest of the line. After the link pass, so a `$` inside a URL has already
+  # left the string with its href.
+  #
+  # A backslash-escaped delimiter never reaches here at all: the escape pass
+  # above has already turned `\\(` and `\\[` into a placeholder followed by a
+  # bare bracket, which is what keeps chapter 20 of The TeXbook,
+  # `Definitions\\(also called macros)`, and the LaTeX line break `\\[4pt]` out
+  # of maths. That is the rule a regex would write as a negative lookbehind,
+  # obtained from the pass that already exists rather than from a second one.
+  var maths: seq[string]
+  var withMath = newStringOfCap(linked.len)
+  var m = 0
+  while m < linked.len:
+    # `$$` is display maths, which is a block of its own and a later phase's
+    # work, so it is stepped over rather than consumed: a pass that ate the
+    # first `$` of a `$$` would leave the second to open a formula running to
+    # the end of the line. The other display spelling, `\[`, needs nothing —
+    # a bracket is never an opening delimiter here.
+    if linked[m] == '$' and m + 1 < linked.len and linked[m + 1] == '$':
+      withMath.add "$$"
+      m += 2
+      continue
+    var openLen = 0
+    if linked[m] == '$': openLen = 1
+    elif linked[m] == '\\' and m + 1 < linked.len and linked[m + 1] == '(':
+      openLen = 2
+    # An opening delimiter is followed by something that is not a space, which
+    # is the rule the emphasis passes already use and the one that keeps
+    # `$5 and $10` a pair of prices.
+    if openLen == 0 or m + openLen >= linked.len or
+       linked[m + openLen] in {' ', '\t'}:
+      withMath.add linked[m]
+      m.inc
+      continue
+
+    var stop = -1
+    var k = m + openLen
+    while k < linked.len:
+      if openLen == 1:
+        if linked[k] == '$':
+          if not (k + 1 < linked.len and linked[k + 1] == '$') and
+             linked[k - 1] notin {' ', '\t'}:
+            stop = k
+          break
+      elif linked[k] == '\\' and k + 1 < linked.len and linked[k + 1] == ')':
+        if linked[k - 1] notin {' ', '\t'}: stop = k
+        break
+      k.inc
+
+    # Action purpose: a formula whose closing delimiter has not arrived is
+    # every formula while the reply is still streaming. It renders as its own
+    # source and scanning resumes one character in, so the opening delimiter
+    # cannot swallow the rest of the line waiting for a partner.
+    var markup = ""
+    if stop > 0: markup = mathMarkup(linked[m + openLen ..< stop])
+    if markup.len == 0:
+      withMath.add linked[m]
+      m.inc
+      continue
+    maths.add markup
+    withMath.add "\x04" & $(maths.len - 1) & "\x04"
+    # Both delimiter pairs are as long closing as opening, which is why one
+    # length serves for the skip past either.
+    m = stop + openLen
+
+  result = withMath
   # Action purpose: the triple runs go first, and they are not a convenience.
   # Left to the passes below, `***both***` opened bold on the first two stars
   # and italic on the third, then closed bold before italic — `<b><i>x</b></i>`,
@@ -253,6 +755,8 @@ proc inlineMarkup*(line: string): string =
   result = result.inlineSpan("*", "i")
   for idx, code in codes:
     result = result.replace("\0" & $idx & "\0", "<tt>" & code & "</tt>")
+  for idx, markup in maths:
+    result = result.replace("\x04" & $idx & "\x04", markup)
   # `escape` has already dealt with `&`, `<` and `>`; a quote is the one
   # character left that would end the attribute early.
   for idx, href in hrefs:
