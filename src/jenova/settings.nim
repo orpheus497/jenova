@@ -86,8 +86,13 @@ const
     # effect; a JSON key of this name would be a switch wired to nothing.
     SettingDef(key: "useThinking", label: "Ask the model to reason first",
                section: ssGeneral, kind: skBool, boolDefault: false,
+               # Action purpose: no angle brackets in this sentence, and that
+               # is not a style choice. Every `help` string is drawn as an
+               # `AdwActionRow` subtitle, which GTK parses as Pango markup — one
+               # unbalanced tag and Pango refuses the whole string and draws an
+               # empty row. Spelled `<think>`, this help text was that row.
                help: "Adds a standing instruction to think the answer through " &
-                     "inside <think> tags before giving it. Useful on a model " &
+                     "inside think tags before giving it. Useful on a model " &
                      "that does not reason by default; on one that already " &
                      "does it changes nothing but the length of the prompt."),
     SettingDef(key: "pasteLongTextToFileLen",
