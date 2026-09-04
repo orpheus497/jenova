@@ -1707,6 +1707,18 @@ proc main() =
               md("$\\sqrt{x+1}$") == "\u221A(<i>x</i>+1)",
               md("$\\sqrt{x+1}$"))
 
+        # A combining character follows the one it modifies in the text
+        # stream, so an accent needs no drawing — but it lands on exactly one
+        # character, which is why a wider one declines rather than sitting over
+        # the last letter and asserting something the formula does not.
+        check("an accent becomes a combining mark on its letter",
+              md("$\\hat{x}$") == "<i>x</i>\u0302", md("$\\hat{x}$"))
+        check("an accent over more than one letter stays as source",
+              md("$\\overline{AB}$") == "$\\overline{AB}$",
+              md("$\\overline{AB}$"))
+        check("a norm reads as its own pair of bars",
+              md("$\\|v\\|$") == "\u2016<i>v</i>\u2016", md("$\\|v\\|$"))
+
         # The escaper the emphasis passes already use is the one that runs
         # here: a second one would be a second place for a `<` to reach Pango
         # unescaped, and Pango answers that by drawing nothing.

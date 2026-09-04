@@ -363,6 +363,24 @@ proc mathDoubleStruck(letter: char): string =
   of 'K': "𝕂"
   else: ""
 
+## Function purpose: the combining mark a TeX accent puts over its argument.
+## A combining character follows the one it modifies in the text stream, which
+## is exactly where an accent belongs, so this needs no drawing of its own.
+proc mathAccent(name: string): string =
+  case name
+  of "hat", "widehat": "\u0302"
+  of "bar", "overline": "\u0304"
+  of "tilde", "widetilde": "\u0303"
+  of "vec": "\u20D7"
+  of "dot": "\u0307"
+  of "ddot": "\u0308"
+  of "check": "\u030C"
+  of "acute": "\u0301"
+  of "grave": "\u0300"
+  of "breve": "\u0306"
+  of "mathring": "\u030A"
+  else: ""
+
 # Mutually recursive: an argument is a run of items and an item can take an
 # argument, so both names exist before either body.
 proc mathItem(src: string, i: var int, stop: int, dst: var string,
@@ -453,6 +471,7 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
       if j >= stop: return false
       case src[j]
       of '{', '}', '%', '#': dst.add src[j]; atoms.inc
+      of '|': dst.add "\u2016"; atoms.inc
       of ',', ';', ':': dst.add " "
       of '!': discard
       of ' ': dst.add " "
@@ -513,6 +532,21 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
       dst.add "</" & tag & ">"
       return true
     else: discard
+    let accent = mathAccent(name)
+    if accent.len > 0:
+      var accented = ""
+      var accentedAtoms = 0
+      var k = i
+      if not mathArg(src, k, stop, accented, upright, accentedAtoms):
+        return false
+      # A combining mark lands on one character. An accent over more than one
+      # would sit over the last of them and assert something the formula does
+      # not, so the formula stays as its source instead.
+      if accentedAtoms != 1: return false
+      i = k
+      dst.add accented & accent
+      atoms.inc
+      return true
     if mathUpright(name):
       dst.add name
       atoms.inc
