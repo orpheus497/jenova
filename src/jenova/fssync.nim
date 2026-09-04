@@ -464,7 +464,8 @@ proc hasAssetBytes(id: string): bool =
 proc moveFileAssetMirror*(id, oldName, oldFolderId, oldProjectId, oldWorkspaceId,
                           newName, newFolderId, newProjectId,
                           newWorkspaceId: string): bool =
-  let (src, _) = assetPath(id, oldName, oldFolderId, oldProjectId, oldWorkspaceId)
+  let (src, srcWs) = assetPath(id, oldName, oldFolderId, oldProjectId,
+                               oldWorkspaceId)
   let (dst, ws) = assetPath(id, newName, newFolderId, newProjectId, newWorkspaceId)
   if src.len == 0 or dst.len == 0: return false
   if src == dst: return true
@@ -478,7 +479,14 @@ proc moveFileAssetMirror*(id, oldName, oldFolderId, oldProjectId, oldWorkspaceId
   # Both paths are staged: the old one so its removal is recorded, the new one
   # so the file is. `gitAdd` stages and never commits, so this states what
   # happened without authoring a commit into the user's own tree.
-  gitAdd(workspaces / ws, src)
+  #
+  # **Each side goes to its own repository.** A workspace is one of the four
+  # things a move can change, and every workspace is a separate git tree — so
+  # staging the source path against the *destination* repository named a path
+  # outside it, and the removal went unrecorded in the tree it actually
+  # happened in. `srcWs` and `ws` are the same string for a plain rename, which
+  # is why this was invisible in the common case.
+  gitAdd(workspaces / srcWs, src)
   gitAdd(workspaces / ws, dst)
   true
 

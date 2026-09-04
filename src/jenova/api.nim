@@ -266,6 +266,15 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
         prior.field("projectId") != node.f("projectId") or
         prior.field("workspaceId") != node.f("workspaceId") or
         prior.field("name") != node.f("name"))
+    # Action purpose: the move's answer is carried, not discarded. `upsert`
+    # restores every prior column when this returns false, so a move that fails
+    # puts the row back where its file still is — which is the whole point of
+    # moving the mirror. Discarding it kept the new location on a row whose file
+    # had not moved, which is the same disagreement one step later. The trash is
+    # not treated the same way: there the new file is already written, so a
+    # failure to tidy the superseded copy leaves a stray file and nothing wrong
+    # with the row.
+    var okMove = true
     if okFs and moved:
       if fssync.contentWritesAFile(node.f "content"):
         discard fssync.trashFileAsset(prior.field("id"), prior.field("name"),
@@ -273,12 +282,12 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
                                       prior.field("projectId"),
                                       prior.field("workspaceId"))
       else:
-        discard fssync.moveFileAssetMirror(
+        okMove = fssync.moveFileAssetMirror(
           node.f "id", prior.field("name"), prior.field("folderId"),
           prior.field("projectId"), prior.field("workspaceId"),
           node.f "name", node.f "folderId", node.f "projectId",
           node.f "workspaceId")
-    okFs
+    okFs and okMove
   else:
     true
 
