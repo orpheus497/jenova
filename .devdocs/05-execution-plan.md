@@ -92,9 +92,9 @@ fall back to virtualising only conversations above a length threshold and record
 **Exit:** a long conversation costs viewport memory, not conversation memory.
 
 > **State: 2.1 and 2.3–2.5 done; 2.2 open. The risk did not materialise.** The transcript is a
-> `ListView` (`gui.nim:4589`) and streaming into it holds, so the fallback above was never needed
+> `ListView` (`gui.nim:4621`) and streaming into it holds, so the fallback above was never needed
 > — open decision 3 is closed by that. On a 400-turn conversation the resident set after load
-> falls 297 → 267 MiB. `gui.nim:4436-4452` records the constraint that made it real: a
+> falls 297 → 267 MiB. `gui.nim:4468-4484` records the constraint that made it real: a
 > `GtkListView` virtualises only as the scrolled window's direct child, so the reading-width
 > `Clamp` had to move rather than wrap it.
 >
@@ -170,7 +170,7 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 
 > **State: 4.1 and 4.2 done; 4.3 open.** `src/jenova/shortcuts.nim` owns one window-level
 > `GtkShortcutController` at managed scope and bindings are a `seq[Binding]`
-> (`gui.nim:6346` `keyBindings`); no button carries a `shortcut` any more, which removes the
+> (`gui.nim:6378` `keyBindings`); no button carries a `shortcut` any more, which removes the
 > container hazard at its source. Five bindings ship: F11, `<Ctrl>n`, `<Ctrl>b`, `<Ctrl>comma`,
 > `<Ctrl>Escape`. **P-E1, the command palette, does not exist** — `grep -in palette src/` finds
 > only colour palettes — so the phase's second exit condition is unmet.
@@ -191,7 +191,7 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 > **State: 5.2 and 5.3 done.** P-B6 — Files and Trash — landed as `ColumnView`s, except that the
 > trash stays a plain list on purpose (report 06 §3: it holds two lists of different kinds, and
 > presenting them as one would be a false claim about what restoring one does). P-A8 landed as
-> `src/jenova/assetview.nim` plus `openFileAsset` (`gui.nim:4070`). Header-click sorting is not
+> `src/jenova/assetview.nim` plus `openAsset` (`gui.nim:4088`). Header-click sorting is not
 > wire-able: owlkettle binds no `GtkSorter` at `ac61ecf` (report 07, V-13). **5.1 and 5.4 are
 > open.**
 

@@ -105,7 +105,7 @@ confirmed and `-d:adwminor` set to match.
 
 **As first written this section read "the transcript is not virtualised · severity: high", and
 quoted the `for i, m in … Frame` loop at `gui.nim:3674` that built one live widget subtree per
-message.** That loop is gone. The transcript is a `ListView` (`gui.nim:4589`), so the heading and
+message.** That loop is gone. The transcript is a `ListView` (`gui.nim:4621`), so the heading and
 the excerpt are kept only as the statement of what was fixed.
 
 **`ListView` (`widgets.nim:4432`) is GTK4's virtualised list and owlkettle exposes it fully.**
@@ -115,7 +115,7 @@ It wraps `gtk_list_view_new` over a `GListModel` with a `GtkSignalListItemFactor
 
 > **Done, session 7 — and it measures.** On a 400-turn conversation the resident set after load
 > falls from 297 MiB to 267 MiB, reproducibly across runs. The widget subtrees are viewport-scaled.
-> `gui.nim:4436-4452` records the constraint that makes it real: a `GtkListView` virtualises only
+> `gui.nim:4468-4484` records the constraint that makes it real: a `GtkListView` virtualises only
 > when it is the scrolled window's direct child, so the reading-width column had to move.
 
 **The cache half is still open, and it reframes report 03's M-01 as a symptom.** `BlockMemo`,

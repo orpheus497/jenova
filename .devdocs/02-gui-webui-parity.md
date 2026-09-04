@@ -110,7 +110,7 @@ Legend: **=** parity · **~** partial · **✗** absent in GUI · **+** GUI ahea
 | Model information (modalities, context) | ✔ | ~ | **P-B7** | `DialogModelInformation.svelte` (251 lines) vs the GUI panel's row summary |
 | Favourite models | ✔ | ✗ | **P-B8** | `FAVORITE_MODELS_LOCALSTORAGE_KEY` |
 | **Hardware profile detection + apply** | ✗ | ✔ | **+** | `src/jenova/gui.nim:4145`, `src/jenova/hardware.nim` (436 lines) |
-| **Backend start / stop / restart** | ✗ | ✔ | **+** | `src/jenova/gui.nim:4589-4601` |
+| **Backend start / stop / restart** | ✗ | ✔ | **+** | `src/jenova/gui.nim:883-895` (the control worker's verbs) |
 | **Live per-backend health** | ✗ | ✔ | **+** | `src/jenova/gui.nim:820-830` |
 | **LAN toggle + address display** | ✗ | ✔ | **+** | `src/jenova/gui.nim:4520-4531`, `:4626` |
 | **System tray (StatusNotifierItem)** | ✗ | ✔ | **+** | `src/jenova/tray.nim` (414 lines) |
@@ -225,8 +225,8 @@ this row is the parity view of it.
 Web forks from any message with a name and an `includeAttachments` choice
 (`ChatMessageActions.svelte:31,69-84`). The GUI used to fork only whole conversations from the
 sidebar row, always unnamed, because it passed an empty `atMessageId` to a proc that had always
-taken one. It now passes the message (`src/jenova/gui.nim:3706-3726`), and the sidebar's own fork
-keeps the whole-conversation meaning deliberately (`:3980-3983`). `api.forkConversation`
+taken one. It now passes the message (`src/jenova/gui.nim:3733`), and the sidebar's own fork
+keeps the whole-conversation meaning deliberately (`:3990`). `api.forkConversation`
 (`src/jenova/api.nim:786`) is unchanged — this was a UI-layer gap and it is closed. The name and
 `includeAttachments` options are not surfaced; that is the remainder.
 
@@ -242,7 +242,7 @@ than blaming attachments. Nothing in `gui.nim` or `assetview.nim` references `pd
 never opened, previewed, exported or read" — on the strength of `sensitive = entity == "notes"`.
 That is no longer the code.** `src/jenova/assetview.nim` is new and classifies an asset into
 `avEmpty` / `avImage` / `avText` / `avBinary` (`:20-23`, `classify` at `:104`), the window imports
-it (`gui.nim:58`), holds the decision (`:1303-1305`), and `openFileAsset` (`:4070`) opens the row —
+it (`gui.nim:58`), holds the decision (`:1303-1305`), and `openAsset` (`:4088`) opens the row —
 its own comment stating the defect it closes: *"a row that can only be renamed and deleted is a
 file this window wrote and cannot read"*. The tree sorts and filters by asset type as well
 (`:4003-4004`, `:4043`).
@@ -352,7 +352,7 @@ blocker they actually have. No `awaiting` string in the file mentions attachment
 any more.
 
 The self-test that only asserted these strings are non-empty would have passed either way. It is
-no longer the only guard: `src/jenova_core.nim:4961-4968` walks `settings.Defs` and fails the build
+no longer the only guard: `src/jenova_core.nim:5174-5182` walks `settings.Defs` and fails the build
 on a raw `<`, `>` or `&` in any `label` or `help` — see report 07, V-16, which is a different
 defect in the same strings, found by actually rendering the panel.
 
@@ -449,7 +449,7 @@ Recording these matters: parity work must not regress them, and they are the see
 
 | # | GUI-only capability | Source |
 |---|---|---|
-| 1 | Backend supervision — start, stop, restart, watchdog, per-backend health | `src/jenova/lifecycle.nim`, `src/jenova/gui.nim:4589` |
+| 1 | Backend supervision — start, stop, restart, watchdog, per-backend health | `src/jenova/lifecycle.nim`, `src/jenova/gui.nim:883-895` |
 | 2 | Hardware detection, profile scoring and deployment | `src/jenova/hardware.nim` (436 lines), `src/jenova/gui.nim:4145` |
 | 3 | Model switching that relinks `models/agent` | `src/jenova/models.nim:227`, `src/jenova/gui.nim:4259` |
 | 4 | LAN toggle with the live bind address in the title bar | `src/jenova/gui.nim:4520-4531` |

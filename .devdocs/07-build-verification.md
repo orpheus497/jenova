@@ -357,7 +357,8 @@ as a code defect.
 | V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
 | V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | **done** |
 | V-15 | A renamed file asset can restore the wrong copy and report success | **data** | M | open |
-| V-16 | A settings help string containing markup blanks its own row | display | XS | **done** — the string, and then the general form: `jenova_core.nim:4961-4968` walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` |
+| V-16 | A settings help string containing markup blanks its own row | display | XS | **done** — the string, and then the general form: `jenova_core.nim:5174-5182` walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` |
+| V-17 | The reports' line citations drift on every commit | audit trail | S | **open** — open findings re-derived; the class needs symbol-bearing citations |
 
 ### V-02's exception: `AutoScroll` stays, and not out of caution
 
@@ -372,21 +373,22 @@ the pinned revision, and the mechanism kept because the *new* reading also says 
 
 ---
 
-## 5. The one open finding, stated
+## 5. The open findings, stated
 
 | ID | Finding |
 |---|---|
-| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:255` → `fssync.trashFileAsset`, `fssync.nim:500`); deleting later writes a *second* sidecar with the same id (`api.nim:526`). `restoreMirror` (`fssync.nim:748-788`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert` (`api.nim:202`). The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
+| **V-17** | **The reports' line citations drift on every commit and nothing notices** — 209 of them point into files changed since the last pass. The open findings are re-derived; the class needs symbol-bearing citations. See below. |
+| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:280` → `fssync.trashFileAsset`, `fssync.nim:572`); deleting later writes a *second* sidecar with the same id (`api.nim:569`). `restoreMirror` (`fssync.nim:820-863`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert` (`api.nim:202`). The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
 
 **This section used to list seven findings under the heading "four", five of them already
 recorded as done in the tracker above.** It is now the tracker's open rows and nothing else.
 Each of the five was re-checked against the tree rather than taken on the tracker's word:
 
-* **V-09** — closed. `serverselftest.nim:16` imports `upstream`, and `:184-284` is the fake
+* **V-09** — closed. `serverselftest.nim:16` imports `upstream`, and `:191-300` is the fake
   upstream that drives `upstream.forward` end to end. The finding's evidence — that
   `serverselftest.nim` "mentions neither `upstream` nor `forward`" — was true when written and
   is false now.
-* **V-10** — closed. `fssync.syncFileAsset` (`fssync.nim:432-448`) returns `true` before
+* **V-10** — closed. `fssync.syncFileAsset` (`fssync.nim:504-521`) returns `true` before
   touching the disk when the decoded payload is empty, so an image row writes no file and
   `git add`s nothing. `restoreMirror`'s tail reads the same rule back: no bytes means no
   physical form, not a lost file.
@@ -394,7 +396,7 @@ Each of the five was re-checked against the tree rather than taken on the tracke
   the display number the same way.
 * **V-12** — closed. No `-d:gtk48` is passed anywhere. The four remaining mentions are prose
   recording that it is gone, and `jenova_core.nimble:31` states the property both scripts check.
-* **V-16** — closed **in its general form**, not only as one string: `jenova_core.nim:4961-4968`
+* **V-16** — closed **in its general form**, not only as one string: `jenova_core.nim:5174-5182`
   walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` in any `label` or `help`.
   That is the assertion this row asked for.
 * **V-14** — closed. `run_panel_variant` in `tests/gui_build.sh` compiles the panel-open variant
@@ -405,6 +407,32 @@ Each of the five was re-checked against the tree rather than taken on the tracke
 `ColumnView` (so header-click sorting does not exist to wire), and no `ScrolledWindow` adjustment
 getters; and `TextView` still declares no events, which is why `DraftView` remains custom. Four
 upstream contribution candidates, found by using the library rather than reading it.
+
+### V-17 — the reports' line citations drift on every commit, and nothing notices · severity: low
+
+**Measured, session 11:** 209 `file.nim:N` citations across the eight reports point into files
+changed since the last correction pass, and most no longer land on what they name. This is the
+third time it has happened: commit `70ef1003` was *"docs: correct drifted line numbers"*, the
+session-10 cleanup corrected them again, and ~2,000 lines of source changed after that.
+
+**The open findings were re-derived and fixed** — V-15's five, report 03's deferred table, report
+06 §3 and report 05's Phase 2/4/5 states, report 02's P-A6 and P-A8, and V-16's assertion — because
+those are the citations a reader actually follows. The rest sit in closed findings and historical
+narrative, where a wrong line costs a reader a `grep` rather than a wrong conclusion.
+
+**The class cannot be fixed by correcting it again.** A bare `file:N` carries nothing a checker can
+verify: the number is only wrong relative to an intent the citation does not state. Two options,
+neither taken here because both are the user's call:
+
+* **Cite the symbol beside the line** — `fssync.nim:820 (restoreMirror)` — which makes the
+  citation self-describing and lets a script assert that the named symbol is at or near that line.
+  A gate for it is about twenty lines of shell, and it would fail the same way `gui_check.sh`
+  does: loudly, at the moment the claim stops being true.
+* **Drop line numbers from prose entirely** and cite symbols alone, keeping lines only where a
+  report quotes source verbatim.
+
+Recorded rather than done because it touches all eight reports and the choice between the two
+shapes is a preference about how these documents read.
 
 ### Cross-references
 
