@@ -105,8 +105,14 @@ not the hosts a redirect can send it to:
 ```sh
 grep -rn 'https\?://' src/                        # both binaries
 grep -rn 'https\?://' jca_web/src/                # Web UI
-sockstat -4l | grep -E '8080|8081|8082'           # what is actually listening
+sockstat -4l | grep -E '8080|8081|8082'           # what is listening — FreeBSD
+ss -ltn     | grep -E '8080|8081|8082'           # the same, on Linux
 ```
+
+The last two are one question asked twice, because Jenova is tuned for FreeBSD but builds and
+runs wherever Nim, GTK4 and libadwaita do. Run whichever your machine has; on a host with neither,
+`netstat -an` is everywhere. What you should see is three listeners — 8080 on `127.0.0.1` unless
+you passed `--lan`, and 8081 and 8082 on `127.0.0.1` whether you did or not.
 
 The first command returns about twenty lines. **Read them; do not filter them.** An earlier version
 of this page offered

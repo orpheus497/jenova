@@ -6070,6 +6070,15 @@ proc main() =
         check("the injected set round-trips",
               inspect.parseInjected(inspect.encodeInjected(all)) == all,
               inspect.encodeInjected(all))
+        # The wire names themselves, and not merely that they survive a round
+        # trip — which they would under any spelling, including a renamed one.
+        # `docs/usage.md` states these four bytes-for-bytes as the value of
+        # `X-Jenova-Injected`, and the frozen client parses what it is given, so
+        # renaming a block is a contract change and has to fail here rather than
+        # in a reader's terminal.
+        check("...as exactly the four names the header documents, in order",
+              inspect.encodeInjected(all) == "persona,rag,web,editor",
+              inspect.encodeInjected(all))
         check("the empty set encodes to nothing",
               inspect.encodeInjected({}) == "")
         check("an unknown block name is dropped, not fatal",
