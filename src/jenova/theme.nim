@@ -1,46 +1,26 @@
-## Script function and purpose: the Jenova visual identity as a GTK4 stylesheet,
-## ported from the Web UI's `jca_web/src/app.css` so the desktop application and
-## the LAN client look like one product (G-1/G-2, ruling D-AP).
+## Script function and purpose: the visual identity as a GTK4 stylesheet, with
+## the palette as Nim constants the sheet is generated from.
 ##
-## ## Why the palette lives here and not in `gui.nim`
+## The palette lives here rather than in the window because the canvas and the
+## terminal paint outside the stylesheet and need the same colours. One
+## definition means a colour cannot drift between the widgets and the thing
+## painted behind them.
 ##
-## `canvas.nim` needs the same colours the stylesheet uses. Defining them once as
-## Nim constants and generating the CSS from them means a colour cannot drift
-## between the widgets and the thing painted behind them — which is exactly how
-## the Web UI's own `--brand-*` block and its `NeuralCanvas` literals disagree
-## today (the canvas hard-codes `rgba(221,183,255,…)`, which is in no token).
+## Two properties have no GTK4 equivalent and are approximated rather than
+## dropped silently: a backdrop blur becomes a translucent fill plus the same
+## highlight, which carries the depth cue without the blur, and screen blending
+## on the canvas is left as plain alpha compositing.
 ##
-## ## What did NOT survive the port, stated rather than discovered later
-##
-## GTK4's CSS is a subset of the web's. Two Web UI properties have no equivalent
-## and are approximated:
-##
-## * **`backdrop-filter: blur(40px)`** — the `.glass-panel` blur. GTK4 has no
-##   backdrop filter. Approximated by a translucent fill over the canvas plus the
-##   same top/left highlight, which carries the depth cue without the blur.
-## * **`mix-blend-mode: screen`** on the canvas — see `canvas.nim`.
-##
-## Everything else transfers, and GTK4 supports `@define-color`, `alpha()`, radii,
-## borders and shadows directly.
-##
-## **Both palettes are here now** (G-31's Theme setting). The dark one is the Web
-## UI's `.dark` block, which is pure hex and ported as-is. The light one is its
-## `:root` block, which is `oklch` with chroma 0 — the neutral ramp — converted
-## on the published scale rather than by eye; see `LightPalette`. An earlier
-## revision of this header said only the dark theme was ported, which was true
-## until the Theme setting existed.
-##
-## **Typography is deliberately NOT ported.** The Web UI names Inter and
-## JetBrains Mono; this sheet names no font and no absolute size, so the window
-## uses the desktop's own. A native application that overrides the system font is
-## the thing that makes it look foreign.
+## Typography is deliberately not set. This sheet names no font and no absolute
+## size, so the window uses the desktop's own — overriding the system font is
+## what makes a native application look foreign.
 
 import owlkettle
 import owlkettle/bindings/gtk
 import owlkettle/bindings/adw
 
 const
-  ## The Web UI dark theme, `app.css:61-95`. Hex, not `oklch`, so it ports as-is.
+  ## The dark surfaces, as hex.
   ColBackground* = "#131313"
   ColForeground* = "#f0edf2"
   ColCard* = "#1c1b1b"
@@ -56,52 +36,46 @@ const
   ColCodeBackground* = "#1c1b1b"
   ColCodeForeground* = "#e4b382"
 
-  ## `app.css:134-144`, the brand block. `ColBrandPurpleHead` is the heading
-  ## purple the sidebar logo uses inline (`ChatSidebar.svelte:187`), which is
-  ## lighter than `ColPrimary` and is a separate value, not a mistake.
+  ## The brand hues. The heading purple is lighter than the primary and is a
+  ## separate value rather than a mistake — the wordmark uses it.
   ColBrandPurple* = "#4b2c70"
   ColBrandPurpleLight* = "#8e7cc3"
   ColBrandPurpleHead* = "#7b52ab"
   ColBrandBlue* = "#aba0d9"
 
-  ## `NeuralCanvas.svelte:44,57`. These are the canvas's own literals and belong
-  ## to no CSS token in the Web UI; they are named here so `canvas.nim` and any
-  ## future particle tuning share one definition.
+  ## The canvas's own colours, named here so the painter and any later tuning
+  ## share one definition rather than two literals.
   CanvasParticle* = (0.867, 0.718, 1.0)   ## rgb(221,183,255)
   CanvasLink* = (0.725, 0.780, 0.894)     ## rgb(185,199,228)
 
-  ## The same particle colour as hex, because `.glow-text` glows in it
-  ## (`app.css:270-271`, `text-shadow: 0 0 8px rgba(221,183,255,0.4)`). One
-  ## definition, two consumers: the canvas paints it and the stylesheet glows in
-  ## it, and they drifted apart in the Web UI precisely because it had two.
+  ## The same particle colour as hex, because the glow rule below needs it too.
+  ## One definition and two consumers: the canvas paints it and the stylesheet
+  ## glows in it.
   ColGlow* = "#ddb7ff"
 
 type
   Palette* = object
     ## Every colour the window draws with, in one record, so a second theme is a
-    ## second value rather than a second stylesheet (G-31's Theme setting).
-    ##
-    ## **The constants above remain the dark palette's source** — they are read
-    ## by `vte.nim` and named in this file's own commentary, and duplicating them
-    ## into `DarkPalette` by hand would be two places to change. `DarkPalette`
-    ## is assembled from them below.
+    ## second value rather than a second stylesheet. The constants above stay the
+    ## dark palette's source and it is assembled from them, because the terminal
+    ## reads them directly and duplicating them would be two places to change.
     bg*, fg*, card*, popover*: string
     primary*, secondary*, muted*, mutedFg*, accent*, border*: string
     sidebar*, sidebarAccent*, codeBg*, codeFg*: string
     purpleHead*, purpleDeep*, purpleLight*, blue*, glow*: string
-    ## The two colours the sheet used to hardcode. On dark they are a white
-    ## top/left highlight and a black drop shadow; on light a white highlight is
-    ## invisible and a heavy black shadow is wrong, so both are palette values.
+    ## The highlight and shadow. On dark these are a white top edge and a black
+    ## drop; on light a white highlight is invisible and a heavy black shadow is
+    ## wrong, so both have to be palette values rather than constants.
     edge*, shadow*: string
-    ## `canvas.nim` paints these. Light particles read on a near-black ground and
-    ## vanish on white, so the light palette darkens them rather than reusing the
-    ## dark ones — the canvas is the one thing that cannot inherit a token.
+    ## The canvas paints these. Light particles read on a near-black ground and
+    ## vanish on white, so the light palette darkens them — the canvas is the one
+    ## thing that cannot inherit a stylesheet colour.
     canvasParticle*, canvasLink*: tuple[r, g, b: float]
-    ## The GtkSourceView scheme for fenced code blocks. A dark scheme on a light
-    ## surface is the mismatch that makes a ported theme look half-finished.
+    ## Which source-view scheme fenced code blocks use. A dark scheme on a light
+    ## surface is the mismatch that makes a theme look half-applied.
     sourceScheme*: string
-    ## Asked of GTK itself, so the desktop's own widgets (menus, tooltips, the
-    ## file chooser) match the palette rather than staying dark under a light one.
+    ## Asked of GTK itself, so the desktop's own widgets — menus, tooltips, the
+    ## file chooser — match rather than staying dark under a light palette.
     preferDark*: bool
 
 const
@@ -117,19 +91,13 @@ const
     canvasParticle: CanvasParticle, canvasLink: CanvasLink,
     sourceScheme: "jenova-dark", preferDark: true)
 
-  ## The Web UI's **light** theme, `app.css:9-39`. It is written in `oklch` with
-  ## chroma 0 — i.e. pure neutral greys, the Tailwind neutral scale — which is
-  ## why the original port skipped it and took only the dark hex block. The
-  ## conversion is the published neutral ramp, not an eyeballed guess:
-  ## `oklch(1 0 0)` is `#ffffff`, `0.985` is `#fafafa`, `0.97` is `#f5f5f5`,
-  ## `0.922` is `#e5e5e5`, `0.556` is `#737373`, `0.205` is `#171717`,
-  ## `0.145` is `#0a0a0a`.
+  ## The light surfaces are the neutral ramp converted on its published scale
+  ## rather than matched by eye.
   ##
-  ## **The surfaces are the Web UI's; the brand hues are not.** Its light theme
-  ## drops the brand entirely — `--primary` there is a neutral `#171717`. This
-  ## window's identity *is* the wordmark, so the four brand hues are kept and
-  ## darkened to hold contrast on white: the dark palette's gold and light blue
-  ## are chosen to glow on near-black and are close to invisible on it.
+  ## The brand hues are not neutral here, deliberately: this window's identity is
+  ## the wordmark, so all four are kept and darkened to hold contrast on white.
+  ## The dark palette's gold and light blue are chosen to glow on near-black and
+  ## are close to invisible on it.
   LightPalette* = Palette(
     bg: "#ffffff", fg: "#0a0a0a", card: "#ffffff", popover: "#ffffff",
     primary: "#ede9f4",          ## the purple tint, not the dark purple
@@ -148,26 +116,25 @@ const
     canvasLink: (0.435, 0.388, 0.659),
     sourceScheme: "Adwaita", preferDark: false)
 
-## The palette in force. Read by `canvas.nim` and `vte.nim`, which paint outside
-## the stylesheet and therefore cannot pick a colour up from a `@define-color`.
+## The palette in force, read by the canvas and the terminal — both paint outside
+## the stylesheet and cannot pick a colour up from it.
 var activePalette = DarkPalette
 
+## Function purpose: the palette the canvas and the terminal read, since neither
+## can pick a colour up from the stylesheet.
 proc active*(): Palette = activePalette
 
-## Action purpose: the sixteen ANSI slots VTE hands to `nvim`, derived from the
-## brand rather than left at VTE's built-in xterm palette — which is what made
-## the Neovim page look like a different application pasted into the window.
+## Action purpose: the sixteen ANSI slots the terminal hands the editor, derived
+## from the brand rather than left at the built-in xterm palette — which is what
+## makes the editor page look like a different application pasted in.
 ##
-## **The brand has four hues and a terminal needs six.** Purple, gold, crimson
-## and the light brand blue map directly; green has no brand equivalent and is
-## the one invented value, kept deliberately low-saturation so it does not fight
-## the purples it sits beside. Blue is served by `ColBrandPurpleLight` rather
-## than an actual blue, because a true blue is the thing that reads as "not this
-## application".
+## The brand has four hues and a terminal needs six. Green has no brand
+## equivalent and is the one invented value, kept low-saturation so it does not
+## fight the purples beside it; blue is served by the light brand purple, because
+## a true blue is what reads as "not this application".
 ##
-## **This governs only what `nvim` draws through ANSI.** A configuration that
-## sets `termguicolors` emits 24-bit escapes and bypasses the palette entirely;
-## that case is the USER's own colourscheme and is out of scope by D-AT.
+## This governs only what the editor draws through ANSI. A configuration setting
+## true-colour mode emits 24-bit escapes and bypasses the palette entirely.
 const TerminalPalette* = [
   "#131313",  ##  0 black          — the window ground
   "#c96464",  ##  1 red            — ColSecondary, crimson
@@ -187,13 +154,13 @@ const TerminalPalette* = [
   "#ffffff",  ## 15 bright white
 ]
 
-## Function purpose: the stylesheet, built as one string so the palette constants
-## above are the only place a colour is written down.
+## Function purpose: built as one string so the palette above is the only place
+## a colour is written down.
 ##
-## Selectors are GTK node names (`window`, `headerbar`, `entry`) plus the style
-## classes `gui.nim` attaches. Widgets that sit over the canvas are explicitly
-## transparent — a GTK widget paints its own background by default, and an opaque
-## one would hide the canvas completely rather than subtly.
+## Selectors are GTK node names plus the style classes the window attaches.
+## Anything sitting over the canvas is explicitly transparent: a GTK widget
+## paints its own background by default, and an opaque one hides the canvas
+## completely rather than subtly.
 proc css*(p: Palette = DarkPalette): string =
   result = """
 @define-color jenova_bg """ & p.bg & """;
@@ -248,17 +215,16 @@ list > row:selected {
   color: @jenova_fg;
 }
 
-/* `app.css:270-271`. The one purely decorative rule ported, and it is what makes
-   the wordmark and the active chat read as lit rather than merely coloured. */
+/* The one purely decorative rule here, and what makes the wordmark and the
+   active chat read as lit rather than merely coloured. */
 .glow-text {
   text-shadow: 0 0 8px alpha(@jenova_glow, 0.4);
 }
 
-/* The settings panel (G-31). **Opaque, and deliberately not `.glass-panel`.**
-   It was glass on the first build and the USER reported the obvious result: at
-   `alpha(@jenova_bg, 0.4)` the transcript reads straight through the controls.
-   Glass works for the sidebar and the chat form because they sit at the window
-   edge over the canvas; this sits in the middle over text.
+/* The settings panel: opaque, and deliberately not glass. Glass works for the
+   sidebar and the chat form because they sit at the window edge over the
+   canvas; this sits in the middle over text, and at any usable alpha the
+   transcript reads straight through the controls.
 
    **A blur is not available to fix it.** GTK 4.20 implements no
    `backdrop-filter` — the property does not exist in the library — and GSK's
@@ -280,10 +246,10 @@ list > row:selected {
 /* A capped code block scrolls inside itself rather than pushing the rest of the
    transcript off screen; `fullHeightCodeBlocks` turns the cap off. */
 .code-capped { border-radius: 4px; }
-/* G-34. A markdown table is a real Grid of Labels, so the rule of the thing is
-   the header weight and a line under it — GTK draws no table chrome of its own.
-   The border goes on the header cell rather than the Grid because a Grid has no
-   row concept to hang it on. */
+/* A markdown table is a real Grid of Labels and GTK draws no table chrome, so
+   the rule of the thing is the header weight and a line under it. The border
+   goes on the header cell rather than the Grid, which has no row to hang it
+   on. */
 .md-table {
   border: 1px solid @jenova_border;
   border-radius: 6px;
@@ -295,16 +261,16 @@ list > row:selected {
   padding-bottom: 2px;
 }
 .md-td { color: @jenova_fg; }
-/* G-30. A staged attachment above the composer: a chip, so several read as a
-   row of items rather than as one run of text. */
+/* A staged attachment above the composer, drawn as a chip so several read as a
+   row of items rather than one run of text. */
 .attach-chip {
   background-color: alpha(@jenova_fg, 0.07);
   border: 1px solid @jenova_border;
   border-radius: 12px;
   padding: 2px 4px 2px 10px;
 }
-/* G-30: the drop target is a Frame only because it needs a single-child
-   setter; it must not look like one. */
+/* The drop target is a Frame only because it needs a single-child setter; it
+   must not look like one. */
 .drop-zone {
   border: none;
   background: transparent;
@@ -318,10 +284,7 @@ list > row:selected {
    The height cap is deliberately NOT here: GTK4 CSS has no `max-height`. A
    first version of this rule used one and `bin/jenova --check` reported it as
    an unknown property, which is the whole reason that check is run.
-
-   *(`.draft-zone` stood here for the `DraftZone` wrapper. That widget is gone —
-   `DraftView` owns its own `GtkTextView` — and the rule went with it rather
-   than being left behind, which is G-37's exact defect.)* */
+ */
 .draft-view {
   background: transparent;
   padding: 6px 8px;
@@ -361,9 +324,9 @@ list > row:selected {
   font-size: 0.8em;
   font-weight: bold;
 }
-/* "not yet in effect" — a field whose feature is scheduled rather than built
-   (D-BL). Muted rather than warning-coloured: it is a note about the roadmap,
-   not a problem with what the user just did. */
+/* A field whose behaviour is not built yet. Muted rather than
+   warning-coloured: it is a note about what is scheduled, not a problem with
+   what the user just did. */
 .settings-awaiting {
   color: @jenova_muted_fg;
   font-size: 0.8em;
@@ -374,10 +337,9 @@ list > row:selected {
    Web UI's `bg-black` wrapper at `+layout.svelte`.
 
    No font-family and no font-size anywhere in this sheet: the user's system
-   font, at the user's size, is correct. The Web UI pulls Inter and JetBrains
-   Mono from Google Fonts; a desktop application overriding the desktop's own
-   typography is wrong, and copying that import would also import the B-01
-   leak. Relative sizes (`0.8em`) are used where a label must be secondary. */
+   font at the user's size is correct, and a desktop application that overrides
+   the desktop's own typography is what looks foreign. Relative sizes are used
+   where a label must be secondary. */
 window,
 window.background {
   background-color: @jenova_bg;
@@ -395,7 +357,16 @@ window.background {
 scrolledwindow,
 scrolledwindow > viewport,
 expander,
-frame {
+frame,
+/* The transcript is a `ListView` now, and GtkListView paints its own list
+   background over the neural canvas. Its rows do too, so both nodes are
+   named — `listview > row` and not a descendant selector, because the row is
+   a direct child and an element-path selector broke silently the last time
+   this tree changed shape. */
+listview,
+listview > row,
+columnview,
+columnview > listview > row {
   background-color: transparent;
 }
 
@@ -430,11 +401,11 @@ headerbar .subtitle {
    `vte_terminal_set_colors` alone left it a solid slab. With that off, the
    background is this rule's.
 
-   **No radius, no drop shadow, no light edge** — those are `.glass-panel`'s, and
-   carrying them made the editor read as a card floating over the window rather
-   than as a page (G-24). The transcript's ScrolledWindow has none of them
-   either; this is the same surface, so it gets the same treatment. The padding
-   stays, because terminal text against a hard edge is unreadable. */
+   No radius, no drop shadow and no light edge: those belong to the glass
+   panels, and carrying them makes the editor read as a card floating over the
+   window rather than as a page. The transcript has none of them either and this
+   is the same surface. The padding stays, because terminal text against a hard
+   edge is unreadable. */
 .nvim-term,
 .nvim-term > vte-terminal,
 vte-terminal.nvim-term {
@@ -559,10 +530,9 @@ expander-widget title:hover { color: @jenova_fg; }
 }
 .msg-user   { border-left: 2px solid @jenova_purple_head; }
 .msg-agent  { border-left: 2px solid @jenova_accent; }
-/* A-70. A system turn is neither side of the conversation, and it used to be
-   drawn as the model's own words. Muted rather than given a third accent: it is
-   context the user should be able to see and identify, not something competing
-   with the exchange for attention. */
+/* A system turn is neither side of the conversation. Muted rather than given a
+   third accent: it is context the user should be able to see and identify, not
+   something competing with the exchange for attention. */
 .msg-system { border-left: 2px solid @jenova_muted_fg; }
 
 .msg-role {
@@ -663,26 +633,21 @@ scrolledwindow:hover scrollbar slider { background-color: alpha(@jenova_muted_fg
 scrollbar slider:hover { background-color: alpha(@jenova_muted_fg, 0.5); }
 """
 
-## Function purpose: the stylesheet as owlkettle wants it at `brew`. Separate from
-## `css()` so the raw text stays testable without a GTK context.
+## Function purpose: separate from the text builder so the raw stylesheet stays
+## testable with no GTK context.
 proc stylesheet*(p: Palette = DarkPalette): Stylesheet =
   activePalette = p
   newStylesheet(css(p))
 
-# Action purpose: owlkettle takes `stylesheets` once, at `brew`, and exposes no
-# way to change them afterwards (`mainloop.nim:102-108` installs them and that is
-# the whole of it). Switching theme without restarting therefore needs the GTK
-# calls owlkettle makes internally — **and all but two of them are already bound**
-# in `owlkettle/bindings/*`, which `sourceview.nim` already imports directly.
-# Importing those rather than re-declaring them is the same rule that keeps
-# `std/json` parsing JSON here: check what exists before writing it.
+# Action purpose: owlkettle takes its stylesheets once, when the window is
+# brewed, and exposes no way to change them afterwards — so switching theme
+# without restarting needs the GTK calls it makes internally. All but two of
+# them are already bound in its own bindings and are imported rather than
+# redeclared.
 #
-# The two genuinely missing ones are declared below and nothing else is.
-# `pointer` and not `GdkDisplay`: owlkettle declares that type without an
-# asterisk (`bindings/gtk.nim:232`), so it is bound but not exported and cannot
-# be named from here. The value still comes from owlkettle's own
-# `gdk_display_get_default`, so nothing is being re-derived — only re-typed at
-# the boundary.
+# The display is typed as a bare pointer because owlkettle binds that type
+# without exporting it, so it cannot be named from here. The value still comes
+# from owlkettle's own accessor: it is re-typed at the boundary, not re-derived.
 proc gtk_style_context_remove_provider_for_display(
   display: pointer, provider: GtkCssProvider) {.importc, cdecl.}
 
@@ -692,43 +657,37 @@ proc gtk_style_context_remove_provider_for_display(
 # owlkettle binds `get_default` and `set_color_scheme` but not the getter.
 proc adw_style_manager_get_dark(m: StyleManager): cint {.importc, cdecl.}
 
-## The provider installed by the last `applyPalette`, kept so it can be removed
-## before the next one. Without this, switching theme five times leaves five
-## providers stacked on the display and the oldest still contributing whatever
-## the newer ones do not override.
+## The provider installed by the last palette change, kept so it can be removed
+## before the next. Without it, switching theme repeatedly stacks providers on
+## the display and the oldest still contributes whatever the newer ones do not
+## override.
 var overrideProvider = GtkCssProvider(nil)
 
-## Function purpose: is the desktop asking for a dark colour scheme?
-##
-## **Only callable after GTK is initialised**, which `adw.brew` does and nothing
-## before it does. `adw_style_manager_get_default` reaches
-## `gdk_display_manager_get`, and GDK **aborts the process** when that is called
-## first — `Gdk-ERROR: gdk_display_manager_get() was called before gtk_init()`,
-## SIGABRT, no window. That is not a hypothetical: the first version of the Theme
-## setting called this from `gui.run` while resolving the startup palette, which
-## made every launch crash in 0.09 s. Use `paletteFor` before the window exists
-## and `livePaletteFor` after it.
+## Function purpose: only callable after GTK is initialised, which happens when
+## the window is brewed and not before. The style manager reaches the display
+## manager, and GDK aborts the process outright when that is called first — no
+## exception, no window. Use the plain resolver before the window exists and the
+## live one after it.
 proc systemPrefersDark*(): bool =
   let m = adw_style_manager_get_default()
   if pointer(m).isNil: return true
   adw_style_manager_get_dark(m) != 0
 
-## Function purpose: turn the stored `theme` setting into a palette **without
-## touching GTK**, so it is safe on the startup path before `brew`.
+## Function purpose: turns the stored setting into a palette without touching
+## GTK, so it is safe on the start-up path before the window exists.
 ##
-## Action purpose: `system` resolves to **dark here and is corrected later**. It
-## cannot be resolved now — asking libadwaita before GTK is up aborts the
-## process — so the window opens on this application's own default and the
-## `afterBuild` hook re-resolves it against the desktop once there is a display.
-## **Keep this proc free of GTK calls.** It is the one that runs first.
+## Action purpose: the system choice resolves to dark here and is corrected
+## later. It cannot be resolved now, because asking libadwaita before GTK is up
+## aborts the process — so the window opens on this application's own default and
+## the after-build hook re-resolves it once there is a display. Keep this free of
+## GTK calls: it is the one that runs first.
 proc paletteFor*(choice: string): Palette =
   case choice
   of "light": LightPalette
   else: DarkPalette
 
-## Function purpose: the same choice resolved properly, for every caller that
-## runs **after** the window exists — the `afterBuild` hook and the settings
-## dialog's Save. This is the one that may ask the desktop.
+## Function purpose: the same choice resolved properly, for callers that run
+## after the window exists. This is the one that may ask the desktop.
 proc livePaletteFor*(choice: string): Palette =
   case choice
   of "light": LightPalette
@@ -741,16 +700,12 @@ proc livePaletteFor*(choice: string): Palette =
 proc needsLiveResolve*(choice: string): bool =
   choice != "light" and choice != "dark"
 
-## Function purpose: swap the palette on a running window (G-31's Theme setting).
+## Function purpose: installed above owlkettle's own sheet rather than replacing
+## it — that provider cannot be reached, so this one sits at a higher priority
+## and wins on every property it redefines, which is all of them.
 ##
-## Installed **above** owlkettle's own sheet rather than replacing it — its
-## provider is at priority 600 and cannot be reached, so this one sits at 700 and
-## wins on every property it redefines. Since `css()` emits the whole sheet, that
-## is every property.
-##
-## `canvas.nim` and `vte.nim` read `active()` instead, because they paint outside
-## the stylesheet: the canvas draws with cairo and the terminal sets its own
-## colours through VTE.
+## The canvas and the terminal read the active palette instead, because they
+## paint outside the stylesheet entirely.
 proc applyPalette*(p: Palette) =
   activePalette = p
   let display = gdk_display_get_default()

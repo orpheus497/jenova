@@ -1,24 +1,25 @@
-## Script function and purpose: Model discovery and model switching in Nim,
-## replacing `lib/jenova-model.sh` and `bin/jenova-model-switch` — the last two
-## shell scripts the running product relied on (D-AI's total-conversion gate).
-##
-## Discovery was previously reached the long way round: `etc/jenova.conf:27`
-## sourced `jenova-model.sh`, `config.nim` evaluated that conf through `/bin/sh`,
-## and `MODEL_PATH`/`MODEL_DRAFT`/`MODEL_EMBED` came back out as strings. The conf
-## files keep their shell format — they are configs, and configs are exempt — but
-## the *script* leaves the chain: `config.load` now fills those three keys from
-## here whenever the conf did not already supply them.
-##
-## Switching was `bin/jenova-model-switch`, invoked by the GTK3 tray
-## (`lib/ui.lua:125`). The GUI (N-S7) calls `switchModel` directly instead, so the
-## desktop application spawns no shell to change models.
+## Script function and purpose: finding the GGUF files under `$JCA_HOME/models`
+## and making one of them the active agent model. `config.load` fills the three
+## model keys from here when the conf files leave them empty, and the window
+## calls `switchModel` directly, so changing models spawns nothing.
 
-import std/[algorithm, os, strutils]
+import std/[algorithm, locks, os, posix, strutils]
+
+# Action purpose: `std/posix` binds `fcntl` and `lockf` but none of the flag
+# constants they take, so these come from the headers rather than being written
+# as numbers a libc could disagree with. Same declarations `lifecycle.nim`
+# makes, and for the same reason — they cannot be shared, because `lifecycle`
+# reaches this module through `config` and importing it back is a cycle.
+let
+  FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
+  FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
+  LockTry {.importc: "F_TLOCK", header: "<unistd.h>".}: cint
+  LockRelease {.importc: "F_ULOCK", header: "<unistd.h>".}: cint
 
 type
   ModelKind* = enum
-    ## The three roles a GGUF can play. Each maps to a subdirectory of
-    ## `$JCA_HOME/models` and to one `llama-server` argument.
+    ## Each maps to one subdirectory of `$JCA_HOME/models` and to one
+    ## `llama-server` argument.
     mkAgent = "agent"
     mkDraft = "draft"
     mkEmbed = "embed"
@@ -26,30 +27,29 @@ type
   ModelError* = object of CatchableError
 
   SwitchResult* = object
-    ## What `switchModel` did, so a caller can report it without re-deriving it.
-    ## The GUI shows `message`; the tests assert on the individual fields.
-    target*: string      ## the .gguf now active in models/agent
-    preserved*: seq[string]  ## real files renamed to .old — never symlinks (D-CB)
+    ## What the switch did, so a caller reports it without re-deriving it. The
+    ## window shows `message`; the tests assert on the individual fields.
+    target*: string      ## the source .gguf now behind models/agent/active.gguf
+    preserved*: seq[string]  ## real files renamed to .old — never symlinks
     removed*: seq[string]    ## displaced links, and entries already on the target
+    failures*: seq[string]   ## entries the cleanup could not clear, by name
     message*: string
 
-## Action purpose: `.old` and `.old.N` are the backups `jenova-model-switch`
-## leaves behind on every switch. They live in the same directory and end in
-## `.gguf.old`, so any scan that wants *active* models must skip them — the shell
-## did this with `case "$_f" in *.old|*.old.*)` at three separate sites.
+## Function purpose: `.old` and `.old.N` backups sit in the same directory as
+## the models they displaced, so every scan that wants active models must skip
+## them. One test rather than four, because four would drift.
+##
+## The suffix this module writes — `X.gguf.old` — happens to fail an
+## `endsWith(".gguf")` test as well, but that is incidental and not the rule:
+## a hand-made `X.old.gguf` is a backup by this test and a model by that one.
 proc isBackup*(path: string): bool =
   let name = path.extractFilename
   name.endsWith(".old") or name.contains(".old.")
 
-## Function purpose: the first `*.gguf` in a directory in collation order,
-## reproducing `_find_model()` in `lib/jenova-model.sh:23-29`.
-##
-## Two details of the original are contract, not incidental. It matched files
-## **and symlinks** (`\( -type f -o -type l \)`), because `switchModel` makes the
-## active model a symlink — a files-only scan would find nothing after a switch.
-## And it sorted before taking the first, so the choice is deterministic when a
-## directory holds several; `walkDir` has no defined order, so the sort is
-## explicit here rather than inherited from the filesystem.
+## Function purpose: the first `*.gguf` in collation order. Symlinks count,
+## because a switch makes the active model a symlink and a files-only scan finds
+## nothing after one. The sort is explicit because `walkDir` has no defined
+## order, and the choice has to be the same on every call.
 proc findModel*(dir: string): string =
   if not dirExists(dir):
     return ""
@@ -59,22 +59,59 @@ proc findModel*(dir: string): string =
       continue
     if not path.endsWith(".gguf"):
       continue
+    # Action purpose: the last of the four scans to get this test. `targetModel`
+    # and `available` already skipped backups and this did not, so a name like
+    # `X.old.gguf` — a backup by `isBackup`, a model by the suffix test above —
+    # was refused as a switch source and refused a place in the model list, yet
+    # could still be *run*: this is what `agentModel` falls back to when no
+    # switch has written the slot, and what `discover` reads for the flat root
+    # and for the draft and embed directories.
+    if path.isBackup:
+      continue
+    # Action purpose: it has to RESOLVE. `walkDir` reports a dangling symlink as
+    # `pcLinkToFile`, so a broken `active.gguf` was a candidate here — and it
+    # sorts ahead of most real names, so the fallback that exists to rescue a
+    # broken slot answered with the broken slot. `fileExists` follows the link,
+    # which is the difference between a name and a model.
+    if not fileExists(path):
+      continue
     found.add path
   if found.len == 0:
     return ""
   found.sort()
   found[0]
 
-## Function purpose: resolve all three model paths the way the shell did, so the
-## values `lifecycle.nim` builds its argument vectors from are unchanged.
+const ActiveLink* = "active.gguf"
+  ## The one name a switch writes into `models/agent`. Fixed rather than the
+  ## model's own filename so that reading the slot is a lookup and not a guess:
+  ## anything else in the directory — a hand-dropped `.gguf`, an entry a failed
+  ## cleanup could not clear — used to win on collation order and silently run a
+  ## model nobody selected.
+
+## Function purpose: the active agent model, by name where a switch has set one
+## and by collation order where it has not. The fallback is for directories no
+## switch has touched: an install predating `ActiveLink`, or one the operator
+## fills by hand.
 ##
-## The agent falls back to a flat `models/` directory when `models/agent` yields
-## nothing (`jenova-model.sh:41-45`); draft and embed do not, and adding a
-## fallback they never had would silently start passing `-md`/`-m` paths the
-## shell would have left empty. Environment overrides are applied here for draft
-## and embed, matching `:48,51`; the agent's `JENOVA_MODEL` override is applied by
-## `etc/jenova.conf:33` as `MODEL_PATH`, so it is honoured here too rather than
-## depending on which file got there first.
+## Action purpose: the slot counts only when it RESOLVES. `symlinkExists` is an
+## lstat, so a dangling `active.gguf` — its source deleted, renamed or on a
+## detached volume — satisfied it, and the link's own path was handed to
+## `lifecycle` as the model to load. The fallback that exists for exactly this
+## situation was never reached, and `llama-server` failed on a path the operator
+## could see in the directory. `fileExists` follows the link, so a good one is
+## still the answer and a broken one falls through to the scan.
+proc agentModel*(agentDir: string): string =
+  let active = agentDir / ActiveLink
+  if fileExists(active):
+    return active
+  findModel(agentDir)
+
+## Function purpose: the three paths `lifecycle` builds its argument vectors
+## from, resolved in one place so a caller cannot get a different answer.
+##
+## Action purpose: only the agent falls back to a flat `models/` directory. Draft
+## and embed answer empty instead, because giving them a fallback would start
+## passing `-md` and `-m` paths where the intent was to run without them.
 proc discover*(jcaHome: string, kind: ModelKind): string =
   let modelsDir = jcaHome / "models"
   case kind
@@ -82,7 +119,7 @@ proc discover*(jcaHome: string, kind: ModelKind): string =
     result = getEnv("JENOVA_MODEL")
     if result.len > 0:
       return
-    result = findModel(modelsDir / "agent")
+    result = agentModel(modelsDir / "agent")
     if result.len == 0:
       result = findModel(modelsDir)
   of mkDraft:
@@ -94,18 +131,9 @@ proc discover*(jcaHome: string, kind: ModelKind): string =
     if result.len == 0:
       result = findModel(modelsDir / "embed")
 
-## Function purpose: count comma-separated devices, replacing `count_devices()`
-## in `jenova-model.sh:59-65`. `lifecycle.nim` needs it to decide whether `-ts`
-## is meaningful, since a tensor split across one device is not.
-proc countDevices*(devices: string): int =
-  let trimmed = devices.strip
-  if trimmed.len == 0:
-    return 0
-  trimmed.split(',').len
-
-## Function purpose: pick the model a switch target offers — the first non-backup
-## `*.gguf` in `models/<target>`, reproducing the glob at
-## `bin/jenova-model-switch:42-47`.
+## Function purpose: the first non-backup `*.gguf` a named target offers. Raises
+## rather than answering empty, because a named target that holds no model is a
+## mistake the caller made and not a state to carry on from.
 proc targetModel*(jcaHome, target: string): string =
   let dir = jcaHome / "models" / target
   if not dirExists(dir):
@@ -121,41 +149,101 @@ proc targetModel*(jcaHome, target: string): string =
   found.sort()
   found[0]
 
-## Function purpose: make `models/<target>`'s model the active agent model,
-## replacing `bin/jenova-model-switch` in full.
+const
+  SwitchLockName = ".switch.lock"
+    ## Kept in `models/` and not in `models/agent/`, so the slot directory holds
+    ## models and nothing else — several scans and one assertion read that
+    ## directory whole.
+  SwitchLockTries = 100
+  SwitchLockRetryMs = 10
+
+## Function purpose: a switch is a read-modify-write over a directory — scan
+## what is there, move the replacement in, then clear what it displaced — and
+## none of it was serialized. Two of them interleaving is not a lost update but
+## a corrupted one: the temporary link carries the pid, so two THREADS of one
+## process build the same name and each removes the other's, and two PROCESSES
+## scan `existing` before either has moved anything and then each tries to
+## displace entries the other already renamed. `switchModel` is reachable from
+## the window and from `jenova-core models switch` at the same time, so this is
+## an ordinary two-terminal race rather than a theoretical one.
 ##
-## The shell's ordering is reproduced deliberately, because it is what makes the
-## operation safe rather than merely working:
+## Action purpose: `lockf` for the reason `lifecycle.lockStart` gives — the
+## kernel drops it when the holder exits, so a switch killed half way leaves
+## nothing to clean up, which an `O_EXCL` lock file would not. The wait is a
+## bounded retry and not a blocking one: a holder wedged mid-switch must not
+## hang the caller, and one second of waiting is worth more than an indefinite
+## hang. `-1` means the lock was not taken, and the caller refuses on it.
+## Action purpose: **two mechanisms, because one of them cannot do both jobs.**
+## POSIX record locks belong to the *process*: a second `lockf` from another
+## thread of the same process succeeds immediately, so the file lock excludes
+## other `jenova-core` and `jenova` processes and nothing else. The mutex is
+## what serializes the window's own threads against each other. Neither is
+## redundant — drop the file lock and two terminals interleave, drop the mutex
+## and the window races itself.
+var switchMutex: Lock
+initLock(switchMutex)
+
+proc lockSwitch*(modelsDir: string): cint =
+  result = -1
+  try:
+    let fd = posix.open((modelsDir / SwitchLockName).cstring,
+                        O_WRONLY or O_CREAT, 0o644.Mode)
+    if fd < 0: return -1
+    # Not inherited by anything this process spawns later.
+    discard fcntl(fd, FdSetFd, FdCloexec)
+    for _ in 0 ..< SwitchLockTries:
+      if lockf(fd, LockTry, 0) == 0: return fd
+      os.sleep(SwitchLockRetryMs)
+    discard posix.close(fd)
+    result = -1
+  except CatchableError:
+    result = -1
+
+## Function purpose: released explicitly rather than left to process exit,
+## because the window holds the process open for hours after a switch.
 ##
-## 1. **Build and validate the replacement before touching anything active.** The
-##    new symlink is created under a temporary name and its resolved target
-##    checked against the intended one. A switch that fails half way leaves the
-##    old model in place rather than an empty `models/agent`.
-## 2. **Relative link target.** `../<target>/<name>`, not an absolute path, so the
-##    tree survives being moved or deployed elsewhere.
-## 3. **A displaced entry is only preserved when it is the user's only copy.** The
-##    shell renamed everything to `.old`/`.old.N`, which fills the directory with
-##    near-duplicate links after a few switches (D-CB). An entry that is a symlink
-##    is removed — the `.gguf` it points at still sits in its source folder, so
-##    the link preserves nothing. A **real file** placed here by hand is still
-##    renamed to `.old`, because deleting it would be the user's only copy gone.
-## 4. **The swap is a rename**, which is atomic, so no reader ever sees the
-##    directory without an active model.
+## Exported with its partner for the reason `lifecycle.lockStart` is: the
+## exclusion is invisible in `switchToPath`'s result, so calling the lock
+## directly is the only way to see it at all.
+proc unlockSwitch*(fd: cint) =
+  if fd < 0: return
+  discard lockf(fd, LockRelease, 0)
+  discard posix.close(fd)
+
+## Function purpose: the one place the cleanup warning is worded, so the two
+## entry points cannot disagree about whether a switch that could not tidy up
+## says so.
+proc withCleanup*(msg: string, failures: seq[string]): string =
+  if failures.len == 0: msg
+  else: msg & " (could not clear: " & failures.join(", ") & ")"
+
+## Function purpose: activates any model in the tree. The ordering below is what
+## makes the operation safe rather than merely working, and each step exists for
+## a failure the previous one does not cover:
+##
+## 1. The replacement is built and validated under a temporary name, then moved
+##    into place before any old entry is touched — so the slot holds a working
+##    model from the first mutation onward, and a later failure is untidiness
+##    rather than an empty `models/agent`.
+## 2. The link target is relative, so the tree survives being moved.
+## 3. A displaced entry is preserved only when it is the user's only copy. A
+##    symlink is removed, because the file it points at is still in its source
+##    folder; a real file dropped in by hand is renamed to `.old`.
+## 4. The swap is a rename, which is atomic, so no reader sees the directory
+##    without an active model, and the source may not itself be in the slot.
+## 5. The link is always named `ActiveLink`, never after the model. That is what
+##    makes the slot readable by lookup: a second `.gguf` in the directory is
+##    then untidiness, where before it decided which model ran.
 proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
-  ## The generalised half of `switchModel`, added for the model selector (8a):
-  ## the safety below is what is worth keeping, and the two-literal target
-  ## vocabulary was the only thing standing between it and an arbitrary model.
   if not modelPath.endsWith(".gguf"):
     raise newException(ModelError, "not a .gguf: " & modelPath)
   if not (fileExists(modelPath) or symlinkExists(modelPath)):
     raise newException(ModelError, "model does not exist: " & modelPath)
 
   let modelsDir = jcaHome / "models"
-  # Action purpose: the selector takes a path from a list this program built, but
-  # `switchToPath` is exported and a caller could hand it anything. Activating a
+  # Action purpose: exported, so a caller can hand it any path. Activating a
   # file from outside the model tree would put a symlink into `models/agent`
-  # pointing anywhere on the disk, so containment is checked here rather than
-  # trusted at the call site.
+  # pointing anywhere on disk, so containment is checked here and not trusted.
   if not modelPath.isRelativeTo(modelsDir):
     raise newException(ModelError,
       "model is outside " & modelsDir & ": " & modelPath)
@@ -165,12 +253,95 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     targetName = modelPath.extractFilename
     targetReal = try: modelPath.expandFilename except OSError: modelPath
 
-  createDir(agentDir)
-  let linkTarget = relativePath(modelPath, agentDir)
+  # Action purpose: containment is checked on the RESOLVED path as well as on
+  # the given one, and the given one alone was never enough. `isRelativeTo` is
+  # lexical: `models/instruct/x.gguf` satisfies it while being a symlink to
+  # anywhere on disk, and `linkTarget` below is built from `targetReal` — so the
+  # active slot ended up naming whatever that link pointed at. That is precisely
+  # the escape the check above says it exists to prevent, reached by putting one
+  # symlink in a directory the user already owns.
+  #
+  # **`modelsDir` is resolved too, and that half is load-bearing rather than
+  # symmetry.** `models/` is itself commonly a link on this platform — the
+  # profiles back the model store with `mdmfs` — so testing a resolved target
+  # against an unresolved root would refuse every model on such an install.
+  # Both sides resolved, the comparison is between two real paths.
+  let modelsReal = try: modelsDir.expandFilename except OSError: modelsDir
+  if not targetReal.isRelativeTo(modelsReal):
+    raise newException(ModelError,
+      "model resolves outside " & modelsDir & ": " & modelPath &
+      " -> " & targetReal)
 
-  # Action purpose: a dotted temporary name ending in `.tmp.<pid>` cannot match
-  # the `*.gguf` scan below, so the clearing loop can never mistake the
-  # replacement for an entry to preserve. The shell relied on the same property.
+  # Action purpose: the active slot cannot be its own source. `isRelativeTo`
+  # above admits anything under `models/`, and `models/agent` is under `models/`
+  # — so activating an entry already in the slot made `linkTarget` resolve to the
+  # entry itself, and the clearing loop below removed the very file being
+  # activated. The result was a symlink pointing at its own name.
+  #
+  # **The resolved path is checked as well as the given one**, because the given
+  # one can reach the slot through an indirection the first test cannot see: a
+  # `models/instruct/aaa.gguf` that is itself a link to `models/agent/active.gguf`
+  # is not under `agentDir` by name. It passed, and the `tmpReal == targetReal`
+  # validation below passed too — both resolve to the same real model while the
+  # old link is still in place — and then the rename replaced that link with one
+  # pointing back through `aaa.gguf` to itself. The switch reported success and
+  # left an `ELOOP` where the model had been.
+  #
+  # `createDir` comes BEFORE the resolution and not after it. `expandFilename`
+  # raises on a path that does not exist, and on a first switch `models/agent`
+  # does not — so the guard fell back to the unresolved name and then compared a
+  # resolved target against it, which cannot match on precisely the installs
+  # where resolution matters: the ones whose `models/` is a link. The directory
+  # is created here either way a few lines later, so this only moves it earlier;
+  # it is idempotent, and a refusal below leaves an empty directory this module
+  # owns and would have made anyway.
+  createDir(agentDir)
+
+  # Action purpose: everything below mutates the slot directory, so the lock is
+  # taken here — after the validation that needs no lock and before the first
+  # thing that writes. `defer` and not an explicit release at each exit: there
+  # are five `raise` sites past this point and one of them was already a
+  # late-added abort, so releasing by hand is a line someone forgets.
+  #
+  # Failing closed, exactly as `lifecycle.lockStart` does: a switch that cannot
+  # establish it is alone must not proceed on the assumption that it is.
+  # The mutex first and the file lock inside it, released in the reverse order
+  # by `defer`'s LIFO. Two threads that both reach the file lock would both take
+  # it — see the note on `switchMutex` — so the mutex has to be the outer one.
+  acquire(switchMutex)
+  defer: release(switchMutex)
+
+  let switchLock = lockSwitch(modelsDir)
+  if switchLock < 0:
+    raise newException(ModelError,
+      "another model switch is in progress, or " &
+      (modelsDir / SwitchLockName) & " could not be locked")
+  defer: unlockSwitch(switchLock)
+
+  let agentReal = try: agentDir.expandFilename except OSError: agentDir
+  if modelPath.isRelativeTo(agentDir) or targetReal.isRelativeTo(agentReal):
+    raise newException(ModelError,
+      "model is already in the active slot: " & modelPath)
+  # Action purpose: the link is built from the RESOLVED source, so a chain of
+  # symlinks is collapsed to one hop at switch time. Built from `modelPath`, a
+  # source that was itself a link into the slot pointed the slot back through
+  # that source at itself — an `ELOOP` reported as a successful switch. One hop
+  # cannot form a cycle, and the slot naming the real file is what the reader of
+  # `models list` wants anyway.
+  #
+  # **Both sides of the relative path are resolved.** `targetReal` is, and
+  # `agentDir` was not — so on an install whose `models/` is a symlink, which is
+  # what the `mdmfs` profiles produce, `relativePath` was asked to relate a real
+  # path to a symlinked one and answered a traversal that does not lead there.
+  # It failed loudly rather than silently, because the `tmpReal == targetReal`
+  # validation below catches it — but what it caught was every switch on such an
+  # install. A relative link is resolved against the directory holding it, and
+  # `agentReal` is that directory's real name.
+  let linkTarget = relativePath(targetReal, agentReal)
+
+  # Action purpose: a name ending in `.tmp.<pid>` cannot match the `*.gguf` scan
+  # below, so the clearing loop can never mistake the replacement for an entry
+  # to preserve, and two concurrent switches cannot collide.
   let tmpLink = agentDir / ("." & targetName & ".tmp." & $getCurrentProcessId())
 
   removeFile(tmpLink)
@@ -191,80 +362,135 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     existing.add path
   existing.sort()
 
-  for entry in existing:
-    let entryReal = try: entry.expandFilename except OSError: ""
-    if entryReal.len > 0 and entryReal == targetReal:
-      removeFile(entry)
-      result.removed.add entry
-    elif symlinkExists(entry):
-      # Action purpose: D-CB — every entry this proc has ever written is a symlink
-      # into `instruct/` or `thinking/`, so renaming one to `.old` keeps a second
-      # name for a file that has not moved and leaves the directory a little
-      # fuller on every switch. `symlinkExists` is an lstat, so it distinguishes
-      # the link from a real `.gguf` the user dropped in by hand.
-      removeFile(entry)
-      result.removed.add entry
-    else:
-      var dest = entry & ".old"
-      if fileExists(dest) or symlinkExists(dest):
-        var counter = 1
-        while fileExists(entry & ".old." & $counter) or
-              symlinkExists(entry & ".old." & $counter):
-          counter += 1
-        dest = entry & ".old." & $counter
-      moveFile(entry, dest)
+  # Action purpose: the swap happens before the clearing, not after it. The
+  # header's promise — that a switch failing half way leaves the old model in
+  # place rather than an empty `models/agent` — was not kept by the old order:
+  # the loop below removed and renamed entries one at a time and the rename into
+  # place came last, so an `OSError` in the middle left the directory with no
+  # active model at all.
+  #
+  # `moveFile` is a rename, which replaces any existing entry of that name
+  # atomically. Doing it first means the slot holds the right model from this
+  # point on, and anything that fails afterwards is untidiness rather than an
+  # unusable installation.
+  let active = agentDir / ActiveLink
+  # Action purpose: `moveFile` is a rename, which replaces the destination
+  # silently — and the destination is skipped by the clearing loop below on the
+  # grounds that it is the entry just put there. So a REAL `active.gguf`, one an
+  # operator dropped in by hand or an install predating `ActiveLink` left, was
+  # neither preserved nor removed: it was destroyed by the rename, with a
+  # success message and a `preserved` list that did not mention it. A symlink is
+  # still simply replaced — the file it names has not moved and is still in its
+  # source folder, which is the same reasoning the clearing loop uses.
+  if fileExists(active) and not symlinkExists(active):
+    var dest = active & ".old"
+    if fileExists(dest) or symlinkExists(dest):
+      var counter = 1
+      while fileExists(active & ".old." & $counter) or
+            symlinkExists(active & ".old." & $counter):
+        counter += 1
+      dest = active & ".old." & $counter
+    try:
+      moveFile(active, dest)
       result.preserved.add dest
-
-  moveFile(tmpLink, agentDir / targetName)
-
+    except OSError, IOError:
+      # Action purpose: this one aborts, and it is the only cleanup failure that
+      # does. Every other is untidiness beside a correct slot, so it is collected
+      # and reported. Here the entry that could not be moved aside IS the slot,
+      # and the rename below replaces it silently — so carrying on destroyed the
+      # user's only copy of a real `active.gguf`, which is the exact loss the
+      # block above exists to prevent, while reporting the switch a success.
+      # Refusing leaves that file where it is and the old model still running.
+      #
+      # The temporary link is removed first, on the same reasoning as the
+      # validation failure above: nothing downstream will ever move it into
+      # place, so leaving it behind litters `models/agent` with a dotfile per
+      # attempt. Its own removal cannot be allowed to mask the real error.
+      let why = getCurrentExceptionMsg()
+      try: removeFile(tmpLink)
+      except OSError, IOError: discard
+      raise newException(ModelError,
+        "refusing to switch: " & active.extractFilename & " is a real file " &
+        "and could not be preserved as " & dest.extractFilename &
+        " (" & why & "). The active model is unchanged.")
+  moveFile(tmpLink, active)
   result.target = targetName
-  result.message = "switched to model: " & targetName
 
-## Function purpose: the two named targets the tray and the model menu have
-## always offered. **Kept as its own entry point rather than folded into
-## `switchToPath`** — Directive 3: `jenova-core models switch instruct` is a
-## shipped surface and must keep working unchanged.
+  var failures: seq[string]
+  for entry in existing:
+    # The entry just moved into place is the answer, not a leftover.
+    if entry == active: continue
+    try:
+      let entryReal = try: entry.expandFilename except OSError: ""
+      if (entryReal.len > 0 and entryReal == targetReal) or symlinkExists(entry):
+        # Action purpose: every entry this proc writes is a symlink into a source
+        # folder, so removing one drops a second name for a file that has not
+        # moved. `symlinkExists` is an lstat, which is what distinguishes the
+        # link from a real `.gguf` dropped in by hand.
+        removeFile(entry)
+        result.removed.add entry
+      else:
+        var dest = entry & ".old"
+        if fileExists(dest) or symlinkExists(dest):
+          var counter = 1
+          while fileExists(entry & ".old." & $counter) or
+                symlinkExists(entry & ".old." & $counter):
+            counter += 1
+          dest = entry & ".old." & $counter
+        moveFile(entry, dest)
+        result.preserved.add dest
+    except OSError, IOError:
+      # One entry that could not be cleared does not undo a switch that already
+      # happened. Reported rather than raised, because raising here would tell
+      # the caller the switch failed when the active model is correct.
+      failures.add entry.extractFilename
+
+  result.failures = failures
+  result.message = withCleanup("switched to model: " & targetName, failures)
+
+## Function purpose: the two named targets the tray and the model menu offer.
+## Kept as its own entry point rather than folded into `switchToPath`, because
+## `jenova-core models switch instruct` is a shipped surface.
 proc switchModel*(jcaHome, target: string): SwitchResult =
   if target notin ["instruct", "thinking"]:
     raise newException(ModelError,
       "target must be 'instruct' or 'thinking', got: " & target)
   result = switchToPath(jcaHome, targetModel(jcaHome, target))
-  result.message = "switched to " & target & " model: " & result.target
+  # Through `withCleanup` and not a plain assignment: this rewrites the message
+  # `switchToPath` composed, and a plain one dropped its cleanup warning — so a
+  # named switch, which is what the tray and the model menu both call, reported
+  # an unqualified success over a directory it had failed to clear.
+  result.message = withCleanup(
+    "switched to " & target & " model: " & result.target, result.failures)
 
 type
   InstalledModel* = object
-    ## One `.gguf` the tree holds, as a model list needs it.
+    ## One `.gguf` the tree holds, as a selector needs it.
     path*: string    ## absolute
     name*: string    ## file name
     role*: string    ## the `models/` subdirectory it sits in; "" for a flat one
     bytes*: int64
     active*: bool    ## resolves to the same file as the live `models/agent` link
 
-## Function purpose: the real file the active agent model points at, or "" when
-## there is none. Every row's `active` flag is this compared against.
+## Function purpose: the real file behind the active symlink, which is what an
+## `active` flag has to be compared against — the link's own path never matches.
 proc activeAgentPath*(jcaHome: string): string =
-  let cur = findModel(jcaHome / "models" / "agent")
+  let cur = agentModel(jcaHome / "models" / "agent")
   if cur.len == 0: return ""
   try: cur.expandFilename except OSError: cur
 
 const SourceRoles* = ["instruct", "thinking"]
-  ## The only two directories a switch may draw from (D-CB). The user owns them —
-  ## reasoning models in `thinking`, instruct models in `instruct` — and the
-  ## switcher reads them without managing them.
+  ## The only two directories a switch may draw from. The user owns them and
+  ## this module reads them without managing them.
 
-## Function purpose: the models a switch may choose between, which is what the
-## selector draws.
+## Function purpose: what the selector draws. `discover` cannot answer it — that
+## resolves one path per role and discards the rest of the directory.
 ##
-## **`discover` cannot answer this and that is why this exists** (8a): it
-## resolves *one* path for one of three fixed roles and throws the rest of the
-## directory away.
-##
-## **Only `instruct` and `thinking` are scanned (D-CB).** The previous revision
-## walked every subdirectory of `models/` *and* the flat `models/` directory
-## itself, so it offered embed and speculative-decoding drafter models as the
-## agent model — a configuration `lifecycle` never launches, and one that fails
-## as a model behaving oddly rather than as a list that lied. `models/agent` was
-## never a source folder: it is the slot being swapped.
+## Action purpose: only the two source roles are scanned. Walking every
+## subdirectory would offer embed and drafter models as the agent model, which
+## `lifecycle` never launches and which fails as a model behaving oddly rather
+## than as a list that lied. `models/agent` is the slot being swapped, not a
+## source.
 proc available*(jcaHome: string): seq[InstalledModel] =
   let
     modelsDir = jcaHome / "models"

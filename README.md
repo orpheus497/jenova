@@ -1,6 +1,11 @@
 # Jenova Cognitive Architecture
 
-<img src="png/splash_top.png" width="100%" alt="Jenova Cognitive Architecture banner">
+<img src="png/splash_top.png" width="100%" alt="The Jenova Web UI: an empty chat, the composer, and the neural canvas behind it">
+
+<sub><b>Above: the Web UI</b> — the browser and LAN client, served at <code>:8080</code>. The
+desktop application is a native GTK4 window and looks different; it is described under
+<a href="#desktop-application">Desktop application</a> below. Screenshots of it are still to
+come — see <code>.devdocs/01-documentation-audit.md</code>.</sub>
 
 Jenova is a personal AI system that runs entirely on your own FreeBSD machine. No cloud account,
 no subscription, no telemetry. Inference, retrieval, and your workspace all live on your hardware.
@@ -26,7 +31,10 @@ nimble gui       # build bin/jenova, the desktop application
 Then open <http://localhost:8080>, or just use the window.
 
 The build system is **nimble**; the tasks are declared in `jenova_core.nimble`. There is no
-Makefile, and no build or runtime step shells out to a project script.
+Makefile, and **nothing in the running product shells out to a project script** — control actions
+call `lifecycle` in-process, and model switching calls `models.switchModel`. (The Web UI build is
+the one exception on the *build* side: `nimble web` runs `npm run build`, which runs two scripts
+under `jca_web/scripts/`.)
 
 Individual tasks: `nimble core` (the headless binary), `nimble gui`, `nimble llama`, `nimble web`,
 `nimble suites` (build both binaries and run the test suites).
@@ -57,6 +65,8 @@ markdown, KaTeX math, syntax highlighting, in-browser PDF viewing, and MCP clien
 Workspaces, projects, folders, conversations, messages and notes are stored in SQLite at
 `~/Jenova/.system/jenova.db`, managed by the server. Notes and chats are additionally mirrored to
 `~/Jenova/Workspaces` as plain Markdown, readable and editable with any text editor.
+
+<a id="desktop-application"></a>
 
 ### Desktop application
 
@@ -116,6 +126,13 @@ in `~/Jenova/models/` — `models.discover`, called from `config.load`, fills on
 configuration left empty. Point `JENOVA_MODEL`, `JENOVA_DRAFT_MODEL` or `JENOVA_EMBED_MODEL` at
 anything else you like; an explicit path always wins over discovery.
 
+**Discovery and the model switcher read different directories.** Discovery decides which model
+*runs* and searches `models/agent/`, `models/draft/`, `models/embed/` and the flat `models/` root.
+The switcher — `jenova-core models switch`, and the window's Models panel — decides which model you
+may switch *to*, and reads only `models/instruct/` and `models/thinking/`. A `.gguf` in the flat
+root will be used for inference and will not appear in the Models panel. Put a model in
+`instruct/` or `thinking/` to make it switchable; see [docs/usage.md](docs/usage.md#models).
+
 Rough VRAM guide: about **0.75 GB per 1B parameters** at Q4_K_M.
 
 Full detail — scoring, the priority ladder, every setting, and how to add a profile — is in
@@ -125,8 +142,8 @@ Full detail — scoring, the priority ladder, every setting, and how to add a pr
 
 ## Platform Support
 
-**Jenova is a FreeBSD program**, not a portable program that runs on FreeBSD. The source contains
-no other platform: one kernel ABI, one package manager, one hardware-profile tree.
+**Jenova is built and tuned for FreeBSD.** That is where it is developed, where the hardware
+profiles are measured, and the only platform where it is supported as a product.
 
 | | |
 |---|---|
@@ -134,11 +151,21 @@ no other platform: one kernel ABI, one package manager, one hardware-profile tre
 | **Storage** | ZFS or UFS; ZFS ARC tuning shipped per profile |
 | **GPU** | Vulkan by default. CUDA is opt-in and never auto-selected |
 | **Swap** | Swap-backed model store via `mdmfs`, tuned for NVMe/Optane |
-| **Not supported** | Linux, macOS, Windows |
+| **Builds elsewhere** | Yes. Both binaries compile and run wherever Nim, GTK4 and libadwaita do |
+| **Supported elsewhere** | No |
 
-Both binaries carry a `when not defined(freebsd)` guard and will not compile anywhere else.
-Hardware detection reads `kern.ostype` rather than `uname -s`, which answers `Linux` under the
-FreeBSD Linuxulator.
+**It compiles anywhere, and that is deliberate.** Both entry points used to carry a
+`when not defined(freebsd)` guard that refused to compile on any other system. It was removed,
+because it was protecting nothing: `grep -rn 'defined(freebsd)' src/` returns nothing, so there
+was no second platform in the source for a guard to keep out. What it did instead was put the
+compiler out of reach of every continuous-integration runner and every developer machine that
+was not the target, so the only way to discover that the code did not compile was to try it on
+the one machine that mattered.
+
+The tuning is what is FreeBSD-specific, not the code. Hardware detection asks `sysctl` for the
+machine's identity — it reads `kern.ostype` rather than `uname -s`, which answers `Linux` under
+the FreeBSD Linuxulator — and on a system that does not answer, it reports an unknown machine
+and applies no profile, which is the honest result rather than a wrong one.
 
 ---
 
@@ -199,4 +226,7 @@ Built on [llama.cpp](https://github.com/ggml-org/llama.cpp). Licensed under AGPL
 
 ---
 
-<img src="png/splash_bottom.png" width="100%" alt="Jenova Cognitive Architecture footer">
+<img src="png/splash_bottom.png" width="100%" alt="The Jenova Web UI with the workspace sidebar open, showing workspaces, projects, folders, chats and notes">
+
+<sub><b>Above: the Web UI's workspace sidebar.</b> The desktop application has the same tree, drawn
+natively.</sub>

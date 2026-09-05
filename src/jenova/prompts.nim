@@ -1,11 +1,7 @@
 ## Script function and purpose: the system prompts that give Jenova its
-## behaviour, reproduced verbatim from `lib/prompts.lua`.
-##
-## These are the product's voice, not implementation detail — paraphrasing them
-## would change how the assistant behaves in ways no test would catch. They are
-## copied exactly and are `const`, which also makes them safe to read from any
-## of the worker threads (a `let` string is refcounted memory and would not be
-## GC-safe across them — the same reason `api.nim`'s entity table is `const`).
+## behaviour. Rewording one changes how the assistant behaves and no test
+## catches it. `const` rather than `let` because a refcounted string is not
+## GC-safe across the worker threads that read these.
 
 const Visual* = """You are Jenova, built by orpheus497. You are in inline rewrite mode.
 Your job is to transform only the selected material according to the user's direct instruction.
@@ -60,10 +56,9 @@ Style:
 - Clear, direct, and practical.
 - Concise unless the user is asking for a deeper synthesis."""
 
-## The persona for `Editor:` (G-18). It differs from `FileChat` in one way that
-## matters: **the buffer may not be what is on disk.** A model told only "here is
-## the file" will happily suggest "as you saved earlier", which is wrong for
-## exactly the case this feature exists to serve.
+## Action purpose: separate from `FileChat` because the buffer may hold unsaved
+## changes. A model told only "here is the file" answers about the copy on disk,
+## which is the one case this persona exists to serve.
 const Editor* = """You are Jenova, reading the file the user currently has open
 in their editor.
 
@@ -81,9 +76,8 @@ type Intent* = enum
   inWebSearch = "websearch"
   inEditor = "editor"
 
-## Function purpose: the persona for an intent. `proxy.lua:1310` falls back to
-## freechat for any intent without its own prompt, which is what `inNone` and
-## the agent path both rely on.
+## Function purpose: an intent with no persona of its own falls back to
+## `FreeChat`, which is what `inNone` and the agent path both rely on.
 proc personaFor*(intent: Intent): string =
   case intent
   of inVisual: Visual

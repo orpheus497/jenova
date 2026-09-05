@@ -1,49 +1,50 @@
 ## Script function and purpose: hybrid retrieval — BM25 keyword search plus
-## semantic vector search — replacing `lib/search.lua`. This is the R in RAG;
-## `lib/proxy.lua`'s completion pipeline is what consumes it (N-30, stage N-S5c).
+## semantic vector search — which the completion pipeline consumes on every
+## chat turn.
 ##
-## **Why this is a redesign and not a transcription.** `search.lua` works, but
-## its storage has three defects that a direct port would carry forward:
+## Both indexes live in SQLite: keywords in FTS5, vectors as a BLOB column, and
+## chunk text alongside them. That is what makes retrieval survive a restart and
+## what makes it thread-safe, since the fourteen worker threads share no state
+## and each already has its own connection. An in-process index would be both a
+## data race and lost on every exit.
 ##
-## 1. **The BM25 index lived only in process memory** — `bm25_index`, `df` and
-##    `total_docs` were module-level tables that nothing persisted, so every
-##    restart lost the entire keyword index.
-## 2. **The vector index was one JSON blob** (`$JENOVA_STATE/vectors.json`) read
-##    whole into memory and merged under a hard 20 MB cap, above which it
-##    silently stopped merging.
-## 3. **Chunk text was not persisted** — `load_vectors` set `text = ""`. After a
-##    restart a semantic hit could be scored but could not produce a snippet, so
-##    retrieval half-worked in a way that looks like a ranking bug.
+## FTS5 is probed rather than assumed. Where the extension is absent this
+## degrades to vector-only retrieval and says so, rather than failing to start.
+## The same applies to the embedding server: unreachable means keyword-only.
 ##
-## All three are storage problems, and ruling **Q-24** puts both indexes in
-## SQLite: BM25 in **FTS5**, vectors in a **BLOB** column, chunk text alongside
-## them. That also removes the concurrency problem those globals would have
-## become — under D-S there are 14 worker threads and no event loop, and shared
-## refcounted globals are not GC-safe across them. `db.nim` already gives every
-## thread its own connection, so the index inherits that for free.
-##
-## **FTS5 is verified present, not assumed** (`jenova-core db-capabilities`,
-## D-AB). When it is absent this module degrades to vector-only retrieval and
-## says so, rather than failing to start.
-##
-## Embeddings are obtained from the embedding server on :8082 — ruling **D-E**
-## settled the ports and D-AF settled that `llama-server` is the backend.
-##
-## **What is in the index: chats** (D-BD). The feed is at the bottom of this
-## file, and it is what made the difference between a proven module and a used
-## one — until 2026-09-01 `indexContent` had no caller outside the self-test.
+## What is indexed is chats, notes and file assets; the writers are at the
+## bottom of this file.
 
-import std/[os, json, sets, strutils, strformat, algorithm, math, times, httpclient]
+import std/[json, sets, strutils, strformat, algorithm, math, tables, times,
+            httpclient]
 import ./db
 
 const
-  ChunkWords* = 300      ## `search.lua:39` — chunk size in words
-  ChunkOverlap* = 50     ## `search.lua:40` — overlap between consecutive chunks
-  EmbedBatch* = 8        ## `search.lua:41`
-  Bm25Weight* = 0.4      ## `search.lua:43`
-  SemanticWeight* = 0.6  ## `search.lua:44`
-  SemanticFloor* = 0.3   ## `search.lua:775` — a chunk below this is not a hit
-  SnippetChars* = 1000   ## `proxy.lua:1273` truncates snippets at this
+  ChunkWords* = 300      ## words per chunk
+  ChunkOverlap* = 50     ## carried between consecutive chunks, so a passage
+                         ## spanning a boundary is retrievable from one of them
+  EmbedBatch* = 8        ## texts per request to the embedding server
+  Bm25Weight* = 0.4      ## the two weights sum to 1; semantic leads because
+  SemanticWeight* = 0.6  ## keyword search already has the sharper precision
+  SemanticFloor* = 0.3   ## below this a chunk is noise, not a weak hit
+  SnippetChars* = 1000   ## the ceiling on one snippet in the injected block
+
+const MaxVectorScan* = 50_000
+  ## The ceiling on how many chunk vectors one query may score. Without it the
+  ## semantic half reads the whole table on every completion — the row reader
+  ## materialises every row before returning, and the index grows with the
+  ## user's entire history and never shrinks, so a large install pays a
+  ## multi-hundred-megabyte read and allocation in front of every token.
+  ##
+  ## Action purpose: newest-first, and that ordering is the honest part. A cap
+  ## has to drop something and no index can pre-select "most similar" — that is
+  ## what the scan computes. Insertion order is the right prior for an assistant
+  ## whose index is its own history: a question is more often about last week
+  ## than about the first thing ever said to it.
+  ##
+  ## Deliberately generous, so an ordinary install never reaches it. The keyword
+  ## half has no such horizon, so a document past the cap stays findable by its
+  ## words.
 
 const RagSchema = """
 CREATE TABLE IF NOT EXISTS rag_documents (
@@ -81,14 +82,16 @@ type
 
 var ftsAvailable {.threadvar.}: int   ## 0 unknown, 1 yes, 2 no
 
+## Function purpose: probed once per thread and cached, because the answer
+## cannot change while the process runs and the probe creates a table.
 proc ftsOk(): bool =
   if ftsAvailable == 0:
     ftsAvailable = if db.hasFts5(): 1 else: 2
   ftsAvailable == 1
 
-## Function purpose: create the retrieval schema. Separate from `db.nim`'s core
-## schema because the FTS5 table can legitimately fail to create on a build
-## without the extension, and that must degrade rather than abort startup.
+## Function purpose: separate from the core schema because the FTS5 table can
+## legitimately fail to create on a build without the extension, and that has to
+## degrade rather than abort startup.
 proc initSchema*() =
   db.execScript(RagSchema)
   if ftsOk():
@@ -97,25 +100,30 @@ proc initSchema*() =
     except DbError:
       ftsAvailable = 2
 
+## Function purpose: lets a caller report degraded retrieval rather than
+## discover it as an empty result set.
 proc available*(): tuple[fts: bool] = (fts: ftsOk())
 
 # ---------------------------------------------------------------------------
-# Vector encoding — float32 little-endian, the layout llama.cpp emits
+# Vector encoding — float32 little-endian, the layout the embedding server emits
 # ---------------------------------------------------------------------------
 
+## Function purpose: a raw copy rather than a serialiser, because this layout is
+## also what `dotBlob` reads in place.
 proc packVec(v: seq[float32]): string =
   if v.len == 0: return ""
   result = newString(v.len * 4)
   copyMem(addr result[0], unsafeAddr v[0], v.len * 4)
 
+## Function purpose: kept for the assertions; the query path reads the packed
+## bytes directly instead.
 proc unpackVec(s: string): seq[float32] =
   if s.len < 4: return @[]
   result = newSeq[float32](s.len div 4)
   copyMem(addr result[0], unsafeAddr s[0], result.len * 4)
 
-## Function purpose: unit-normalise in place so similarity is a plain dot
-## product. `search.lua:188` normalises on both sides for the same reason —
-## cosine on pre-normalised vectors costs one multiply-add per dimension.
+## Function purpose: normalising both sides once makes similarity a plain dot
+## product, at one multiply-add per dimension instead of a cosine per pair.
 proc normalize(v: var seq[float32]) =
   var sum = 0.0
   for x in v: sum += x.float * x.float
@@ -124,26 +132,43 @@ proc normalize(v: var seq[float32]) =
   for i in 0 ..< v.len:
     v[i] = (v[i].float * inv).float32
 
+## Function purpose: mismatched lengths score zero rather than raising, since a
+## width change means the embedding model changed mid-index.
 proc dot(a, b: seq[float32]): float =
   if a.len == 0 or a.len != b.len: return 0.0
   for i in 0 ..< a.len:
     result += a[i].float * b[i].float
 
+## Function purpose: the same dot product taken straight off a packed vector's
+## bytes. Unpacking first allocates and copies every vector in the table, per
+## query, purely to read each once — and the layout is this module's own, so the
+## multiply-add can read the bytes where they are.
+##
+## Action purpose: the length guard, in bytes: a blob that is not exactly four
+## bytes per query dimension is a vector of a different width, which means the
+## model changed mid-index. It scores zero rather than reading past its end.
+proc dotBlob(q: seq[float32], blob: string): float =
+  if q.len == 0 or blob.len != q.len * 4: return 0.0
+  let p = cast[ptr UncheckedArray[float32]](unsafeAddr blob[0])
+  for i in 0 ..< q.len:
+    result += q[i].float * p[i].float
+
 # ---------------------------------------------------------------------------
-# Embeddings — the server on :8082 (D-E, D-AF)
+# Embeddings — the separate embedding backend
 # ---------------------------------------------------------------------------
 
 var embedHost {.threadvar.}: string
 var embedPort {.threadvar.}: int
 
+## Function purpose: per thread, because the settings are threadvars — each
+## worker configures its own before its first query.
 proc configureEmbed*(host: string, port: int) =
   embedHost = host
   embedPort = port
 
-## Function purpose: embed a batch through the embedding server. Returns an
-## empty sequence when the server is unreachable, which is a supported state:
-## retrieval degrades to keyword-only rather than failing the request. That is
-## `search.lua`'s behaviour too — it scores BM25 alone when no embedder is set.
+## Function purpose: an unreachable embedder answers empty rather than raising,
+## which is a supported state — retrieval degrades to keyword-only rather than
+## failing the request that asked for it.
 proc embed*(texts: seq[string]): seq[seq[float32]] =
   if texts.len == 0: return @[]
   let host = if embedHost.len > 0: embedHost else: "127.0.0.1"
@@ -169,16 +194,16 @@ proc embed*(texts: seq[string]): seq[seq[float32]] =
     return @[]
 
 # ---------------------------------------------------------------------------
-# Chunking — reproduces search.lua:62-100
+# Chunking
 # ---------------------------------------------------------------------------
 
 type Chunk* = object
   text*: string
   startLine*: int
 
-## Function purpose: split content into overlapping word windows, tracking the
-## line each chunk starts on so a hit can cite a location. Overlap exists so a
-## passage spanning a boundary is still retrievable from one chunk.
+## Function purpose: the line each chunk starts on is tracked so a hit can cite
+## a location, and the windows overlap so a passage spanning a boundary is still
+## retrievable from one chunk rather than from neither.
 proc chunkText*(content: string): seq[Chunk] =
   if content.len == 0: return @[]
   let lines = content.splitLines()
@@ -201,17 +226,17 @@ proc chunkText*(content: string): seq[Chunk] =
 # Indexing
 # ---------------------------------------------------------------------------
 
+## Function purpose: the unfiling half of indexing, called before every write so
+## re-indexing replaces rather than duplicates.
 proc forgetFile*(path: string) =
   db.exec("DELETE FROM rag_chunks WHERE path=?", path)
   db.exec("DELETE FROM rag_documents WHERE path=?", path)
   if ftsOk():
     db.exec("DELETE FROM rag_fts WHERE path=?", path)
 
-## Function purpose: index one file's content — keyword rows into FTS5, chunk
-## text and vectors into `rag_chunks`. Idempotent: an existing entry for the path
-## is removed first, so re-indexing a changed file cannot leave stale chunks
-## behind. **This is the call `search.lua`'s `reindex_file` never had** — B-15's
-## root cause was that `index_dir` and `reindex_file` had zero callers repo-wide.
+## Function purpose: idempotent by construction — an existing entry for the path
+## is removed first, so re-indexing changed content cannot leave stale chunks
+## behind and every writer can call it unconditionally.
 proc indexContent*(path, content: string, mtime = 0): bool =
   if path.len == 0: return false
   forgetFile(path)
@@ -226,14 +251,12 @@ proc indexContent*(path, content: string, mtime = 0): bool =
   if chunks.len == 0: return true
 
   # Embedding is best-effort: a chunk with no vector is still keyword-searchable
-  # and still carries its text for snippets, which is the property `search.lua`
-  # lost by not persisting chunk text.
-  # Action purpose: every batch must contribute exactly one slot per chunk it was
-  # given. `embed` returns an empty sequence when the server is unreachable and
-  # can return fewer vectors than inputs, so appending its result directly made
-  # `vectors` shorter than `chunks` — and the `vectors[idx]` lookup below then
-  # handed each remaining chunk a *different* chunk's vector. Padding keeps the
-  # index alignment that lookup assumes.
+  # and still carries its own text for snippets.
+  #
+  # Action purpose: every batch must contribute exactly one slot per chunk it
+  # was given. The embedder can return fewer vectors than inputs, or none, so
+  # appending its result directly leaves the sequences misaligned and the
+  # indexed lookup below hands each remaining chunk a different chunk's vector.
   var vectors: seq[seq[float32]]
   var batch: seq[string]
 
@@ -257,20 +280,16 @@ proc indexContent*(path, content: string, mtime = 0): bool =
       [path, $c.startLine, c.text], vec)
   true
 
-proc indexFile*(path: string): bool =
-  if not fileExists(path): return false
-  try:
-    let mtime = int(getLastModificationTime(path).toUnix)
-    indexContent(path, readFile(path), mtime)
-  except IOError, OSError:
-    false
-
+## Function purpose: the query path short-circuits on zero, so this is a live
+## check rather than only a diagnostic.
 proc documentCount*(): int =
   let rows = db.query("SELECT COUNT(*) FROM rag_documents")
   if rows.len > 0 and rows[0].len > 0:
     try: parseInt(rows[0][0]) except ValueError: 0
   else: 0
 
+## Function purpose: exported for the assertions, which need to see that a
+## re-index replaced chunks rather than adding to them.
 proc chunkCount*(): int =
   let rows = db.query("SELECT COUNT(*) FROM rag_chunks WHERE vec IS NOT NULL")
   if rows.len > 0 and rows[0].len > 0:
@@ -278,59 +297,49 @@ proc chunkCount*(): int =
   else: 0
 
 # ---------------------------------------------------------------------------
-# Chat indexing (T-17, D-BD)
+# Chat indexing
 # ---------------------------------------------------------------------------
 #
-# Everything above this line worked and was proven by `rag-selftest`, and none
-# of it had ever been fed: `indexContent` had no caller outside that self-test,
-# so `documentCount()` was always 0, `query` short-circuited on its second line,
-# and `pipeline.prepare` — which asks this module a question on every chat turn
-# — always got nothing back. **The engine was finished and starved.** What it
-# indexes is ruled at **D-BD**: chats.
+# Action purpose: a message occupies `chat/<convId>/<role>/<id>`, and the shape
+# is what makes `pathFilter` useful without changing it — that filter matches a
+# path exactly or as a directory prefix, so `chat` scopes a search to every
+# conversation and `chat/<convId>` to one.
 #
-# A message occupies `chat/<convId>/<role>/<id>`. That shape is chosen so the
-# existing `pathFilter` becomes useful without changing it — it matches a path
-# exactly or as a directory prefix, so `chat` scopes a search to every
-# conversation and `chat/<convId>` to one. **The role sits in the path and not
-# in the indexed body**: `formatContext` prints the path above the snippet, so
-# the model is told who said it, whereas a role word inside the body would be a
-# keyword that every query containing "user" could match.
+# The role sits in the path and not in the indexed body. The context formatter
+# prints the path above the snippet, so the model is told who said it, whereas
+# a role word inside the body would be a keyword every query containing "user"
+# could match.
 
 const ChatRoot* = "chat"
 
-## Function purpose: the index path one chat message occupies. It is stable for
-## the life of the row, which is what makes re-indexing *replace* rather than
-## duplicate — `indexContent` forgets a path before it writes it.
+## Function purpose: stable for the life of the row, which is what makes
+## re-indexing replace rather than duplicate.
 proc chatPath*(convId, role, msgId: string): string =
   ChatRoot & "/" & convId & "/" &
   (if role.len > 0: role else: "message") & "/" & msgId
 
-## Function purpose: the `pathFilter` value that confines a query to one
-## conversation, for a caller that wants recall of this chat rather than all of
-## them.
+## Function purpose: the filter value that confines a query to one conversation,
+## for a caller wanting recall of this chat rather than of all of them.
 proc chatScope*(convId: string): string = ChatRoot & "/" & convId
 
-## Function purpose: index one message. Empty content is not an error and not a
-## document — a turn that is pure reasoning has nothing to retrieve *by*, and
-## indexing it would put an empty body in the keyword index.
+## Function purpose: empty content is neither an error nor a document — a turn
+## that is pure reasoning has nothing to retrieve *by*, and indexing it puts an
+## empty body in the keyword index that matches weakly against everything.
 proc indexMessage*(convId, role, msgId, content: string): bool =
   if convId.len == 0 or msgId.len == 0: return false
   if content.strip().len == 0: return false
   indexContent(chatPath(convId, role, msgId), content)
 
-## Function purpose: index a completed exchange — an assistant reply and the
-## turn it answers — from the reply's id alone, so a caller needs to hold only
-## the row it just wrote.
+## Function purpose: takes the reply's id alone, so a caller holds only the row
+## it just wrote.
 ##
-## **Why an exchange and not each message the moment it is written.** The
+## Action purpose: an exchange rather than each message as it is written. The
 ## pipeline queries this index with the user's own words on the way to the
-## model. A user turn indexed when it is saved is therefore in the index
-## *before* the request it belongs to has been answered, and comes back as its
-## own top-ranked "context" — the model is handed the question it was just
-## asked. Waiting for the reply removes that race rather than narrowing it: by
-## the time this runs, the request that could have retrieved itself is over. A
-## question that never got an answer is picked up by `backfillChats` at the next
-## start.
+## model, so a user turn indexed at save time is in the index before the request
+## it belongs to is answered — and comes back as its own top-ranked context,
+## handing the model the question it was just asked. Waiting for the reply
+## removes that race rather than narrowing it, and a question that never got an
+## answer is picked up by the backfill at the next start.
 proc indexExchange*(replyId: string, withParent = true): int =
   var id = replyId
   var remaining = if withParent: 2 else: 1
@@ -343,25 +352,24 @@ proc indexExchange*(replyId: string, withParent = true): int =
     dec remaining
     id = rows[0][3]
 
-## Function purpose: take a message out of the index when it is deleted. An
-## index that keeps answering with turns the user removed is worse than an empty
-## one — the deletion is visible everywhere except in what the model recalls.
+## Function purpose: an index that keeps answering with turns the user removed
+## is worse than an empty one — the deletion is visible everywhere except in
+## what the model recalls.
 ##
-## The row is read rather than remembered because deletion here is *soft*: the
-## row is still present with `is_deleted=1`, so the path can still be rebuilt
-## from it and the call site does not have to capture anything beforehand.
+## Action purpose: the row is read rather than remembered, because deletion here
+## is soft and the row is still present — so the path can be rebuilt from it and
+## no call site has to capture anything beforehand.
 proc forgetMessage*(msgId: string) =
   if msgId.len == 0: return
   for r in db.query("SELECT convId, role FROM messages WHERE id=?", msgId):
     if r.len >= 2: forgetFile(chatPath(r[0], r[1], msgId))
 
-## Function purpose: the same for a whole conversation, which is deleted in one
-## statement over its messages and so has no per-row call site to hook.
+## Function purpose: a conversation is deleted in one statement over its
+## messages, so there is no per-row call site to hook.
 ##
-## The paths come from `rag_documents` rather than from `messages`, because a
-## conversation delete flags every one of its rows including ones that were
-## never indexed — this way the work is proportional to what is actually in the
-## index.
+## Action purpose: the paths come from the index rather than from the message
+## table, because a conversation delete flags every row including ones never
+## indexed — this way the work is proportional to what is actually there.
 proc forgetConversation*(convId: string) =
   if convId.len == 0: return
   var paths: seq[string]
@@ -370,27 +378,151 @@ proc forgetConversation*(convId: string) =
     if r.len > 0: paths.add r[0]
   for p in paths: forgetFile(p)
 
-## Function purpose: put existing history into the index once, so recall works
-## on the chats that already exist rather than only on ones created after this
-## shipped (**D-BD**'s third clause).
+# ---------------------------------------------------------------------------
+# Workspace documents — notes and file assets
+# ---------------------------------------------------------------------------
+#
+# These are indexed as well as scoped. The workspace context builder already
+# puts everything in a conversation's branch of the tree in front of the model,
+# whole and ranked by nothing; retrieval is the part that answers which of them
+# is about what was just asked, and it can only do that if they are here.
+
+const
+  NoteRoot* = "note"
+  FileRoot* = "file"
+
+## Function purpose: the index path a note occupies, under its own root so a
+## path filter can scope a search to notes alone.
+proc notePath*(id: string): string = NoteRoot & "/" & id
+## Function purpose: the same for an uploaded file, under a separate root.
+proc fileAssetPath*(id: string): string = FileRoot & "/" & id
+
+## Function purpose: the title leads the body because it is usually the most
+## retrievable thing about a note and is not otherwise in the text.
 ##
-## **Incremental, so it is safe to call at every start.** A message is skipped
-## when its path is already indexed *and* carries at least one chunk with a
-## vector. That second condition is what makes this self-healing: a message
-## indexed while the embedding server was down has keyword rows and no vectors,
-## and would otherwise stay semantically invisible forever — here it is simply
-## picked up again on a later start. Callers gate this on the embedder being
-## reachable, so the retry cannot loop.
+## Action purpose: an empty note is not a document, but it may have had a body
+## before — so emptying one still has to unfile it rather than skip it.
+proc indexNote*(id, title, content: string): bool =
+  if id.len == 0: return false
+  let body = (if title.len > 0: title & "\n\n" else: "") & content
+  if body.strip().len == 0:
+    forgetFile(notePath(id))
+    return false
+  indexContent(notePath(id), body)
+
+## Function purpose: by the same rule, except that an image is skipped rather
+## than indexed empty — the stored content is the text a model can be shown, and
+## an image has none, so indexing it files a document whose whole body is a file
+## name and which matches every query weakly.
+proc indexFileAsset*(id, name, content: string): bool =
+  if id.len == 0: return false
+  let text = content.strip()
+  # Action purpose: a `data:` payload is bytes wearing a string's clothes, and
+  # it is unfiled exactly as an emptied one is — not merely skipped — because a
+  # row whose content became a data URI may have held real text before.
+  #
+  # Both writers in this product leave an image's `content` empty on purpose
+  # (`gui.fileAttachmentsAsArtefacts`, and the Web UI's uploader sets it only
+  # for text-like types), which is what made the comment above true by
+  # convention rather than by construction. `/api/db/fileAssets` is a public
+  # route and `importData` takes whatever a dump carries, so the shape can
+  # arrive from a third client or another tool's export — and indexing one puts
+  # megabytes of base64 into the FTS body and spends an embedding round trip per
+  # 300 "words" of it, producing a document that matches every query weakly and
+  # nothing well. Checked before the name is prepended, or the prefix would hide
+  # the marker from the test.
+  #
+  # The prefix is matched case-insensitively because a URI scheme is
+  # (RFC 3986 §3.1). A literal test passed `DATA:image/png;base64,…` and
+  # `Data:…` straight through, which is the one shape a third client or another
+  # tool's export is as likely to write as the lower-case one — and it is
+  # precisely the payload this guard exists to keep out. Only the first five
+  # bytes are folded: lowering the whole value would copy the megabytes the
+  # guard is here to avoid touching.
+  if text.len == 0 or
+     (text.len >= 5 and text[0 ..< 5].toLowerAscii == "data:"):
+    forgetFile(fileAssetPath(id))
+    return false
+  let body = (if name.len > 0: name & "\n\n" else: "") & content
+  indexContent(fileAssetPath(id), body)
+
+## Function purpose: called when a note is deleted or emptied, so retrieval
+## stops answering with content the user removed.
+proc forgetNote*(id: string) =
+  if id.len > 0: forgetFile(notePath(id))
+
+## Function purpose: the same for an uploaded file.
+proc forgetFileAsset*(id: string) =
+  if id.len > 0: forgetFile(fileAssetPath(id))
+
+## Function purpose: makes a workspace that predates the index searchable
+## without the user re-saving every note. Incremental — a path already carrying
+## a vector is skipped — so a later start does no work twice and a run
+## interrupted half way resumes rather than restarting.
+proc backfillWorkspace*(): int =
+  var indexed: HashSet[string]
+  # Action purpose: a document counts as indexed only when *every* chunk carries
+  # a vector. `EXISTS ... vec IS NOT NULL` asks whether any one does, and a run
+  # interrupted part-way through a long note leaves exactly that state — one
+  # embedded chunk and the rest null. Skipping on it retires the document for
+  # good, and the tail the user actually asked about is never embedded. The
+  # `NOT EXISTS ... IS NULL` half is what makes the pass resumable; the first
+  # half stays because it is what excludes a document with no chunks at all,
+  # for which the second is vacuously true.
+  for r in db.query(
+      "SELECT d.path FROM rag_documents d WHERE (d.path LIKE ? OR d.path LIKE ?)" &
+      " AND EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NOT NULL)" &
+      " AND NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NULL)",
+      NoteRoot & "/%", FileRoot & "/%"):
+    if r.len > 0: indexed.incl r[0]
+
+  # Action purpose: ids and titles first, bodies one at a time. Selecting the
+  # content with the id list holds every note and uploaded file in memory at
+  # once, for a pass that indexes them singly anyway.
+  var notes: seq[tuple[id, title: string]]
+  for r in db.query("SELECT id, title FROM notes WHERE is_deleted=0"):
+    if r.len < 2 or r[0].len == 0: continue
+    if notePath(r[0]) in indexed: continue
+    notes.add (id: r[0], title: r[1])
+
+  var files: seq[tuple[id, name: string]]
+  for r in db.query("SELECT id, name FROM fileAssets WHERE is_deleted=0"):
+    if r.len < 2 or r[0].len == 0: continue
+    if fileAssetPath(r[0]) in indexed: continue
+    files.add (id: r[0], name: r[1])
+
+  for n in notes:
+    let rows = db.query("SELECT content FROM notes WHERE id=?", n.id)
+    if rows.len == 0 or rows[0].len == 0: continue
+    if indexNote(n.id, n.title, rows[0][0]): inc result
+  for f in files:
+    let rows = db.query("SELECT content FROM fileAssets WHERE id=?", f.id)
+    if rows.len == 0 or rows[0].len == 0: continue
+    if indexFileAsset(f.id, f.name, rows[0][0]): inc result
+
+## Function purpose: puts existing history into the index, so recall works on
+## chats that predate it. Safe to call at every start because it is incremental.
 ##
-## **Content is fetched one row at a time, deliberately.** Selecting id, convId
-## and role for the whole table costs three short strings per message; selecting
-## the content with it would hold every message ever written in memory at once,
-## for a pass that then indexes them one by one anyway.
+## Action purpose: a message is skipped only when its path is indexed *and*
+## carries a chunk with a vector, and that second condition is what makes this
+## self-healing — a message indexed while the embedder was down has keyword rows
+## and no vectors, and would otherwise stay semantically invisible for ever.
+## Callers gate this on the embedder being reachable, so the retry cannot loop.
+##
+## Content is fetched one row at a time: selecting it with the id list would
+## hold every message ever written in memory at once, for a pass that indexes
+## them singly anyway.
 proc backfillChats*(): int =
   var indexed: HashSet[string]
+  # Complete in the same sense as `backfillWorkspace`, and for the same reason:
+  # a partly embedded turn has to be retried, not retired.
   for r in db.query(
       "SELECT d.path FROM rag_documents d WHERE d.path LIKE ? AND EXISTS (" &
-      "SELECT 1 FROM rag_chunks c WHERE c.path = d.path AND c.vec IS NOT NULL)",
+      "SELECT 1 FROM rag_chunks c WHERE c.path = d.path AND c.vec IS NOT NULL)" &
+      " AND NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NULL)",
       ChatRoot & "/%"):
     if r.len > 0: indexed.incl r[0]
 
@@ -406,13 +538,12 @@ proc backfillChats*(): int =
     if indexMessage(t.convId, t.role, t.id, rows[0][0]): inc result
 
 # ---------------------------------------------------------------------------
-# Query — the hybrid scoring of search.lua:741-830
+# Query — the hybrid scoring
 # ---------------------------------------------------------------------------
 
-## Action purpose: FTS5 needs a query string, and raw user text is not one —
-## an apostrophe or a bare `AND` is syntax there. Each term is quoted and the
-## terms OR'd, which matches `search.lua`'s tokenise-then-score-any-term
-## behaviour rather than requiring every term to be present.
+## Function purpose: raw user text is not an FTS5 query — an apostrophe or a
+## bare `AND` is syntax there. Each term is quoted and the terms OR'd, so a
+## query scores on any term rather than requiring all of them.
 proc ftsQueryString(query: string): string =
   var terms: seq[string]
   for raw in query.toLowerAscii.split({' ', '\t', '\n', '\r', ',', '.', ';',
@@ -424,6 +555,8 @@ proc ftsQueryString(query: string): string =
       terms.add "\"" & t & "\""
   terms.join(" OR ")
 
+## Function purpose: read from the stored chunk text rather than from the
+## original file, which may have changed or gone since it was indexed.
 proc snippetFor(path: string, startLine: int): string =
   let rows = db.query(
     "SELECT text FROM rag_chunks WHERE path=? AND start_line=? LIMIT 1",
@@ -433,22 +566,16 @@ proc snippetFor(path: string, startLine: int): string =
     if result.len > SnippetChars:
       result = result[0 ..< SnippetChars]
 
-## Function purpose: hybrid retrieval, reproducing `search.lua:741`'s shape.
+## Function purpose: mixes the two score families, each normalised by the
+## maximum within this result set. Normalising against the set rather than an
+## absolute scale is what makes them comparable at all, since BM25 and cosine
+## share no range.
 ##
-## Both score families are normalised **by the maximum within this result set**
-## and then weighted 0.4 keyword / 0.6 semantic — the same combination the Lua
-## implementation used. Normalising against the set rather than an absolute
-## scale is what makes the two comparable at all, since BM25 and cosine have no
-## common range.
+## Action purpose: the keyword score is FTS5's own `bm25()`, which returns a
+## *more negative* number for a better match and is therefore negated. Only the
+## ordering matters, since both families are max-normalised before mixing.
 ##
-## **One deliberate deviation:** the keyword score comes from FTS5's own `bm25()`
-## rather than the hand-rolled k1=1.5/b=0.75 loop. It is a correct BM25 over a
-## persisted index instead of an approximation over an in-memory one, and since
-## scores are max-normalised before mixing, only the ordering matters. FTS5
-## returns a *more negative* score for a better match, so it is negated.
-##
-## `pathFilter` matches the path exactly or as a directory prefix, as
-## `search.lua:775` does.
+## `pathFilter` matches a path exactly or as a directory prefix.
 proc query*(queryStr: string, topK = 5, withSnippets = true,
             pathFilter = ""): seq[Hit] =
   if queryStr.strip().len == 0: return @[]
@@ -473,23 +600,43 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
   if qvecs.len > 0:
     let qv = qvecs[0]
     var best: seq[tuple[path: string, score: float, startLine: int]]
+    # Action purpose: a complexity fix, not an optimisation. Keeping only the
+    # best chunk per document by scanning the accumulator is O(rows x
+    # documents), and the accumulator grows with the number of distinct matching
+    # documents. The sequence is kept alongside the index so result order stays
+    # insertion order — a bare table would hand the caller an unspecified order
+    # and make two identical queries disagree on ties.
+    var at = initTable[string, int]()
+    # Action purpose: the path filter belongs in the SQL, before the ceiling.
+    # Applied afterwards it filters rows the limit already chose, so the limit
+    # takes the newest chunks globally and the filter discards most of them — a
+    # scoped search whose documents are older than the ceiling finds nothing
+    # while its vectors sit in the table. Pushed down, the ceiling bounds the
+    # candidate rows instead of the whole index.
+    #
+    # `substr` rather than `LIKE`, because `%` and `_` are ordinary characters
+    # in a path and wildcards to `LIKE`, which would silently widen the scope.
+    # The filter below stays as the final check: this narrows what is read, it
+    # does not replace it.
+    let pf = pathFilter
     for (cols, blob) in db.queryBlob(
-        "SELECT path, start_line, vec FROM rag_chunks WHERE vec IS NOT NULL"):
+        "SELECT path, start_line, vec FROM rag_chunks WHERE vec IS NOT NULL " &
+        "AND (? = '' OR path = ? OR substr(path, 1, length(?) + 1) = ? || '/') " &
+        # The ceiling is a compile-time constant rather than input, so it is
+        # written into the statement: a limit wants an integer and this driver
+        # binds every parameter as text.
+        "ORDER BY rowid DESC LIMIT " & $MaxVectorScan, pf, pf, pf, pf):
       if cols.len < 2 or blob.len == 0: continue
-      let v = unpackVec(blob)
-      let s = dot(qv, v)
+      let s = dotBlob(qv, blob)
       if s <= SemanticFloor: continue
       let line = try: parseInt(cols[1]) except ValueError: 1
-      var found = false
-      for i in 0 ..< best.len:
-        if best[i].path == cols[0]:
-          found = true
-          if s > best[i].score:
-            best[i].score = s
-            best[i].startLine = line
-          break
-      if not found:
+      let idx = at.getOrDefault(cols[0], -1)
+      if idx < 0:
+        at[cols[0]] = best.len
         best.add (cols[0], s, line)
+      elif s > best[idx].score:
+        best[idx].score = s
+        best[idx].startLine = line
     sem = best
 
   proc passesFilter(p: string): bool =
@@ -499,20 +646,23 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
   var maxBm = 0.0
   var maxSem = 0.0
 
+  # The same index for the same reason, over the merge.
+  var mergedAt = initTable[string, int]()
+
   for e in bm:
     if not passesFilter(e.path): continue
-    merged.add Hit(path: e.path, bm25: e.score)
+    if not mergedAt.hasKey(e.path):
+      mergedAt[e.path] = merged.len
+      merged.add Hit(path: e.path, bm25: e.score)
     if e.score > maxBm: maxBm = e.score
   for e in sem:
     if not passesFilter(e.path): continue
-    var found = false
-    for i in 0 ..< merged.len:
-      if merged[i].path == e.path:
-        merged[i].semantic = e.score
-        merged[i].startLine = e.startLine
-        found = true
-        break
-    if not found:
+    let idx = mergedAt.getOrDefault(e.path, -1)
+    if idx >= 0:
+      merged[idx].semantic = e.score
+      merged[idx].startLine = e.startLine
+    else:
+      mergedAt[e.path] = merged.len
       merged.add Hit(path: e.path, semantic: e.score, startLine: e.startLine)
     if e.score > maxSem: maxSem = e.score
 
@@ -541,22 +691,21 @@ proc query*(queryStr: string, topK = 5, withSnippets = true,
 
   merged
 
-## Function purpose: store a vector for an already-indexed chunk directly,
-## bypassing the embedding server. Exists so the **blob round-trip and the
-## similarity maths can be verified without a running embedder** — float32
-## endianness, the BLOB write/read path and the dot product are the parts most
-## likely to be silently wrong, and leaving them untested until a server happens
-## to be up is how "unverified logic" ships.
+## Function purpose: bypasses the embedder so the blob round trip and the
+## similarity maths can be asserted without one running. Endianness, the BLOB
+## write and read path and the dot product are the parts most likely to be
+## silently wrong, and they would otherwise go untested until a server happens
+## to be up.
 proc storeChunkVector*(path: string, startLine: int, v: seq[float32]) =
   var vec = v
   normalize(vec)
-  # The blob is parameter 1 here — `SET vec=?` precedes the WHERE predicates —
-  # so the index is stated rather than left to the default.
+  # The blob is the first parameter here, since the assignment precedes the
+  # predicates, so its index is stated rather than left to the default.
   db.execBlob("UPDATE rag_chunks SET vec=? WHERE path=? AND start_line=?",
               [path, $startLine], packVec(vec), blobIndex = 1)
 
-## Function purpose: expose the similarity used by `query`, so a test can assert
-## the maths rather than infer it from a ranking.
+## Function purpose: exported so a test can assert the maths directly rather
+## than infer it from a ranking.
 proc similarity*(a, b: seq[float32]): float =
   var x = a
   var y = b
@@ -564,12 +713,21 @@ proc similarity*(a, b: seq[float32]): float =
   normalize(y)
   dot(x, y)
 
+## Function purpose: exported so a test can prove the pack and unpack agree —
+## an endianness error here silently degrades every ranking.
 proc vectorRoundTrip*(v: seq[float32]): seq[float32] =
   unpackVec(packVec(v))
 
-## Function purpose: the `--- REPOSITORY CONTEXT ---` block `proxy.lua:1270`
-## injects into a system prompt. Kept here rather than in the pipeline so the
-## exact format has one owner.
+## Function purpose: exported so a test can assert that the packed and unpacked
+## dot products agree. A disagreement between them fails nothing — it silently
+## re-ranks retrieval, which is only ever found by someone noticing the answers
+## got worse.
+proc blobDotMatchesUnpacked*(q, v: seq[float32]): tuple[blob, unpacked: float] =
+  let packed = packVec(v)
+  (dotBlob(q, packed), dot(q, unpackVec(packed)))
+
+## Function purpose: the block injected into a system prompt, kept here rather
+## than in the pipeline so the exact format has one owner.
 proc formatContext*(hits: seq[Hit]): string =
   if hits.len == 0: return ""
   var parts = @["\n--- REPOSITORY CONTEXT ---"]

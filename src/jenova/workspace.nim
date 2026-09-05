@@ -1,54 +1,28 @@
-## Script function and purpose: build the workspace artifact context — the notes
-## and files belonging to a conversation's workspace, project or folder — so the
-## model answers with them in view (G-43, ruling D-BU).
+## Script function and purpose: the notes and files belonging to a
+## conversation's workspace, project or folder, rendered so the model answers
+## with them in view. Depends on `db` and `std` and nothing else, which is what
+## lets the self-test assert the whole scoping ladder with no window and no
+## backend.
 ##
-## **This module is deliberately below the window.** It depends on `db` and `std`
-## and nothing else, which is what lets `workspace-selftest` assert the whole
-## scoping ladder with no window, no backend and no conversation. Same layering
-## argument as `settings.nim` and `hardware.nim`.
+## Three scoping rules carry the behaviour and none is obvious from the code:
+## a FOCUS note applies across its entire workspace tree, so a rule written at
+## the root reaches a chat three levels down; regular notes at folder level are
+## strictly isolated from sibling folders, widening to the project's folders at
+## project level and to everything nested at workspace level; and files have no
+## FOCUS concept at all.
 ##
-## ## Why this exists at all
-##
-## The `notes` and `fileAssets` tables, their `isFocusNote` flag and the
-## `folderId`/`projectId`/`workspaceId` columns on `conversations` have existed
-## since the schema was written, and `api.nim` round-trips every one of them.
-## **Nothing ever read them.** A user could write notes into a workspace and the
-## model never saw a word. That is the third time this project has shipped a
-## complete, tested store with no reader — `rag.nim` was the first (T-17) and
-## `fileAssets` is the third — and it is why rule 15 says to assert the *join*.
-##
-## ## Parity is exact, and taken from the source
-##
-## Ported from `jca_web/src/lib/services/workspace.service.ts`,
-## `WorkspaceService.getWorkspaceContext`, read directly rather than from a
-## summary of it (rule 11). Three behaviours a summary loses, all of them load
-## bearing:
-##
-## * **A FOCUS note escapes its level.** A note with `isFocusNote` applies across
-##   the entire workspace tree, so a rule written once at the workspace root
-##   reaches a chat scoped to a folder three levels down. That is the whole
-##   reason the flag exists, and it is the first thing a re-implementation drops.
-## * **Regular notes at folder level are strictly isolated.** A folder chat sees
-##   its own folder's notes and *not* its siblings'. Project level widens to the
-##   project's folders; workspace level takes everything nested.
-## * **Files have no FOCUS concept** and follow the regular-note scoping only.
-##
-## The output strings are literal, because the model is being shown a format the
-## Web UI already teaches it.
-##
-## ## One defect inherited on purpose
-##
-## **There is no token budget.** The upstream carries a standing `TODO` saying
-## exactly that, so a large workspace can overflow the context on its own. Taking
-## parity takes the defect with it. It is not fixed here because it is the same
-## problem as **T-3** (untrimmed history) and fixing either alone buys nothing.
+## Known limit: there is no token budget here, so a large workspace can overflow
+## the context on its own. The second half of this note used to read "bounding it
+## here alone buys nothing while the history is also untrimmed" — the history is
+## trimmed now, and a request that dropped turns says so in `X-Jenova-Trimmed`,
+## so that is no longer a reason to leave this unbounded.
 
 import std/[strutils, tables]
 import ./db
 
 const
-  ## The heading `jca_web/src/lib/services/chat.service.ts` injects this block
-  ## under. Copied exactly: it is what the model has been shown before.
+  ## Literal because it is a format the model has already been taught; a
+  ## reworded heading is a different prompt.
   ContextHeading* = "[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]:"
 
 type
@@ -61,21 +35,17 @@ type
     name*, kind*, content*: string
     folderId*, projectId*, workspaceId*: string
 
-## Function purpose: every live note, as the context builder needs it. Deleted
-## rows are excluded here rather than at each call site — a soft-deleted note is
-## in the trash, and the model quoting it back would make the deletion look
-## ignored everywhere the user would actually notice.
-## Function purpose: decide whether a stored `isFocusNote` cell means FOCUS.
-## Exported because the window reads the same column when it opens a note, and
-## two copies of this test would drift the moment either was widened — a note
-## would be FOCUS to the context builder and not to the toggle showing it, or the
-## reverse. The column is written by three surfaces with three notions of a
-## boolean: SQLite has no boolean type, the Web UI posts `0`/`1`, and a JSON
-## body can carry `false` or `null`, so all four falsehoods are named here rather
-## than assumed away.
+## Function purpose: exported because the window reads the same column when it
+## opens a note, and two copies of this test would drift the moment either was
+## widened — leaving a note FOCUS to the context builder and not to the toggle
+## showing it. The column is written by three surfaces with three notions of a
+## boolean, so all four falsehoods are named rather than assumed away.
 proc isFocusValue*(raw: string): bool =
   raw notin ["", "0", "null", "false"]
 
+## Function purpose: deleted rows are excluded here rather than at each call
+## site. A soft-deleted note is in the trash, and the model quoting it back
+## makes the deletion look ignored exactly where the user would notice.
 proc allNotes*(): seq[Note] =
   for r in db.query("SELECT title, content, folderId, projectId, workspaceId, " &
                     "isFocusNote FROM notes WHERE is_deleted=0"):
@@ -83,6 +53,7 @@ proc allNotes*(): seq[Note] =
       title: r[0], content: r[1], folderId: r[2], projectId: r[3],
       workspaceId: r[4], isFocus: isFocusValue(r[5]))
 
+## Function purpose: the file half of the same rule, excluded the same way.
 proc allFiles*(): seq[FileAsset] =
   for r in db.query("SELECT name, type, content, folderId, projectId, " &
                     "workspaceId FROM fileAssets WHERE is_deleted=0"):
@@ -90,33 +61,33 @@ proc allFiles*(): seq[FileAsset] =
       name: r[0], kind: r[1], content: r[2], folderId: r[3], projectId: r[4],
       workspaceId: r[5])
 
-## Function purpose: the workspace a project belongs to, and the project a folder
-## belongs to, as two lookups. Built once per call rather than queried per note,
-## because the scoping below asks the same question of every row.
+## Function purpose: built once per call rather than queried per note, because
+## the scoping below asks the same question of every row.
 proc folderParents*(): Table[string, string] =
   for r in db.query("SELECT id, projectId FROM folders WHERE is_deleted=0"):
     result[r[0]] = r[1]
 
+## Function purpose: the other half of the ladder, kept separate so a caller
+## scoping to a project need not load the folder table at all.
 proc projectParents*(): Table[string, string] =
   for r in db.query("SELECT id, workspaceId FROM projects WHERE is_deleted=0"):
     result[r[0]] = r[1]
 
-## Function purpose: render one note under FOCUS / RULES. The level is the
-## deepest container the note itself carries — which is what tells the model
-## whether a rule is workspace-wide or local, and is why the label is derived
-## from the note and never from the chat asking.
+## Function purpose: the level is the deepest container the *note* carries, not
+## the chat asking. That is what tells the model whether a rule is workspace-wide
+## or local, and deriving it from the asker would invert the meaning.
 proc focusLevel(n: Note): string =
   if n.folderId.len > 0: "Folder"
   elif n.projectId.len > 0: "Project"
   else: "Workspace"
 
-## Function purpose: the artifact context for a conversation, scoped by the
-## deepest container id it carries. Empty when there is nothing to say, so the
-## caller can test `.len` rather than needing to know the format.
+## Function purpose: scoped by the deepest container id the conversation
+## carries, and empty when there is nothing to say, so a caller can test `.len`
+## without knowing the format.
 ##
-## The four scope branches are the upstream's, in its order: folder, else
-## project, else workspace, else *global* — and global means artifacts with no
-## container at all, not "everything".
+## Action purpose: the branches are ordered folder, project, workspace, global,
+## and global means artifacts belonging to nothing at all rather than to
+## everything.
 proc contextFor*(folderId, projectId, workspaceId: string): string =
   let notes = allNotes()
   let files = allFiles()
@@ -130,15 +101,18 @@ proc contextFor*(folderId, projectId, workspaceId: string): string =
   var targetNotes, targetFocus: seq[Note]
   var targetFiles: seq[FileAsset]
 
-  ## The workspace a scope sits in, and every project and folder beneath it.
-  ## FOCUS notes are gathered against this whole set at every level, which is
-  ## what "a FOCUS note escapes its level" means in practice.
+  ## The workspace a scope sits in and everything beneath it. FOCUS notes are
+  ## gathered against this whole set at every level, which is how a FOCUS note
+  ## escapes the level it was written at.
   proc treeOf(wsId: string): tuple[projects, folders: seq[string]] =
     for pid, wid in projectOf:
       if wid == wsId: result.projects.add pid
     for fid, pid in folderOf:
       if pid.len > 0 and pid in result.projects: result.folders.add fid
 
+  ## `projectNeedsNoFolder` narrows a project-level FOCUS note to one that names
+  ## no folder, which the folder and project branches need and the workspace
+  ## branch does not.
   proc gatherFocus(wsId: string, projects, folders: seq[string],
                    projectNeedsNoFolder: bool) =
     for n in focus:
@@ -151,7 +125,7 @@ proc contextFor*(folderId, projectId, workspaceId: string): string =
         targetFocus.add n
 
   if folderId.len > 0:
-    # Strictly this folder. A sibling folder's notes are deliberately invisible.
+    # Strictly this folder: a sibling folder's notes are deliberately invisible.
     for n in regular:
       if n.folderId == folderId: targetNotes.add n
     for f in files:
@@ -187,30 +161,29 @@ proc contextFor*(folderId, projectId, workspaceId: string): string =
       if f.workspaceId == workspaceId or
          (f.projectId.len > 0 and f.projectId in tree.projects) or
          (f.folderId.len > 0 and f.folderId in tree.folders): targetFiles.add f
-    # No `!n.folderId` guard on the project clause here, unlike the two branches
-    # above. That asymmetry is the upstream's and is reproduced rather than
-    # tidied: a workspace chat already sees everything below it, so the narrower
-    # test would exclude nothing and only diverge.
+    # Action purpose: no folder guard on the project clause here, unlike the two
+    # branches above. A workspace chat already sees everything below it, so the
+    # narrower test would exclude nothing and only diverge.
     gatherFocus(workspaceId, tree.projects, tree.folders, false)
 
   else:
-    # Global: only what belongs to nothing. Not "everything" — an unassigned chat
-    # seeing every workspace's notes is how a rule from one project ends up
-    # answering a question about another.
+    # Action purpose: only what belongs to nothing. An unassigned chat seeing
+    # every workspace's notes is how a rule from one project ends up answering a
+    # question about another.
     for n in regular:
       if n.folderId.len == 0 and n.projectId.len == 0 and
          n.workspaceId.len == 0: targetNotes.add n
     for f in files:
       if f.folderId.len == 0 and f.projectId.len == 0 and
          f.workspaceId.len == 0: targetFiles.add f
-    # And no FOCUS notes at all, which is the upstream's behaviour: a focus note
-    # is a rule for a workspace, and a global chat is in none.
+    # And no FOCUS notes: a focus note is a rule for a workspace, and a global
+    # chat is in none.
 
   if targetFocus.len > 0:
     var any = false
     var block1 = "--- FOCUS / RULES ---\n"
     for n in targetFocus:
-      # An empty focus note contributes nothing rather than an empty heading.
+      # An empty focus note contributes nothing rather than a bare heading.
       if n.content.strip.len == 0: continue
       any = true
       block1.add "[" & n.focusLevel & "] " & n.title & "\n" & n.content & "\n\n"

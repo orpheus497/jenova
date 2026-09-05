@@ -1,0 +1,446 @@
+# Report 07 — Build Verification, and What the owlkettle Pin Left Behind
+
+**Status:** open tracker
+**Scope:** the path from `nimble gui` to a mapped window, and the claims `src/` makes about
+what owlkettle can and cannot do — re-checked against **the revision now pinned**, not against
+the tag the comments were written for.
+**Method:** a build environment was constructed and **every finding was reproduced by compiling
+or running.** Where a claim comes from a header or from owlkettle's own source it is quoted
+verbatim with a file and line.
+**Audited at commit:** `aabcc77`, then carried through session 9's consolidation
+**owlkettle audited at:** `ac61ecf0adea2fd611ce962e3915e704abc2fb7f` — the revision
+`jenova_core.nimble:24` pins.
+
+---
+
+## 0. The environment, and why this report is short
+
+This report was opened to answer "is the owlkettle build fully functional, using everything on
+owlkettle's main branch". A full environment was assembled to answer it by measurement:
+
+| Component | Version | Source |
+|---|---|---|
+| Nim | 2.2.10 | bootstrapped from source, `github.com/nim-lang/Nim` tag `v2.2.10`. `nim-lang.org` is blocked by egress policy; GitHub is not, and `build_all.sh` fetches `csources_v2` from GitHub |
+| GTK4 | 4.14.5 | distribution package |
+| libadwaita | 1.5.0 | distribution package |
+| GtkSourceView | 5.12.0 | distribution package |
+| VTE (GTK4) | 0.76.0 | distribution package |
+| D-Bus | 1.14.10 | distribution package |
+| owlkettle | `v3.0.0` **and** `ac61ecf`, side by side as git worktrees, selected with `--path:` | GitHub |
+| runtime for the harness | Xvfb, ImageMagick, `xwininfo`, `xdotool`, `xclip`, `nc` | distribution packages |
+
+**`sh tests/gui_build.sh` passes end to end on this host**, including the steps that need a
+mapped window:
+
+```
+gui_build: window is 900x680+0+0
+gui_build: composer mean change — idle 0.00108441, after <Ctrl>n 0.0106788
+gui_build: window-wide shortcuts fire
+gui_build: the transcript renders the seeded conversation
+gui_build: the composer is at the bottom of the window and takes typing
+gui_build: PASS
+```
+
+All nineteen self-tests pass — the seventeen that existed plus `asset` and `inspect`, both added
+in session 9. `jenova --check` exits 0.
+
+**The answer to the opening question is therefore "almost".** Sessions 7 and 8 pinned
+`ac61ecf`, set `-d:adwminor=4`, and took the window from 18 owlkettle widgets to 39. What was
+left was not capability — it was four places where the build or the source still described
+owlkettle `v3.0.0` while linking `ac61ecf`, each of them the stated reason for code that no
+longer needed to exist.
+
+**Session 9 closed those four and found four more while doing it** (V-05…V-08), every one in the
+build harness rather than the product: a gate nothing ran, a shared nimcache that makes a clean
+tree fail to link, an unhandled exception printed on a passing run, and a port override that
+never overrode anything. Six further findings are open and stated in §5. **The pattern across all
+fourteen is one thing — the apparatus that checks this project had not itself been checked.**
+
+### What this environment still does not cover
+
+* **Linux/glibc, not FreeBSD.** The two `when not defined(freebsd)` guards
+  (`src/jenova_core.nim`, `src/jenova_gui.nim`) are neutralised in a scratch copy; the repository
+  is not modified. `grep -rn freebsd src/jenova/*.nim` returns nothing, so the copy differs from
+  the real tree in exactly two lines.
+* **GTK 4.14.5, not the target's 4.20.4** (D-AK); **libadwaita 1.5.0**, not the target's
+  1.8.5.1. Both floors are satisfied on both hosts — see §1, where the version question is
+  settled rather than left open.
+* Report 05's Phase 1 list stands unchanged: the `sysctl` probe, the `fork`/`setsid`/`execv`
+  backend path, the D-Bus tray (no `StatusNotifierWatcher` runs under Xvfb), and the embedded
+  Neovim page are FreeBSD-only and untested here.
+* **`--check` builds the startup tree, and that is less than it looks.** The overlay panels are
+  inserted unconditionally — **seven** of them at `src/jenova/gui.nim:6902-6908`, not five —
+  which makes it tempting to say they are constructed. **Only their shells are.** Each panel's
+  body sits behind `if app.<x>Open:`, `trashPanel` at `:5129` being the pattern, so the
+  `beforeBuild` hook of every widget *inside* them had never run, on any host, under any gate.
+  Two agents found this independently in session 9. Recorded as **V-14**, and **now closed**:
+  `tests/gui_build.sh` compiles a variant with those guards forced open and `--check`s it, at a
+  cost of 21 s on a 90 s gate. It found a real defect on its first run — see V-16.
+
+  *(The line numbers in this bullet were wrong when first written — "five overlay panels" at
+  `:6163-6167` and a guard at `:4813` — and are corrected above. A report whose whole argument is
+  that claims must be checked does not get to cite drifted line numbers; they are cheap to
+  re-derive and were not re-derived.)*
+
+---
+
+## 1. Three decisions confirmed by measurement, not by reading
+
+Recorded because they were taken on a read of owlkettle's source and are now backed by a
+reproduction. Neither needs work.
+
+### The `ac61ecf` pin prevented a startup SIGSEGV
+
+owlkettle `v3.0.0`, `owlkettle/widgets.nim:870-872`, verbatim:
+
+```nim
+  hooks pixbuf:
+    property:
+      gtk_picture_set_pixbuf(state.internalWidget, state.pixbuf.gdk)
+```
+
+`Pixbuf` is a `ref`. `.gdk` on a nil one is a nil dereference inside `buildState`, and
+`src/jenova/gui.nim` says the opposite where it decodes the sidebar logo — *"A nil pixbuf is
+survivable — `Picture` renders empty — so a missing icon file costs the logo, not the window."*
+Reproduced, `jenova --check` with `png/` absent:
+
+```
+SIGSEGV: Illegal storage access. (Attempt to read from nil?)
+…/owlkettle/widgets.nim(864) build
+…/owlkettle/widgetdef.nim(872) buildState
+```
+
+`ac61ecf` guards it (`8254267`). Measured, four runs:
+
+| owlkettle | `png/jenova.png` present | absent |
+|---|---|---|
+| `v3.0.0` | tree builds, exit 0 | **SIGSEGV** |
+| `ac61ecf` | tree builds, exit 0 | tree builds, exit 0 |
+
+The comment is now true. It was not true of the dependency the `.nimble` file used to accept.
+
+### The pin also fixed the dark theme, which was sending libadwaita *prefer-light*
+
+`/usr/include/libadwaita-1/adw-style-manager.h:22-28`, verbatim:
+
+```c
+typedef enum {
+  ADW_COLOR_SCHEME_DEFAULT,
+  ADW_COLOR_SCHEME_FORCE_LIGHT,
+  ADW_COLOR_SCHEME_PREFER_LIGHT,
+  ADW_COLOR_SCHEME_PREFER_DARK,
+  ADW_COLOR_SCHEME_FORCE_DARK,
+} AdwColorScheme;
+```
+
+owlkettle `v3.0.0` ordered its `ColorScheme` `Default, ForceLight, ForceDark, PreferDark,
+PreferLight`, so `ColorSchemeForceDark` was ordinal **2** — `ADW_COLOR_SCHEME_PREFER_LIGHT`.
+`src/jenova/gui.nim:6349` passes exactly that constant for a dark palette. `Default` and
+`ForceLight` were right by coincidence; only the dark case was wrong, and it was wrong in the
+direction that makes Adwaita's own menus disagree with the Jenova stylesheet — the precise thing
+the comment above that line says the forced value exists to prevent. `ac61ecf` fixes the order
+and, in the same commit (`fcf019d`), puts `{.size: sizeof(cint).}` on **every** C enum in both
+binding files: a Nim enum without it is sized to its own range, so a two-case enum is one byte
+where the C ABI expects four.
+
+### Both version floors are already at their maximum useful value — and that is now provable
+
+`-d:gtkminor=10 -d:adwminor=4` were each set as *floors*, deliberately below the toolkit present
+(`jenova_core.nimble`: *"10 is a deliberate floor rather than a match"*). The open question was
+whether they were leaving capability on the table, and whether the target satisfies them at all.
+Both halves are now answered.
+
+**The target's versions**, reported by the user from the FreeBSD host:
+
+```
+libadwaita-1.8.5.1             Building blocks for modern adaptive GNOME applications
+```
+
+with GTK 4.20.4 (D-AK). Both floors are cleared with room to spare, on the target and on the
+audit host (1.5.0 / 4.14.5) — so nothing in the build requires a version either machine lacks.
+
+**And raising either buys nothing at `ac61ecf`.** Every version gate in the pinned revision,
+enumerated exhaustively:
+
+```
+$ grep -rhoE 'AdwVersion >= \([0-9]+, [0-9]+\)' owlkettle/ | sort -u
+AdwVersion >= (1, 2)
+AdwVersion >= (1, 3)
+AdwVersion >= (1, 4)
+
+$ grep -rhoE 'GtkMinor >= [0-9]+' owlkettle/ | sort -u
+GtkMinor >= 10
+GtkMinor >= 12
+GtkMinor >= 4
+GtkMinor >= 8
+```
+
+* **`adwminor=4` is the ceiling, not merely a satisfied floor.** owlkettle gates nothing above
+  libadwaita 1.4. Raising it would raise the runtime requirement for zero capability.
+* **`gtkminor=12` would buy exactly one boolean.** The only thing gated above 10 is
+  `CenterBox.shrinkCenterLast` (`owlkettle/widgets.nim:360`, GTK 4.12) and its binding
+  (`bindings/gtk.nim:774-775`). **`CenterBox` is used nowhere in `src/`** — verified — so 10 is
+  the ceiling too, until something uses that widget.
+
+Both numbers are therefore correct *and* maximal for this dependency. **This is a fact about
+`ac61ecf`, not a standing property**: raising the pin means re-running the two greps above, since
+a newer owlkettle may gate on a version these floors exclude. That check belongs beside the pin.
+
+---
+
+## 2. Findings
+
+### V-01 — `-d:gtk48` is a dead define, and the comment justifying it is false at the pinned revision · severity: low, but it is load-bearing
+
+`jenova_core.nimble:31-35`:
+
+> **`-d:gtk48` is required alongside it and is not redundant.** owlkettle 3.0.0 gates the *widget*
+> on `GtkMinor >= 8` but its *binding* on `defined(gtk48)` (`bindings/gtk.nim:836`), so raising
+> only `gtkminor` fails to compile with an undeclared `gtk_picture_set_content_fit`. Both
+> switches, or neither.
+
+**That is exactly right for the `v3.0.0` tag** — `owlkettle/bindings/gtk.nim:836` there is
+`when defined(gtk48):`. At `ac61ecf` the same gate reads (`owlkettle/bindings/gtk.nim:864-867`):
+
+```nim
+when GtkMinor >= 8:
+  proc gtk_picture_set_content_fit*(picture: GtkWidget, fit: GtkContentFit)
+else:
+  proc gtk_picture_set_keep_aspect_ratio*(picture: GtkWidget, keep: cbool)
+```
+
+`defined(gtk48)` appears nowhere in `ac61ecf`. `-d:gtk48` in `NimFlags`
+(`jenova_core.nimble:42`) is a define nothing reads. Confirmed by building the window against
+`ac61ecf` **without** it, at `-d:gtkminor=10 -d:adwminor=4`: it compiles, `--check` exits 0, and
+`tests/gui_build.sh` passes.
+
+This is the same class of defect the `.nimble` file caught in itself when it pinned the
+revision: a switch and a paragraph that describe a dependency the build no longer uses.
+
+### V-02 — four "owlkettle cannot do this" claims are false at `ac61ecf`, and each is the stated reason for a hand-rolled widget · severity: medium
+
+These are not cosmetic. Every one is written as the *justification* for a custom `renderable` or
+a raw `importc`, so while they stand, the code they justify cannot be removed by a reader who
+believes them — and this project's rule is that a comment is checked before it is written
+("per rule 5", which several of these cite).
+
+| Site | The claim | The fact at `ac61ecf` |
+|---|---|---|
+| `src/jenova/gui.nim:2686` | *"Not in owlkettle's bindings — `hAlign` there is a `Box` packing property"* about `gtk_widget_set_halign` | **`owlkettle/bindings/gtk.nim:683`: `proc gtk_widget_set_halign*(widget: GtkWidget, align: GtkAlign)`.** It was also there in `v3.0.0`, at `:659`. **This claim has never been true at any revision this project has used.** The local declaration is a duplicate that takes `cint` instead of the typed `GtkAlign` |
+| `src/jenova/gui.nim:2590`, `:2607` | *"owlkettle's `renderable` emits an unexported type"* — the stated reason `NeuralCanvas` and `SourceCode` live in `gui.nim` rather than beside their FFI in `canvas.nim` and `sourceview.nim` | True on `v3.0.0`. `6386729` (*"Automatically export widgets"*) exports the widget type, its state type, `buildState`, `updateState` and `destroyState`, with `{.private.}` to opt out. **Both renderables can move to the modules that own their bindings** |
+| `src/jenova/gui.nim:2614`, `:2670`, `:2678`, `:2833` | *"owlkettle's `ScrolledWindow` exposes only `child` — no adjustment"*, justifying `ContentScroll`, `AutoScroll` and four raw `importc` | `68c1db0` adds `propagateNaturalWidth`/`propagateNaturalHeight` as fields **and as bindings** (`bindings/gtk.nim:828-829`); `0138a38` adds the `edgeOvershot(edge: Edge)` and `edgeReached(edge: Edge)` signals. Two of the four `importc` at `:2674-2683` are now duplicates of owlkettle's own |
+| `src/jenova/gui.nim:3003` | *"owlkettle's `TextView` has no wrap property — checked in `widgets.nim`, per rule 5"* | `6323696` adds `wrapMode: WrapMode` and `textMargin: Margin` (`owlkettle/widgets.nim:2626-2627`) |
+
+**Two neighbouring claims survive and must not be swept away with the rest.** Both were
+re-checked at `ac61ecf`:
+
+* *"`updateChild` lives in `owlkettle/widgetutils`, which `owlkettle.nim` imports but does not
+  re-export"* — still true. `owlkettle.nim`'s export list is `widgetdef`, `widgets`, `guidsl`,
+  `Align`, `Stylesheet` and four stylesheet procs. The same holds for `mainloop`.
+* *"owlkettle's `TextView` declares no events at all"* — still true. `DraftView` stays.
+
+`AutoScroll` is the interesting case rather than a straight deletion: `edgeReached`/`edgeOvershot`
+report the reader's position as *events*, which is what the module-level `scrollPinned` and
+`scrollSticky` globals exist to track through a bare C signal handler with nowhere to put state.
+Whether the two signals give the same behaviour as the `changed`/`value-changed` pair the current
+code binds is a question for a measurement, not for a comment — the current implementation
+documents a real defect it was written to fix (following that fell one token behind every frame).
+
+### V-03 — `nimble suites` cannot pass on a clean checkout, and blames the wrong thing · severity: medium
+
+`SelfTests` (`jenova_core.nimble:81`) includes `"serve"`, and `serve-selftest` phase 3 asserts:
+
+```nim
+elif not health.contains("\"status\":\"ok\"") or not index.contains("<"):
+  echo "  FAIL: health or static did not answer while the debug class was saturated"
+```
+— `src/jenova/serverselftest.nim:208-209`
+
+`index` is the body of `GET /`, which `serveStatic` answers out of `public/`. **Nothing in
+`coreTask`, `guiTask` or `suites` builds `public/`** — only the separate `web` task does. On a
+tree without it, `/` is `404 text/plain`, contains no `<`, and the run fails:
+
+```
+  phase 3  debug class saturated: 3 holds of 800 ms against 1 debug threads
+           /health answered in    0.9 ms
+           /        answered in    0.5 ms
+
+  FAIL: health or static did not answer while the debug class was saturated
+```
+
+Both requests answered, and fast. The message names a saturation failure that did not happen.
+This is the class report 01 spent a session removing from the user-facing documentation, in the
+one place a developer meets it first. Either `suites` depends on `web`, or the assertion states
+the precondition it actually has and skips honestly — under A-2's rule, "skip" needs the same
+justification `test_nvimctl.sh` was given.
+
+### V-04 — the pkg-config calls have no failure path · severity: low
+
+`src/jenova/dbus.nim:13-14` (`gorge`), `src/jenova/sourceview.nim:14-15` and
+`src/jenova/vte.nim:10-11` (`staticExec`) splice pkg-config's **stdout** straight into `passC`
+and `passL`. When the package is absent, its prose becomes linker arguments. Reproduced with
+`dbus-1` missing:
+
+```
+gcc: error: the: linker input file not found: No such file or directory
+gcc: error: pkg-config: linker input file not found: No such file or directory
+gcc: error: Package: linker input file not found: No such file or directory
+gcc: error: dbus-1: linker input file not found: No such file or directory
+/bin/sh: 4: Syntax error: EOF in backquote substitution
+```
+
+Sixty lines of that, naming no missing dependency. `gorgeEx` returns the exit code; a failure
+should name the package and the port that provides it, which `docs/install.md` already lists.
+
+---
+
+## 3. Four more findings, produced by executing the first four
+
+Each was reproduced before it was acted on.
+
+### V-05 — the build gate did not gate the build
+
+`tests/gui_build.sh` is 612 lines, is tracked, and its own header records two defects it caught
+that `nim check` could not see. But `grep -n "gui_build\|gui_check" jenova_core.nimble` returned
+nothing and the repository has no CI workflow, so `suites` ran the self-tests and six shell
+suites and never the only harness that has ever compiled, linked, mapped and driven the window.
+
+### V-06 — the harness shared one nimcache with every other build on the machine
+
+A gate run produced ~20 `undefined reference` errors for generic instantiations in
+`markdown.nim`, ending in `final link failed: bad value`. **There was no code defect**: the same
+tree with an explicit fresh `--nimcache:` linked and exited 0. Nim's default cache is keyed on
+project *name*, so `/root/.cache/nim/jenova_core_r/` is shared by every build of every copy of
+this project from any directory, while `gui_build.sh` copies the tree to a fresh `mktemp -d` each
+run. A developer reaches the same state by changing a generic across modules and rebuilding. Two
+agents hit it independently; for one it read as a sibling's defect.
+
+### V-07 — the harness printed an unhandled Nim exception on a passing run
+
+```
+syncio.nim(161)          raiseEIO
+Error: unhandled exception: errno: 32 `Broken pipe` [IOError]
+```
+
+from `tests/gui_build.sh:61`, `case $("$NIM" --version | head -1) in` — `head -1` closes the
+pipe, `nim` takes SIGPIPE, and Nim's `syncio` raises rather than dying quietly. Non-deterministic:
+one run in three. A gate that prints `Error: unhandled exception` while passing trains its reader
+to skim the one line that will eventually matter.
+
+### V-08 — the gate never had a port of its own, and the script contradicted itself
+
+`tests/gui_build.sh:552` launched the window with a bare `PORT=18787`. `etc/jenova.conf:39` is
+`PORT="${JENOVA_PORT:-8080}"`, so the conf overwrites a bare `PORT` whenever `JENOVA_PORT` is
+unset: the gate's window bound **8080**, the real one, under a comment claiming it got "a port of
+its own, so the run cannot collide". The same script does it correctly thirty lines earlier at
+`:168`. Measured both ways through `jenova-core config`. It cost one agent a red gate that read
+as a code defect.
+
+---
+
+## 4. Tracker
+
+| ID | Finding | Class | Size | State |
+|---|---|---|---|---|
+| V-01 | `-d:gtk48` dead at the pinned revision; its justifying comment describes `v3.0.0` | stale | XS | **done** |
+| V-02 | Four owlkettle-capability claims false at `ac61ecf`; each justifies code that can now go | stale + dead code | S–M | **done**, with one deliberate exception below |
+| V-03 | `nimble suites` fails on a clean checkout, reporting the wrong cause | false report | S | **done** — `suites` now depends on `web` |
+| V-04 | pkg-config `gorge`/`staticExec` with no failure path | build robustness | XS | **done** — new `src/jenova/pkgconfig.nim` |
+| V-05 | The build gate did not gate the build | process | S | **done** — tiered, and wired into `suites` |
+| V-06 | A shared nimcache makes a clean tree fail to link | build robustness | XS | **done** |
+| V-07 | Unhandled Nim exception printed on a passing gate run | noise | XS | **done** |
+| V-08 | The gate bound the real port; the script contradicted itself | isolation | XS | **done** |
+| V-09 | Report 03's E-05 verification cannot be reproduced | audit trail | S | **done** |
+| V-10 | Every attached image leaves a zero-byte file in the workspace mirror | data | S | **done** |
+| V-11 | The gate is not concurrency-safe | isolation | XS | **done** |
+| V-12 | `tests/gui_check.sh:31` still passes `-d:gtk48` | stale | XS | **done**, and the claim is now self-enforcing |
+| V-13 | Four owlkettle gaps found by using it — upstream candidates, not defects here | upstream | — | recorded |
+| V-14 | `--check` never builds anything behind an `if …Open` | coverage | S | **done** |
+| V-15 | A renamed file asset can restore the wrong copy and report success | **data** | M | open |
+| V-16 | A settings help string containing markup blanks its own row | display | XS | **done** — the string, and then the general form: `jenova_core.nim:5174-5182` walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` |
+| V-17 | The reports' line citations drift on every commit | audit trail | S | **open** — open findings re-derived; the class needs symbol-bearing citations |
+
+### V-02's exception: `AutoScroll` stays, and not out of caution
+
+The replacement is **not expressible** at `ac61ecf`. owlkettle's `ScrolledWindow`
+(`widgets.nim:1140-1181`) exposes `child`, the two natural-size flags and
+`edgeReached`/`edgeOvershot` — and `bindings/gtk.nim:815-821` binds `gtk_adjustment_set_*` with
+**no getters at all**, so nothing owlkettle offers can read the view's position. The edge events
+fire on *arriving* at an edge and never on *leaving* one, which is exactly the transition
+`scrollSticky` exists to observe. The comment was corrected to state what owlkettle does expose
+and why it is still not enough. This is the work order's intended outcome: a claim re-checked at
+the pinned revision, and the mechanism kept because the *new* reading also says keep it.
+
+---
+
+## 5. The open findings, stated
+
+| ID | Finding |
+|---|---|
+| **V-17** | **The reports' line citations drift on every commit and nothing notices** — 209 of them point into files changed since the last pass. The open findings are re-derived; the class needs symbol-bearing citations. See below. |
+| **V-15** | **A renamed file asset can restore the wrong copy, and report success.** Renaming trashes the pre-rename file under a sidecar carrying the **row id** (`api.nim:280` → `fssync.trashFileAsset`, `fssync.nim:572`); deleting later writes a *second* sidecar with the same id (`api.nim:569`). `restoreMirror` (`fssync.nim:820-863`) returns on the **first** sidecar whose `type` and `id` match, in `walkDirRec` order — which is directory order. So rename → delete → restore restores the **pre-rename** copy to the **pre-rename path** roughly half the time, answers `rmRestored`, and leaves the file the user actually deleted sitting in the trash. Reproduced directly. **The same shape applies to notes**, which take the identical rename-trash path in `mirrorUpsert` (`api.nim:202`). The fix is a decision about restore semantics rather than a patch — probably "prefer the newest sidecar", since the trash name carries an epoch prefix — so it is reported, not taken. |
+
+**This section used to list seven findings under the heading "four", five of them already
+recorded as done in the tracker above.** It is now the tracker's open rows and nothing else.
+Each of the five was re-checked against the tree rather than taken on the tracker's word:
+
+* **V-09** — closed. `serverselftest.nim:16` imports `upstream`, and `:191-300` is the fake
+  upstream that drives `upstream.forward` end to end. The finding's evidence — that
+  `serverselftest.nim` "mentions neither `upstream` nor `forward`" — was true when written and
+  is false now.
+* **V-10** — closed. `fssync.syncFileAsset` (`fssync.nim:504-521`) returns `true` before
+  touching the disk when the decoded payload is empty, so an image row writes no file and
+  `git add`s nothing. `restoreMirror`'s tail reads the same rule back: no bytes means no
+  physical form, not a lost file.
+* **V-11** — closed. `tests/gui_build.sh:237` derives `SEED_PORT` from `$$`, and `:800` derives
+  the display number the same way.
+* **V-12** — closed. No `-d:gtk48` is passed anywhere. The four remaining mentions are prose
+  recording that it is gone, and `jenova_core.nimble:31` states the property both scripts check.
+* **V-16** — closed **in its general form**, not only as one string: `jenova_core.nim:5174-5182`
+  walks `settings.Defs` and fails the build on a raw `<`, `>` or `&` in any `label` or `help`.
+  That is the assertion this row asked for.
+* **V-14** — closed. `run_panel_variant` in `tests/gui_build.sh` compiles the panel-open variant
+  and `--check`s it, and refuses to pass if any guard it patches has been renamed.
+
+**V-13**, for completeness, is not a defect in this tree: at `ac61ecf` owlkettle binds no
+`gtk_file_chooser_set_current_name` (so a Save dialog cannot be pre-filled), no `GtkSorter` on
+`ColumnView` (so header-click sorting does not exist to wire), and no `ScrolledWindow` adjustment
+getters; and `TextView` still declares no events, which is why `DraftView` remains custom. Four
+upstream contribution candidates, found by using the library rather than reading it.
+
+### V-17 — the reports' line citations drift on every commit, and nothing notices · severity: low
+
+**Measured, session 11:** 209 `file.nim:N` citations across the eight reports point into files
+changed since the last correction pass, and most no longer land on what they name. This is the
+third time it has happened: commit `70ef1003` was *"docs: correct drifted line numbers"*, the
+session-10 cleanup corrected them again, and ~2,000 lines of source changed after that.
+
+**The open findings were re-derived and fixed** — V-15's five, report 03's deferred table, report
+06 §3 and report 05's Phase 2/4/5 states, report 02's P-A6 and P-A8, and V-16's assertion — because
+those are the citations a reader actually follows. The rest sit in closed findings and historical
+narrative, where a wrong line costs a reader a `grep` rather than a wrong conclusion.
+
+**The class cannot be fixed by correcting it again.** A bare `file:N` carries nothing a checker can
+verify: the number is only wrong relative to an intent the citation does not state. Two options,
+neither taken here because both are the user's call:
+
+* **Cite the symbol beside the line** — `fssync.nim:820 (restoreMirror)` — which makes the
+  citation self-describing and lets a script assert that the named symbol is at or near that line.
+  A gate for it is about twenty lines of shell, and it would fail the same way `gui_check.sh`
+  does: loudly, at the moment the claim stops being true.
+* **Drop line numbers from prose entirely** and cite symbols alone, keeping lines only where a
+  report quotes source verbatim.
+
+Recorded rather than done because it touches all eight reports and the choice between the two
+shapes is a preference about how these documents read.
+
+### Cross-references
+
+* **Report 05, Phase 0** — closed by session 7's pin and `-d:adwminor=4`. V-01 is the residue:
+  the third switch in the same string was not re-examined when the first two were.
+* **Report 05, Phase 1** — the Linux half is now stronger than the addendum records:
+  `tests/gui_build.sh` passes complete, mapped window and all, on stock packages. The
+  FreeBSD-only list in that addendum is unchanged and is what still keeps the phase open.
+* **Report 06 §4** — the widget census. V-02 is the same argument applied to the *bindings*
+  rather than the widgets: three hand-rolled `importc` and two custom renderables are held in
+  place by comments describing the untagged revision.

@@ -1,33 +1,17 @@
-## Script function and purpose: the system-tray icon, as a StatusNotifierItem
-## published on D-Bus (N-10, ruling D-AJ). Replaces the `libappindicator` tray in
-## `jenova-ui/src/main.c` and the menu in `lib/ui.lua`.
+## Script function and purpose: the tray icon, as a StatusNotifierItem published
+## on D-Bus. There is no widget call for this — GTK4 dropped the old tray library
+## and owlkettle has none, so a modern desktop takes an icon as a D-Bus object
+## registered with a watcher, with the menu as a second object.
 ##
-## ## Why this is protocol code and not a widget
+## The connection is dispatched from a GTK main-loop timeout rather than a
+## thread, with a zero timeout so it never blocks. That means menu callbacks run
+## on the same thread as the widgets and there is no locking question at all —
+## which matters, because a tray owning a separate execution context is how a
+## tray and a supervisor come to disagree about what is running.
 ##
-## GTK3's tray came from `libappindicator`, which GTK4 dropped, and owlkettle
-## provides no tray at all. Modern desktops take a tray icon over D-Bus instead:
-## the application publishes an object implementing `org.kde.StatusNotifierItem`
-## and registers it with `org.kde.StatusNotifierWatcher`; the menu is a second
-## object implementing `com.canonical.dbusmenu`. There is no widget call. This
-## file is that protocol, and D-AJ chose it with that cost stated.
-##
-## ## How it shares a thread with the GUI
-##
-## The connection is dispatched from a **GTK main-loop timeout**, not a thread:
-## `pump()` calls `dbus_connection_read_write_dispatch` with a zero timeout, so it
-## never blocks the UI and menu callbacks run on the same thread as the widgets.
-## That removes the entire question of locking between the tray and the window —
-## which is worth having, because the tray owning a separate execution context is
-## exactly how `jenova-ca` and the GTK3 tray came to disagree about what was
-## running (defect B-13).
-##
-## ## Scope, stated plainly
-##
-## Implemented: the item properties a watcher reads, `GetLayout`, `Event` and
-## `AboutToShow` for a flat menu, and `NewStatus`/`NewIcon` signals. Not
-## implemented: submenus, icon pixmaps (an icon *name* is used, which is what the
-## GTK3 tray did), and `GetGroupProperties`. A flat menu is the whole of what
-## `ui.get_menu` ever offered, so this is the surface, not a subset of it.
+## Scope: the item properties a watcher reads, a flat menu, and the signals that
+## make a panel re-read. No submenus and no icon pixmaps — an icon name is used.
+## A flat menu is the whole surface here rather than a subset of a larger one.
 
 import std/os
 import ./dbus
@@ -69,20 +53,18 @@ const
   PropIface = "org.freedesktop.DBus.Properties"
   WatcherName = "org.kde.StatusNotifierWatcher"
   WatcherPath = "/StatusNotifierWatcher"
-  ## The `com.canonical.dbusmenu` protocol revision this object implements.
+  ## The dbusmenu protocol revision this object implements. A panel reads it to
+  ## decide whether the object is a menu at all.
   DbusMenuVersion = 3'u32
 
-## Action purpose: a single process-wide tray. The D-Bus vtable hands callbacks a
-## raw `userData` pointer, and threading a `ref` through it means pinning it
-## against the GC for the process lifetime. There is exactly one tray, so a
-## module-level variable is honest about that rather than pretending at a
-## generality the protocol registration does not have — the bus name itself is
-## unique per process.
+## Action purpose: one tray per process, in module state. The vtable hands
+## callbacks a raw pointer, and threading a reference through it means pinning it
+## against the collector for the process lifetime — and the bus name is unique
+## per process anyway, so there is no generality to preserve.
 var theTray: Tray
 
-## Function purpose: answer `org.freedesktop.DBus.Properties.Get` for the item's
-## properties. A watcher reads these to decide whether to show the icon at all,
-## so an unanswered property is an invisible tray rather than an error.
+## Function purpose: a watcher reads these to decide whether to show the icon at
+## all, so an unanswered property is an invisible tray rather than an error.
 proc replyItemProperty(msg: ptr DBusMessage, prop: string): ptr DBusMessage =
   result = dbus_message_new_method_return(msg)
   var iter: DBusMessageIter
@@ -96,7 +78,8 @@ proc replyItemProperty(msg: ptr DBusMessage, prop: string): ptr DBusMessage =
   of "AttentionIconName": appendVariantString(addr iter, "")
   of "OverlayIconName": appendVariantString(addr iter, "")
   of "ToolTip":
-    # Signature (sa(iiay)ss): icon name, pixmap array, title, description.
+    # Icon name, pixmap array, title, description — the pixmap array is empty
+    # because an icon name is used instead.
     var v, st, pix: DBusMessageIter
     discard dbus_message_iter_open_container(addr iter, TypeVariant,
                                              "(sa(iiay)ss)", addr v)
@@ -109,8 +92,8 @@ proc replyItemProperty(msg: ptr DBusMessage, prop: string): ptr DBusMessage =
     discard dbus_message_iter_close_container(addr v, addr st)
     discard dbus_message_iter_close_container(addr iter, addr v)
   of "ItemIsMenu":
-    # true: a left click should open the menu rather than emit Activate. The
-    # GTK3 tray had no primary action either, so the menu is the whole interface.
+    # A left click opens the menu rather than emitting an activate: there is no
+    # primary action here, so the menu is the whole interface.
     appendVariantBool(addr iter, true)
   of "Menu":
     var sub: DBusMessageIter
@@ -121,9 +104,8 @@ proc replyItemProperty(msg: ptr DBusMessage, prop: string): ptr DBusMessage =
   else:
     appendVariantString(addr iter, "")
 
-## Function purpose: append one `a{sv}` property dictionary for a menu item.
-## Separators and actions differ only in their properties, which is how dbusmenu
-## expresses them — there is no separate item type on the wire.
+## Function purpose: separators and actions differ only in their properties,
+## because dbusmenu has no separate item type on the wire.
 proc appendItemProps(iter: ptr DBusMessageIter, item: TrayItem) =
   var props, entry, val: DBusMessageIter
   discard dbus_message_iter_open_container(iter, TypeArray, "{sv}", addr props)
@@ -150,14 +132,11 @@ proc appendItemProps(iter: ptr DBusMessageIter, item: TrayItem) =
   discard val
   discard dbus_message_iter_close_container(iter, addr props)
 
-## Function purpose: build the `(ia{sv}av)` layout tree dbusmenu asks for.
-##
-## The shape is the fiddly part and is worth naming: a menu item is a struct of
-## `id`, a property dictionary, and an array of *variants* each wrapping a child
-## item. The root is item 0 with `children-display: submenu`; every real item is
-## a child with an empty child array. Getting the nesting wrong yields a menu
-## that opens empty rather than an error, which is why this is one function
-## rather than inlined at the call site.
+## Function purpose: the nesting is the fiddly part — an item is a struct of id,
+## a property dictionary and an array of variants each wrapping a child, with the
+## root carrying the submenu marker and every real item an empty child array.
+## Getting it wrong opens an empty menu rather than raising, which is why this is
+## one function and not inlined at the call site.
 proc appendLayout(iter: ptr DBusMessageIter) =
   var root, rootProps, entry, kids: DBusMessageIter
   discard dbus_message_iter_open_container(iter, TypeStruct, nil, addr root)
@@ -186,13 +165,15 @@ proc appendLayout(iter: ptr DBusMessageIter) =
 
   discard dbus_message_iter_close_container(iter, addr root)
 
+## Function purpose: sends and flushes together, because the dispatch loop only
+## runs on the next timer tick and an unflushed signal would arrive late.
 proc send(conn: ptr DBusConnection, msg: ptr DBusMessage) =
   discard dbus_connection_send(conn, msg, nil)
   dbus_connection_flush(conn)
   dbus_message_unref(msg)
 
-## Function purpose: the message handler for `/StatusNotifierItem`. Handles the
-## property reads a watcher performs and the click methods it forwards.
+## Function purpose: the property reads a watcher performs and the click methods
+## it forwards, in one place so an unhandled member is visibly unhandled.
 proc itemHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
                  userData: pointer): DBusHandlerResult {.cdecl.} =
   if dbus_message_is_method_call(msg, PropIface, "Get") != 0:
@@ -205,10 +186,9 @@ proc itemHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
     send(conn, replyItemProperty(msg, prop))
     return DBUS_HANDLER_RESULT_HANDLED
 
-  # Action purpose: some watchers call GetAll instead of Get. Answering it with
-  # an empty dictionary and letting them fall back to Get is not enough — KDE's
-  # watcher uses GetAll exclusively, so an unanswered GetAll is an icon that
-  # never appears on one whole desktop environment.
+  # Action purpose: some watchers call the bulk property read exclusively rather
+  # than falling back to the single one, so leaving it unanswered is an icon that
+  # never appears on a whole desktop environment.
   if dbus_message_is_method_call(msg, PropIface, "GetAll") != 0:
     let reply = dbus_message_new_method_return(msg)
     var iter, dict, entry: DBusMessageIter
@@ -226,7 +206,7 @@ proc itemHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
       of "ItemIsMenu": appendVariantBool(addr entry, true)
       else: appendVariantString(addr entry, "")
       discard dbus_message_iter_close_container(addr dict, addr entry)
-    # Menu is an object path, so it cannot go through the string helper above.
+    # An object path is its own type, so it cannot go through the string helper.
     discard dbus_message_iter_open_container(addr dict, TypeDictEntry, nil, addr entry)
     appendString(addr entry, "Menu")
     var v: DBusMessageIter
@@ -246,7 +226,8 @@ proc itemHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
 
   DBUS_HANDLER_RESULT_NOT_YET_HANDLED
 
-## Function purpose: the message handler for `/MenuBar` — the dbusmenu side.
+## Function purpose: the dbusmenu side of the same protocol, kept separate
+## because a panel addresses it as a distinct object.
 proc menuHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
                  userData: pointer): DBusHandlerResult {.cdecl.} =
   if dbus_message_is_method_call(msg, MenuIface, "GetLayout") != 0:
@@ -263,8 +244,8 @@ proc menuHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
     let reply = dbus_message_new_method_return(msg)
     var iter: DBusMessageIter
     dbus_message_iter_init_append(reply, addr iter)
-    # false: the layout has not changed since the last GetLayout. Returning true
-    # unconditionally makes some panels re-fetch the whole menu on every open.
+    # The layout has not changed since it was last fetched. Answering otherwise
+    # makes some panels re-fetch the whole menu on every open.
     var needUpdate = cint(0)
     discard dbus_message_iter_append_basic(addr iter, TypeBoolean, addr needUpdate)
     send(conn, reply)
@@ -280,19 +261,17 @@ proc menuHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
       if eventId == "clicked" and not theTray.onAction.isNil:
         for item in theTray.items:
           if item.id == id and item.kind == tiAction:
-            # Runs on the GTK main loop, because pump() is driven from a GTK
+            # On the GTK main loop, because the pump is driven from a GTK
             # timeout — so this may touch widget state directly.
             theTray.onAction(item.action)
             break
     send(conn, dbus_message_new_method_return(msg))
     return DBUS_HANDLER_RESULT_HANDLED
 
-  # Action purpose: the two property methods have different return signatures and
-  # were answered identically — `Get` returns a single `v`, `GetAll` returns
-  # `a{sv}`. Replying to a `Get` with a dictionary is a signature mismatch the
-  # caller discards, and both replies were empty besides, so the panel never
-  # learned the menu's `Version` and could treat the object as not a dbusmenu at
-  # all. `Version` is the one property `com.canonical.dbusmenu` defines.
+  # Action purpose: the two property methods have different return signatures —
+  # one a single variant, the other a dictionary — so answering both the same way
+  # is a mismatch the caller discards. The panel then never learns the menu's
+  # version and may treat the object as not a menu at all.
   if dbus_message_is_method_call(msg, PropIface, "Get") != 0:
     let reply = dbus_message_new_method_return(msg)
     var iter: DBusMessageIter
@@ -319,13 +298,10 @@ proc menuHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
 var itemVTable = DBusObjectPathVTable(message_function: cast[pointer](itemHandler))
 var menuVTable = DBusObjectPathVTable(message_function: cast[pointer](menuHandler))
 
-## Function purpose: publish the tray item and register it with the watcher.
-##
-## Returns false rather than raising when no watcher is running. A desktop
-## without a StatusNotifierWatcher is a supported environment — the window is the
-## application and the tray is an addition — so a missing watcher must degrade to
-## "no tray icon", never to a failed startup. `main.c` treated the equivalent
-## case the same way.
+## Function purpose: answers false rather than raising when no watcher is
+## running. A desktop without one is a supported environment — the window is the
+## application and the tray is an addition — so this degrades to no icon and
+## never to a failed start-up.
 proc start*(title, iconName, tooltip: string, items: seq[TrayItem],
             onAction: TrayCallback): bool =
   var err: DBusError
@@ -341,7 +317,8 @@ proc start*(title, iconName, tooltip: string, items: seq[TrayItem],
                  iconName: iconName, tooltip: tooltip, onAction: onAction,
                  revision: 1)
 
-  # The bus name is fixed by the spec: StatusNotifierItem-<pid>-<instance>.
+  # The bus name's shape is fixed by the specification, and carrying the pid is
+  # what makes it unique per process.
   let busName = "org.kde.StatusNotifierItem-" & $getCurrentProcessId() & "-1"
   discard dbus_bus_request_name(conn, busName.cstring, NameFlagReplaceExisting, addr err)
   if dbus_error_is_set(addr err) != 0:
@@ -363,7 +340,7 @@ proc start*(title, iconName, tooltip: string, items: seq[TrayItem],
   let reply = dbus_connection_send_with_reply_and_block(conn, reg, 2000, addr err)
   dbus_message_unref(reg)
   if dbus_error_is_set(addr err) != 0:
-    # No watcher on this desktop. Not an error: no tray, window only.
+    # No watcher on this desktop. Not an error: window only, no tray.
     dbus_error_free(addr err)
     return false
   if not reply.isNil:
@@ -372,17 +349,16 @@ proc start*(title, iconName, tooltip: string, items: seq[TrayItem],
   theTray.registered = true
   true
 
-## Function purpose: service the bus without blocking. Called from a GTK timeout,
-## so a zero timeout is required — anything else would stall the UI for that long
-## on every tick.
+## Function purpose: called from a GTK timeout, so the dispatch timeout must be
+## zero — anything else stalls the interface for that long on every tick.
 proc pump*() =
   if theTray.isNil or theTray.conn.isNil:
     return
   discard dbus_connection_read_write_dispatch(theTray.conn, 0)
 
-## Function purpose: reflect a backend state change on the icon. Emitting
-## `NewStatus` is what makes a panel re-read the property; setting it silently
-## leaves the icon showing whatever it first read.
+## Function purpose: the signal is what makes a panel re-read the property.
+## Setting the status without emitting leaves the icon showing whatever it read
+## when it first appeared.
 proc setStatus*(s: TrayStatus) =
   if theTray.isNil or not theTray.registered or theTray.status == s:
     return
@@ -394,8 +370,8 @@ proc setStatus*(s: TrayStatus) =
   appendString(addr iter, $s)
   send(theTray.conn, sig)
 
-## Function purpose: replace the menu — used when a label changes, which for this
-## menu means the LAN toggle flipping between "Enable" and "Disable".
+## Function purpose: the whole menu is replaced rather than one item patched,
+## because dbusmenu revisions the layout as a unit.
 proc setItems*(items: seq[TrayItem]) =
   if theTray.isNil: return
   theTray.items = items
@@ -410,5 +386,3 @@ proc setItems*(items: seq[TrayItem]) =
   appendInt32(addr iter, 0)
   send(theTray.conn, sig)
 
-proc isRegistered*(): bool =
-  not theTray.isNil and theTray.registered

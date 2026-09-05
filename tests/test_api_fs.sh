@@ -100,6 +100,9 @@ PID="22222222-2222-2222-2222-222222222222"
 FID="33333333-3333-3333-3333-333333333333"
 NID="44444444-4444-4444-4444-444444444444"
 AID="55555555-5555-5555-5555-555555555555"
+# A second asset, used only for the payload-less rename below, so renaming it
+# cannot disturb the container-rename assertions that name `a.txt_$AID`.
+AID2="5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a"
 
 # --- creates mirror onto disk ----------------------------------------------
 req POST /api/db/workspaces "{\"id\":\"$WID\",\"name\":\"Alpha\"}" >/dev/null
@@ -120,6 +123,24 @@ req POST /api/db/fileAssets \
     "{\"id\":\"$AID\",\"folderId\":\"$FID\",\"name\":\"a.txt\",\"content\":\"data:text/plain;base64,aGVsbG8=\"}" >/dev/null
 assert_file    "asset create writes its file"          "$WS/Alpha/Beta/Gamma/a.txt_$AID"
 assert_content "asset data: URI is base64-decoded"     "$WS/Alpha/Beta/Gamma/a.txt_$AID" "hello"
+
+# --- a rename carrying no payload must move the file, not strand it ---------
+# `api.writeRow` stores every column, so a client that posts a rename without
+# repeating `content` blanks that column — and `fssync.syncFileAsset` then
+# writes no file, correctly, because there are no bytes. The row's new location
+# was stored regardless, so the mirror has to follow it or the row names a path
+# with no file while the real bytes sit under the old name. This is the shape
+# the window's `loadFileAsset` avoids by reading the content back; every other
+# client reaches it.
+req POST /api/db/fileAssets \
+    "{\"id\":\"$AID2\",\"folderId\":\"$FID\",\"name\":\"moved.txt\",\"content\":\"data:text/plain;base64,a2VlcCBtZQ==\"}" >/dev/null
+assert_content "the payload-less rename fixture is written" "$WS/Alpha/Beta/Gamma/moved.txt_$AID2" "keep me"
+
+req POST /api/db/fileAssets \
+    "{\"id\":\"$AID2\",\"folderId\":\"$FID\",\"name\":\"renamed.txt\"}" >/dev/null
+assert_file    "a rename with no payload moves the file"    "$WS/Alpha/Beta/Gamma/renamed.txt_$AID2"
+assert_content "...carrying its bytes"                      "$WS/Alpha/Beta/Gamma/renamed.txt_$AID2" "keep me"
+assert_absent  "...and leaves nothing at the old path"      "$WS/Alpha/Beta/Gamma/moved.txt_$AID2"
 
 # --- a rename moves the file and trashes the old path -----------------------
 # proxy.lua:903 — on a title/parent change the new path is written and the OLD

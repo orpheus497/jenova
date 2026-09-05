@@ -40,7 +40,19 @@ fail() { echo "  FAIL $1"; shift; for l in "$@"; do echo "       $l"; done
 
 echo "test_lifecycle: scratch $JCA_HOME"
 
-ARGS=$("$CORE" backends args 2>/dev/null)
+# Action purpose: **the baseline is taken with the profile overrides unset, in
+# a subshell, because these assertions are about the DEFAULTS.** The conf writes
+# every one of these as `${VAR:-<default>}`, so a value exported in the caller's
+# own shell reaches the child and becomes the answer — a developer with
+# `JENOVA_MLOCK=1` set turned the two default assertions below red without
+# having changed anything in the tree, and one with `JENOVA_LLAMA_PORT` set
+# turned the port assertions red the same way. The overriding assertions further
+# down set what they need explicitly and are unaffected either way.
+ARGS=$(
+    unset JENOVA_MLOCK JENOVA_MMAP JENOVA_FLASH_ATTN JENOVA_NGL_AGENT \
+          JENOVA_DRAFT JENOVA_LLAMA_PORT JENOVA_LLAMA_EMBED_PORT
+    "$CORE" backends args 2>/dev/null
+)
 LLAMA_LINE=$(printf '%s\n' "$ARGS" | head -1)
 EMBED_LINE=$(printf '%s\n' "$ARGS" | tail -1)
 
@@ -61,6 +73,24 @@ has "offline mode (no telemetry)" '\-\-offline'       "$LLAMA_LINE"
 has "continuous batching"         '\-cb'              "$LLAMA_LINE"
 has "flash attention auto"        '\-fa auto'         "$LLAMA_LINE"
 has "split mode layer"            '\-sm layer'        "$LLAMA_LINE"
+
+# The profiles set JENOVA_FLASH_ATTN, JENOVA_MLOCK and JENOVA_MMAP and nothing
+# read them: -fa auto ran even where a profile said off, and MLOCK=1 locked
+# nothing. These pin the defaults, so the wiring cannot silently regress to a
+# hardcoded flag again.
+hasnt "mlock is off unless a profile asks"  '\-\-mlock'   "$LLAMA_LINE"
+hasnt "mmap stays on unless a profile asks" '\-\-no-mmap' "$LLAMA_LINE"
+
+# In a subshell: `VAR=x FOO=$(cmd)` applies VAR to the assignment, not to the
+# command substitution, so the override would not reach the child.
+TUNED_LLAMA=$(
+    JENOVA_FLASH_ATTN=off JENOVA_MLOCK=1 JENOVA_MMAP=0
+    export JENOVA_FLASH_ATTN JENOVA_MLOCK JENOVA_MMAP
+    "$CORE" backends args 2>/dev/null | head -1
+)
+has "a profile can turn flash attention off" '\-fa off'   "$TUNED_LLAMA"
+has "a profile can request mlock"            '\-\-mlock'   "$TUNED_LLAMA"
+has "a profile can disable mmap"             '\-\-no-mmap' "$TUNED_LLAMA"
 
 # --- ports and binding -------------------------------------------------------
 # S-0 and D-E: backends are loopback-only regardless of --lan, so LAN mode

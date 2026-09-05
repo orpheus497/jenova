@@ -1,6 +1,15 @@
 # Installation
 
-Jenova targets **FreeBSD 15+** (amd64, aarch64). It is the only supported platform.
+Jenova targets **FreeBSD 15+** (amd64, aarch64). It is the only supported platform, and the
+only one the hardware profiles are measured on.
+
+It will nonetheless **build and run wherever Nim, GTK4 and libadwaita do.** Nothing in the source
+is FreeBSD-only, and the entry points no longer refuse to compile elsewhere — that guard was
+removed because it kept the code out of reach of every build machine that was not the target,
+which is the opposite of what a compiler is for. On another system, expect everything to work
+except hardware detection, which asks `sysctl` questions only FreeBSD answers and will report an
+unknown machine rather than guess. The package names below are FreeBSD's; the libraries
+themselves are the same everywhere.
 
 ## Install
 
@@ -12,14 +21,17 @@ cd jenova
 # 2. Install the dependencies below, then build
 nimble llama     # llama.cpp with Vulkan, into external/ext_bin/
 nimble web       # the Web UI, into public/
+nimble core      # bin/jenova-core, the headless server
 nimble gui       # bin/jenova, the desktop application
 
 # 3. Detect hardware and deploy the matching profile
-jenova-core hardware apply --best
+./bin/jenova-core hardware apply --best
 ```
 
-Both binaries land in `bin/`. Run `./bin/jenova` for the desktop application, or
-`./bin/jenova-core serve` for the headless server.
+Both binaries land in `bin/` and are not installed onto your `PATH`: run `./bin/jenova` for the
+desktop application, or `./bin/jenova-core serve` for the headless server. Every `jenova-core`
+invocation below is written bare for readability — run it as `./bin/jenova-core` from the
+repository root, or put `bin/` on your `PATH`.
 
 ### Build targets
 
@@ -92,7 +104,7 @@ These ship with FreeBSD and are never packages. Anything telling you to install 
 |---|---|
 | **GNU make** (`gmake`) and base `make(1)` | There is no Makefile. `nimble` is the build system |
 | **GNU coreutils** | Only ever wanted for `realpath(1)`, which FreeBSD has in base |
-| **bash** | Every script in this repository is POSIX `/bin/sh` |
+| **bash** | Every script the product builds or runs is POSIX `/bin/sh` — the eight suites under `tests/`, which now include the GUI harnesses `gui_check.sh` and `gui_build.sh`, and `jca_web/scripts/post-build.sh`. Two Web UI *developer* scripts are `#!/bin/bash` (`jca_web/scripts/dev.sh`, `install-git-hooks.sh`); neither is needed to build or run Jenova |
 
 The first and third are GPL, which this project's dependency policy excludes.
 
@@ -217,7 +229,5 @@ jenova-core hardware apply --best
 
 - Detection reads `kern.ostype`, not `uname -s`, which answers `Linux` under the Linuxulator.
   Before this was fixed, Jenova misdetected its own developer's FreeBSD machine as Fedora.
-- Both binaries carry a `when not defined(freebsd)` guard, so a build on another platform fails at
-  compile time rather than at run time.
 - `external/llama.cpp` is a git submodule. If you cloned without `--recurse-submodules`, run
   `git submodule update --init`.

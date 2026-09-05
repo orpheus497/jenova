@@ -1,15 +1,11 @@
-## Script function and purpose: Configuration loading for the Nim core, with one
-## precedence rule stated once. Replaces the tuning half of `etc/jenova.conf` +
-## `etc/jenova.local.conf` as consumed by `bin/jenova-ca`.
+## Script function and purpose: the two conf files, evaluated under one
+## precedence rule stated in exactly one place:
 ##
-## The precedence defect this fixes (TODOS.md B-12): `bin/jenova-ca:44-48` sources
-## the local conf *before* the profile conf, and the profile conf then reassigns
-## every tuning variable from `${JENOVA_X:-default}`. A user's local override is
-## therefore discarded — `etc/jenova.local.conf` sets THREADS=8 and the profile
-## resets it to 4. This module sources them the other way round.
+##     builtin default  <  profile conf  <  local conf  <  environment
 ##
-## Scope note: the shell path keeps that bug until `bin/jenova-ca` is deleted at
-## stage N-S6. B-12 is fixed *here*, not repo-wide, and is recorded as such.
+## Order matters and is easy to invert: both files read their defaults through
+## `${JENOVA_X:-...}`, so sourcing the local file first lets the profile
+## reassign every value the user set.
 
 import std/[os, osproc, strutils, tables]
 import ./paths
@@ -27,9 +23,9 @@ type
   ConfigError* = object of CatchableError
 
 const
-  ## Every key the launchers read out of the two conf files. Anything not listed
-  ## here is invisible to the Nim core by design — an unlisted key is a key
-  ## nothing consumes.
+  ## The contract with the conf files: a key not listed here is invisible to
+  ## this program, so adding a key to a profile without adding it here sets
+  ## nothing.
   Keys* = [
     # paths
     "JCA_HOME", "JENOVA_STATE", "LOG_DIR", "CACHE_DIR", "PID_FILE", "LLAMA_SERVER",
@@ -47,31 +43,19 @@ const
     "THREADS", "THREADS_BATCH", "BATCH_SIZE", "UBATCH_SIZE",
     # speculative decoding
     "JENOVA_DRAFT", "DRAFT_DEVICE",
+    # llama-server performance flags
+    "JENOVA_FLASH_ATTN", "JENOVA_MLOCK", "JENOVA_MMAP",
     # agent limits
     "MAX_TURNS", "MAX_ACTIONS", "TIMEOUT",
     # health
     "JENOVA_HEALTH_TIMEOUT",
   ]
 
-## Action purpose: evaluate the conf files with /bin/sh rather than parsing them.
-##
-## They ARE shell — `etc/jenova.conf` opens with a guard clause and branches on
-## JENOVA_LAYOUT to pick LLAMA_SERVER (`:17-21`). A hand-written parser for a
-## subset of shell would silently mishandle both and report a plausible wrong
-## answer. Handing them to the interpreter that owns the format is exact.
-##
-## The two files are sourced profile-then-local, which is the corrected order.
-## Exported JENOVA_* variables still win, because both files read their defaults
-## through `${JENOVA_X:-...}` — giving the full rule:
-##
-##     builtin default  <  profile conf  <  local conf  <  environment
-##
-## **This is not a shell-script dependency**, and the distinction is what D-AI's
-## total-conversion gate turns on. The conf files are *configs*, which the gate
-## exempts, and `/bin/sh` is FreeBSD base — the same standing `websearch.nim`
-## gives base `fetch(1)`. What the confs no longer do is source a **project**
-## shell script: they sourced `lib/jenova-model.sh` for model discovery until
-## 2026-08-31, and `./models.nim` does that now (see `load`).
+## Function purpose: the conf files are evaluated by `/bin/sh` rather than
+## parsed, because they are shell — they carry guard clauses and branch on the
+## layout to pick a binary. A parser for a subset of shell would mishandle that
+## silently and report a plausible wrong answer; the interpreter that owns the
+## format is exact. This depends on `/bin/sh` only, not on any project script.
 proc evalConfFiles(p: Paths, profileConf, localConf: string): Table[string, string] =
   var script = """
 set -e
@@ -87,8 +71,9 @@ for _k in """ & Keys.join(" ") & """; do
 done
 """
 
-  # `sh -c <script> <name> <args...>` sets $0 to <name> and $1.. to the rest, so
-  # the script's positional parameters line up without quoting paths into it.
+  # Action purpose: `sh -c <script> <name> <args...>` sets $0 to <name> and $1..
+  # to the rest, so paths reach the script as positional parameters and are
+  # never quoted into its text.
   let outp = execProcess(
     "/bin/sh",
     args = ["-c", script, "jenova-core", p.root, $p.layout, profileConf, localConf],
@@ -101,21 +86,17 @@ done
     result[fields[i]] = fields[i + 1]
     i += 2
 
-## Function purpose: load configuration under the corrected precedence. The
-## profile conf is required — without it there are no tuning values at all and
-## guessing them would be worse than failing.
-## Action purpose: `hardware.applyProfile` — the window's Hardware screen, or
-## `jenova-core hardware apply` — deploys the matched profile to
-## `$JCA_HOME/etc/jenova.conf`. The deployed copy is therefore the authoritative
-## one, and reading the repository copy first meant a host whose source tree was
-## read-only ran on a stale profile. (This was `detect-hardware.sh --apply`
-## until S-1 ported it to Nim; the precedence is unchanged.) The whole directory is
-## chosen at once — profile and local override together — so the two can never
-## come from different trees and disagree.
+## Function purpose: applying a hardware profile writes it to `$JCA_HOME/etc`,
+## which makes that copy authoritative over the one in the source tree — a host
+## with a read-only checkout would otherwise run on a stale profile. The whole
+## directory is chosen at once so the profile and its local override can never
+## come from different trees.
 proc configDir(p: Paths): string =
   let deployed = p.jcaHome / "etc"
   if fileExists(deployed / "jenova.conf"): deployed else: p.root / "etc"
 
+## Function purpose: the profile conf is required rather than defaulted. With
+## no tuning values at all, guessing them is worse than refusing to start.
 proc load*(p: Paths): Config =
   let dir = configDir(p)
   result.profileConf = dir / "jenova.conf"
@@ -135,29 +116,24 @@ proc load*(p: Paths): Config =
     raise newException(ConfigError,
       "config evaluation produced nothing; check " & result.profileConf)
 
-  # Action purpose: resolve the three model paths in Nim rather than through
-  # `lib/jenova-model.sh`, which `etc/jenova.conf:27` used to source. That script
-  # was the last shell script the running product relied on, and removing it is
-  # the total-conversion gate (D-AI); `models.discover` reproduces its logic.
-  #
-  # A value the conf actually set still wins. This is not defensiveness — it is
-  # the contract: `etc/jenova.local.conf` is the USER's machine file and may name
-  # a model explicitly, and silently overriding it with a directory scan would be
-  # the same class of defect as B-12's inverted hierarchy. Discovery fills only
-  # what the conf left empty, which is precisely what the shell did.
+  # Action purpose: discovery fills only what the conf left empty. The local
+  # conf is the user's machine file and may name a model explicitly; overriding
+  # that with a directory scan would invert the precedence rule this module
+  # exists to state.
   for key, kind in {"MODEL_PATH": mkAgent,
                     "MODEL_DRAFT": mkDraft,
                     "MODEL_EMBED": mkEmbed}.items:
     if result.values.getOrDefault(key, "").strip.len == 0:
       result.values[key] = discover(p.jcaHome, kind)
 
+## Function purpose: an absent key answers with `default` rather than raising,
+## because most keys are optional and only the accessors below care why.
 proc get*(c: Config, key: string, default = ""): string =
   c.values.getOrDefault(key, default)
 
-## Function purpose: integer accessor that fails loudly rather than substituting
-## a default for a value the operator actually set. A silently-defaulted thread
-## count or context size is the kind of wrong-but-plausible behaviour that is
-## hard to notice and hard to trace.
+## Function purpose: raises rather than substituting `default` for a value the
+## operator actually set. A silently-defaulted thread count or context size is
+## wrong-but-plausible, which is the hardest kind of fault to trace.
 proc getInt*(c: Config, key: string, default: int): int =
   let raw = c.get(key)
   if raw.len == 0:
@@ -168,6 +144,34 @@ proc getInt*(c: Config, key: string, default: int): int =
     raise newException(ConfigError,
       "config key " & key & " is not an integer: '" & raw & "'")
 
+## Function purpose: the switch-shaped keys, which are spelled by hand in a
+## shell file and therefore arrive in whatever spelling the operator reached
+## for. `1`/`0` is what the shipped profiles write and every other common word
+## for the same thing is accepted beside it.
+##
+## Action purpose: **falls back rather than raising, and that is the whole
+## difference from `getInt`.** These were read through `getInt`, so
+## `JENOVA_MLOCK=true` — a spelling nothing rejects and nothing documents
+## against — raised a `ConfigError` out of `llamaArgs`, through `start`, and out
+## of `startAll`: a typo in one optional performance flag refused to start the
+## inference backend at all. `getInt`'s reasoning does not carry here. A
+## silently-defaulted context size is wrong-but-plausible arithmetic; a
+## defaulted `--mlock` is a tuning flag not passed, which is the state the key
+## was absent in and is survivable by construction.
+proc getBool*(c: Config, key: string, default: bool): bool =
+  let raw = c.get(key).strip
+  if raw.len == 0: return default
+  # Any integer, not only 1: these were `getInt(...) != 0` and a profile writing
+  # `2` must keep meaning what it meant.
+  try: return parseInt(raw) != 0
+  except ValueError: discard
+  case raw.toLowerAscii
+  of "true", "yes", "on", "enabled": true
+  of "false", "no", "off", "disabled": false
+  else: default
+
+## Function purpose: the `config` subcommand's output. Iterates `Keys` rather
+## than the table so a key the conf never set still shows, as empty.
 proc render*(c: Config): string =
   var lines: seq[string]
   for k in Keys:

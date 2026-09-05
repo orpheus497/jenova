@@ -1,30 +1,22 @@
-## Script function and purpose: the animated particle field the Web UI draws
-## behind everything (`jca_web/src/lib/components/app/NeuralCanvas.svelte`),
-## ported to a GTK4 `DrawingArea` and cairo (G-2, ruling D-AP).
+## Script function and purpose: the animated particle field drawn behind the
+## window, on a GTK4 drawing area and cairo.
 ##
-## ## Faithful to the original, including its numbers
+## The constants below are the look rather than tuning, so they are named: the
+## particle count, the velocity range, the link distance and the alpha that fades
+## to zero at it. Changing one is a design decision.
 ##
-## 80 particles, velocity `(random - 0.5) * 0.5`, walls reflect, radius 1.5, and
-## a link drawn between any two closer than 150 px whose alpha fades linearly to
-## zero at that distance. Those constants are the look; changing them is a design
-## decision, not a tuning detail, so they are named rather than inlined.
+## The simulation is advanced by a timer and never by the draw callback.
+## Returning true from that callback makes owlkettle re-diff the whole
+## application at the display's refresh rate; stepping from a timer bounds it and
+## keeps rendering free of side effects — the draw reads state, the step mutates
+## it.
 ##
-## ## Two deliberate differences from the browser
-##
-## * **`mix-blend-mode: screen` is not reproduced.** owlkettle's cairo bindings
-##   expose no `cairo_set_operator`, and the effect of `screen` against a
-##   near-black ground is very close to plain alpha compositing anyway. The
-##   canvas is drawn at `Opacity` over `#131313` instead. If the difference ever
-##   matters, `cairo_set_operator` is a one-line `importc` — it is absent, not
-##   unavailable.
-## * **The simulation is advanced by a timer, not by the draw callback.**
-##   owlkettle redraws the whole application when a `DrawingArea` draw callback
-##   returns `true`, which would run the widget diff at the display's refresh
-##   rate for as long as the window is open. Stepping from a timer bounds it to
-##   `FrameMs` and keeps rendering free of side effects — `draw` reads state and
-##   paints, `step` mutates it.
+## Screen blending is not reproduced: the cairo bindings in use expose no
+## operator call, and against a near-black ground the difference from plain alpha
+## compositing is slight.
 
 import std/[math, random]
+import owlkettle
 import owlkettle/cairo
 import owlkettle/bindings/gtk
 import ./theme
@@ -47,9 +39,8 @@ var
   fieldW, fieldH: float
   rng = initRand(0x5eed)
 
-## Function purpose: (re)seed the field for a given widget size. Called on the
-## first draw and whenever the widget is resized, because particles seeded for an
-## 900x680 window would all sit in one corner of a maximised one.
+## Function purpose: re-seeded on resize as well as at first draw, because
+## particles placed for a small window all sit in one corner of a maximised one.
 proc reseed(w, h: float) =
   fieldW = w
   fieldH = h
@@ -61,8 +52,8 @@ proc reseed(w, h: float) =
       vx: (rng.rand(1.0) - 0.5) * MaxSpeed,
       vy: (rng.rand(1.0) - 0.5) * MaxSpeed)
 
-## Function purpose: advance one frame. Walls reflect rather than wrap, which is
-## what keeps the field visually even — a wrapping field drifts into stripes.
+## Function purpose: walls reflect rather than wrap, which is what keeps the
+## field visually even — a wrapping one drifts into stripes.
 proc step*() =
   for p in particles.mitems:
     p.x += p.vx
@@ -70,8 +61,9 @@ proc step*() =
     if p.x < 0 or p.x > fieldW: p.vx = -p.vx
     if p.y < 0 or p.y > fieldH: p.vy = -p.vy
 
-## Function purpose: paint the field. Returns false: this callback never asks
-## owlkettle to redraw, because the timer in `gui.nim` owns the frame rate.
+## Function purpose: answers false so this callback never asks for a redraw —
+## the timer owns the frame rate, and asking here would re-diff the whole
+## application at the display's refresh rate.
 proc draw*(ctx: CairoContext, size: (int, int)): bool =
   let
     w = float(size[0])
@@ -81,8 +73,8 @@ proc draw*(ctx: CairoContext, size: (int, int)): bool =
     reseed(w, h)
 
   ctx.lineWidth = 1.0
-  # Read from the palette in force, not from the dark constants: light particles
-  # are chosen to glow on near-black and are invisible on white (G-31's Theme).
+  # Read from the palette in force rather than from fixed constants: particles
+  # chosen to glow on near-black are invisible on white.
   let (pr, pg, pb) = theme.active().canvasParticle
   let (lr, lg, lb) = theme.active().canvasLink
 
@@ -93,10 +85,10 @@ proc draw*(ctx: CairoContext, size: (int, int)): bool =
     ctx.circle(p.x, p.y, ParticleRadius)
     ctx.fill()
 
-    # Action purpose: links are drawn from each particle only to those after it
-    # in the sequence. Drawing both directions would paint every link twice, and
-    # with alpha compositing a doubled line is visibly brighter than a single one
-    # — the bug would look like a tuning problem rather than a loop problem.
+    # Action purpose: each particle links only to those after it. Drawing both
+    # directions paints every link twice, and under alpha compositing a doubled
+    # line is visibly brighter — which reads as a tuning problem rather than a
+    # loop problem.
     for j in i + 1 ..< particles.len:
       let
         q = particles[j]
@@ -114,40 +106,40 @@ proc draw*(ctx: CairoContext, size: (int, int)): bool =
 # The widget, and why this module owns it
 # ---------------------------------------------------------------------------
 
-## The note at the top of this file explains why the simulation is stepped by a
-## timer rather than by the draw callback: returning `true` from the callback
-## makes owlkettle re-diff the whole application every frame. **The timer then
-## did exactly that anyway**, by calling `redraw()` — a full tree diff at
-## `FrameMs`, which re-binds every signal handler in the window thirty times a
-## second, the header bar's included. That is the churn behind the SIGBUS cores
-## of 2026-08-31: `updateState` disconnects a handler from a GtkWidget the cycle
-## collector has already taken.
+## Action purpose: the canvas is a bare drawing area repainted directly, not an
+## owlkettle widget re-diffed each frame. A full tree diff at the frame rate
+## re-binds every signal handler in the window thirty times a second, and
+## disconnecting a handler from a widget the cycle collector has already taken
+## is a crash rather than a slowdown.
 ##
-## A `DrawingArea` does not need any of that to animate. It needs
-## `gtk_widget_queue_draw` on itself, which is all owlkettle's own `update` hook
-## does. So the canvas is built here as a bare GtkDrawingArea and repainted
-## directly, and the widget-tree diff is left to the two timers that fire on
-## real state changes.
+## Animating needs only a queued draw on the area itself, so the widget-tree diff
+## is left to the timers that fire on real state changes.
 
 var area: GtkWidget
 
-## The `GtkDrawingAreaDrawFunc` GTK calls to paint. `ctx` arrives as an untyped
-## pointer and is the `cairo_t*` `CairoContext` wraps.
+## Function purpose: the callback GTK invokes to paint. The context arrives
+## untyped and is the cairo handle the wrapper type holds.
 proc drawFunc(widget: GtkWidget, ctx: pointer, width, height: cint,
               data: pointer) {.cdecl.} =
   discard draw(CairoContext(ctx), (int(width), int(height)))
 
-## Function purpose: build the canvas widget. Called once, from the renderable in
-## `gui.nim` — owlkettle's `renderable` macro emits an unexported type, so the
-## widget must be declared there while the FFI stays here, the same split
-## `sourceview.nim` uses.
-proc newArea*(): GtkWidget =
+## Function purpose: called once, from the renderable at the foot of this file.
+proc newArea(): GtkWidget =
   area = gtk_drawing_area_new()
   gtk_drawing_area_set_draw_func(area, drawFunc, nil, nil)
   area
 
-## Function purpose: repaint the canvas alone. This is what the frame clock
-## calls instead of `redraw()`. A no-op before the window is built.
+## Function purpose: what the frame clock calls instead of a full redraw. A
+## no-op before the window is built, so the timer needs no guard of its own.
 proc queueFrame*() =
   if not pointer(area).isNil:
     gtk_widget_queue_draw(area)
+
+## The particle field, as its own widget rather than owlkettle's `DrawingArea`,
+## for the reason above: a `DrawingArea` repaints only from its `update` hook,
+## so animating one costs a full widget-tree diff per frame. This is repainted
+## by `queueFrame`.
+renderable NeuralCanvas of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = newArea()
