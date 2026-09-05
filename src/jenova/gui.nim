@@ -4138,11 +4138,25 @@ proc openAsset(app: AppState, id, name: string) =
       const Mib = 1024 * 1024
       # Rounded up, for the reason the attach path rounds up: a file barely
       # over the ceiling reporting as exactly at it reads as a broken check.
+      # Action purpose: **not "Export it", which is the one action this state
+      # disables.** Both guards return before `classify` runs, so
+      # `app.assetView.data` is empty — and the Export button is
+      # `sensitive = app.assetView.data.len > 0` while `exportAsset` returns at
+      # once on the same test. The message named a greyed-out button as the way
+      # out. The file itself is on disk and the mirror already resolved it, so
+      # the path is what is said instead: true, and something the user can act
+      # on with any other program.
+      let onDisk = fssync.fileAssetMirrorPath(id, name, place.folderId,
+                                              place.projectId,
+                                              place.workspaceId)
       app.assetProblem = name & " is " &
         $((probe.size + Mib - 1) div Mib) & " MB, and the viewer reads at most " &
         $(assetview.MaxOpenBytes div Mib) &
         " MB — the read happens on the thread that draws the window. " &
-        "Export it to open it elsewhere."
+        (if onDisk.len > 0:
+           "It is on disk at " & onDisk & " — open it with another program."
+         else:
+           "It is in your workspace directory on disk; open it there.")
       return
     if probe.found and probe.size > 0:
       let mirror = fssync.readFileAssetMirror(id, name, place.folderId,
@@ -4168,11 +4182,17 @@ proc openAsset(app: AppState, id, name: string) =
     # because the encoding is this program's business and the file's size is
     # the user's. Rounded up, as above.
     let approx = content.len div 4 * 3
+    # Action purpose: a different state and therefore different advice. This
+    # guard is reached only where there is no mirror to read — the bytes are in
+    # the row and nowhere else — so there is no path to name and Export is
+    # disabled here for the same reason as above. What is left that is true: the
+    # row is reachable over the server's own database route.
     app.assetProblem = name & " is about " &
       $((approx + Mib - 1) div Mib) & " MB, and the viewer reads at most " &
       $(assetview.MaxOpenBytes div Mib) &
       " MB — the read happens on the thread that draws the window. " &
-      "Export it to open it elsewhere."
+      "It has no file on disk: its bytes are in the database, so " &
+      "/api/db/fileAssets?id=" & id & " on the server port is the way to fetch it."
     return
 
   app.assetView = assetview.classify(name, stored.kind, content)

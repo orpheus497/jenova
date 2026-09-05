@@ -3820,6 +3820,44 @@ proc main() =
                 fssync.rmFileMissing and
               not fileExists(outside / "stolen.md"))
 
+      # Action purpose: **one row can have more than one sidecar, and the newest
+      # has to win.** A rename trashes the pre-rename copy under the same row id,
+      # so an asset renamed once and then deleted leaves two — and returning on
+      # the first sidecar met made the answer directory order: sometimes the file
+      # as it last stood, sometimes the copy superseded before it, with nothing
+      # to say which had happened. The asset self-test records having had to
+      # route around exactly this rather than assert through it.
+      block theNewestSidecarWins:
+        let wsRoot = getEnv("JENOVA_WORKSPACES")
+        let trashDir = wsRoot / "ws" / ".trash"
+        createDir(trashDir)
+
+        # Two entries for one row id, distinguished only by their epoch prefix —
+        # which is what `moveToTrash` writes and what the choice has to read.
+        proc plantVersion(epoch, body, original: string) =
+          let entry = trashDir / epoch & "_two-sidecars.txt"
+          writeFile(entry, body)
+          writeFile(entry & ".metadata.json",
+                    $(%*{"type": "notes", "id": "two-sidecars",
+                         "original_path": original}))
+
+        let want = wsRoot / "ws" / "two-sidecars-latest.txt"
+        # Planted oldest first, so a reader that simply took the first match in
+        # walk order would be as likely to take the stale one — and on this
+        # filesystem, in practice, does.
+        plantVersion("1000000000", "superseded", wsRoot / "ws" / "two-sidecars-old.txt")
+        plantVersion("2000000000", "current", want)
+
+        check("with two sidecars for one row, the newest is the one restored",
+              fssync.restoreMirror("notes", "two-sidecars") == fssync.rmRestored)
+        check("...and it is the newest version's bytes that came back",
+              fileExists(want) and readFile(want) == "current", want)
+        # The older entry is left where it is rather than restored on top: only
+        # one move happens, and it is the one chosen.
+        check("...and the superseded copy stays in the trash",
+              fileExists(trashDir / "1000000000_two-sidecars.txt") and
+              not fileExists(wsRoot / "ws" / "two-sidecars-old.txt"))
+
       # Action purpose: a workspace delete moves the directory first and flags
       # the rows second, so when the second step throws the directory has to go
       # back. Projects and folders had that undo and a workspace did not — it
@@ -4141,6 +4179,30 @@ proc main() =
           # Idempotent: the second call has nothing left to reap and must still
           # answer false rather than raising or blocking.
           check("asking twice is stable", not lifecycle.isAlive(pid.int))
+
+      block handshakePipeIsCloexec:
+        # Action purpose: the `execve` handshake rests on the write end being
+        # close-on-exec — a successful exec closes it, the parent reads end of
+        # file, and that is the only thing distinguishing a started backend from
+        # one that exited 127. It was set with an `fcntl` *after* `pipe`, and
+        # this process forks from more than one thread, so a fork taken between
+        # the two carried both descriptors into a child that could hold the
+        # write end open for its lifetime — leaving the parent's read with no
+        # end of file to reach.
+        #
+        # A race cannot be asserted. What can be, and what the fix rests on, is
+        # that the platform's `pipe2` exists and really does flag both ends:
+        # without that the change is a no-op wearing a comment.
+        let hs = lifecycle.handshakePipe()
+        check("the handshake pipe is created", hs.ok)
+        if hs.ok:
+          check("...with the write end close-on-exec, which is what makes a " &
+                "successful exec readable as end of file",
+                lifecycle.isCloexec(hs.wr))
+          check("...and the read end too, so no other fork inherits it either",
+                lifecycle.isCloexec(hs.rd))
+          discard posix.close(hs.rd)
+          discard posix.close(hs.wr)
 
       block boolSwitches:
         # Action purpose: these three keys are switches an operator writes by
@@ -6759,6 +6821,86 @@ proc main() =
           db.exec("DELETE FROM notes WHERE id LIKE 'wsdel-%'", [])
           db.exec("DELETE FROM workspaces WHERE id='wsdel-ws'", [])
           rag.forgetNote("wsdel-note")
+
+        # Action purpose: a container's delete cascades down and its restore did
+        # not, so a restored workspace was a name with nothing in it — every
+        # project, folder, note, uploaded file and conversation under it still
+        # flagged, with no route back for any of them: the trash view offers a
+        # row whose ancestor is already live nothing at all.
+        block restoringAContainerBringsBackWhatItHeld:
+          for t in ["notes", "fileAssets", "folders", "projects",
+                    "conversations", "workspaces"]:
+            db.exec("DELETE FROM " & t & " WHERE id LIKE 'wsres-%'", [])
+          db.exec("INSERT INTO workspaces (id, name, is_deleted) " &
+                  "VALUES ('wsres-ws', 'Restorable', 0)", [])
+          db.exec("INSERT INTO projects (id, workspaceId, name, is_deleted) " &
+                  "VALUES ('wsres-proj', 'wsres-ws', 'Proj', 0)", [])
+          db.exec("INSERT INTO folders (id, projectId, name, is_deleted) " &
+                  "VALUES ('wsres-fold', 'wsres-proj', 'Fold', 0)", [])
+          # Both columns, which is the shape the frozen client writes for a
+          # note inside a folder inside a workspace — and it has to be, because
+          # the workspace cascade reaches notes by `workspaceId` and not
+          # transitively through the folder. A note carrying only a `folderId`
+          # is not flagged by a workspace delete in the first place, so there is
+          # nothing for a restore to put back and the asymmetry this block is
+          # about does not arise for it.
+          db.exec("INSERT INTO notes (id, folderId, workspaceId, title, " &
+                  "content, is_deleted) VALUES ('wsres-note', 'wsres-fold', " &
+                  "'wsres-ws', 'N', 'n', 0)", [])
+          db.exec("INSERT INTO fileAssets (id, workspaceId, name, is_deleted) " &
+                  "VALUES ('wsres-file', 'wsres-ws', 'f.txt', 0)", [])
+          db.exec("INSERT INTO conversations (id, workspaceId, name, " &
+                  "is_deleted) VALUES ('wsres-conv', 'wsres-ws', 'C', 0)", [])
+
+          proc flagOf(t, rowId: string): string =
+            let rows = db.query("SELECT is_deleted FROM " & t & " WHERE id=?",
+                                rowId)
+            if rows.len > 0 and rows[0].len > 0: rows[0][0] else: "?"
+
+          const Held = [("projects", "wsres-proj"), ("folders", "wsres-fold"),
+                        ("notes", "wsres-note"), ("fileAssets", "wsres-file"),
+                        ("conversations", "wsres-conv")]
+
+          check("deleting the workspace succeeds",
+                api.deleteEntity("workspaces", "wsres-ws"))
+          # Both directions: without this a restore that changed nothing would
+          # pass by finding rows that were never flagged.
+          for (t, rowId) in Held:
+            check("...and the row in " & t & " is flagged with it",
+                  flagOf(t, rowId) == "1", flagOf(t, rowId))
+
+          check("restoring the workspace succeeds",
+                api.restoreEntity("workspaces", "wsres-ws"))
+          check("...and the workspace itself is live",
+                flagOf("workspaces", "wsres-ws") == "0")
+          for (t, rowId) in Held:
+            check("...and the row in " & t & " is live again",
+                  flagOf(t, rowId) == "0", flagOf(t, rowId))
+
+          # The derivation itself, asserted rather than inferred from the rows
+          # above. The restore list is built by substituting into the delete
+          # list, and a statement the substitution missed is silently the
+          # DELETE — running that on a restore re-flags the whole subtree it was
+          # asked to bring back. The dropped-statement guard makes that
+          # impossible, and this is what proves the guard is not dropping
+          # everything instead: one restore statement per cascade, every one of
+          # them clearing the flag.
+          for (entity, want) in [("workspaces", 5), ("projects", 4),
+                                 ("folders", 3), ("conversations", 1)]:
+            let back = api.restoreCascadeSql(entity)
+            check("`" & entity & "` derives " & $want & " restore statements",
+                  back.len == want, $back.len)
+            var allClear = back.len > 0
+            for sql in back:
+              if not sql.contains("SET is_deleted=0") or
+                 sql.contains("SET is_deleted=1"): allClear = false
+            check("...and every one of them clears the flag", allClear,
+                  back.join(" | "))
+
+          for t in ["notes", "fileAssets", "folders", "projects",
+                    "conversations", "workspaces"]:
+            db.exec("DELETE FROM " & t & " WHERE id LIKE 'wsres-%'", [])
+          rag.forgetNote("wsres-note")
 
         # The backfill exists so a workspace that predates this wiring becomes
         # searchable without the user re-saving every note.

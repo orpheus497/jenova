@@ -539,6 +539,16 @@ proc readFileAssetMirror*(id, name, folderId, projectId, workspaceId: string):
   except IOError, OSError:
     (false, 0, "")
 
+## Function purpose: where an asset's mirror is, for a caller that cannot read
+## it. The viewer refuses a file over its ceiling and then has nothing to say
+## about it, and "it is at this path" is the only thing that is both true and
+## actionable there. Empty when the row resolves to no path or nothing is on
+## disk, so a caller cannot name a file that is not there.
+proc fileAssetMirrorPath*(id, name, folderId, projectId, workspaceId: string):
+    string =
+  let (path, _) = assetPath(id, name, folderId, projectId, workspaceId)
+  if path.len == 0 or not fileExists(path): "" else: path
+
 ## Function purpose: the size of an asset's mirror without reading it, so the
 ## window can decide whether opening it is affordable before it commits to the
 ## read.
@@ -838,7 +848,22 @@ proc restoreMirror*(table, id: string): RestoreOutcome =
       if wsPath.extractFilename == ".trash": continue
       trashRoots.add wsPath / ".trash"
 
+  # Action purpose: **every match is collected and the newest wins, because one
+  # row can have more than one sidecar.** A rename trashes the pre-rename copy
+  # under the same row id, so an asset renamed once and then deleted leaves two,
+  # and returning on the first one met made the restore depend on directory
+  # order: sometimes the file as it last stood, sometimes the copy superseded
+  # before it, and nothing to say which had happened. `jenova_core.nim`'s
+  # asset self-test records having had to route around exactly this.
+  #
+  # Newest is read from the trash name's own epoch prefix — `<epoch>_<name>` is
+  # what `moveToTrash` writes — with the sidecar's modification time as the
+  # tie-break, since a rename and a delete inside one second share a prefix. The
+  # path is the last key so two equal candidates still resolve the same way on
+  # every run rather than by walk order.
   const Suffix = ".metadata.json"
+  var best: tuple[epoch, mtime: int64, path, original: string]
+  var found = false
   for root in trashRoots:
     if not dirExists(root): continue
     for path in walkDirRec(root, yieldFilter = {pcFile}):
@@ -848,11 +873,26 @@ proc restoreMirror*(table, id: string): RestoreOutcome =
       except CatchableError: continue
       if meta.kind != JObject: continue
       if meta{"type"}.getStr != table or meta{"id"}.getStr != id: continue
-      # The sidecar was found, so from here a failure is a real one: the move
-      # itself did not happen.
-      return (if restoreTrash(path[0 ..< path.len - Suffix.len],
-                              meta{"original_path"}.getStr): rmRestored
-              else: rmFileMissing)
+      let base = path.extractFilename
+      var digits = 0
+      while digits < base.len and base[digits] in Digits: inc digits
+      var epoch = 0'i64
+      if digits > 0:
+        try: epoch = parseBiggestInt(base[0 ..< digits])
+        except ValueError: discard
+      var mtime = 0'i64
+      try: mtime = getLastModificationTime(path).toUnix
+      except OSError, IOError: discard
+      let key = (epoch, mtime, path, meta{"original_path"}.getStr)
+      if not found or key > best:
+        best = key
+        found = true
+  if found:
+    # The sidecar was found, so from here a failure is a real one: the move
+    # itself did not happen.
+    return (if restoreTrash(best.path[0 ..< best.path.len - Suffix.len],
+                            best.original): rmRestored
+            else: rmFileMissing)
   # No sidecar anywhere, for a kind that has files — deleted before the mirror
   # existed, or the sidecar was lost. Nothing to look up and nothing to say
   # except that the row is back and the file is not.

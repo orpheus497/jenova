@@ -40,7 +40,19 @@ fail() { echo "  FAIL $1"; shift; for l in "$@"; do echo "       $l"; done
 
 echo "test_lifecycle: scratch $JCA_HOME"
 
-ARGS=$("$CORE" backends args 2>/dev/null)
+# Action purpose: **the baseline is taken with the profile overrides unset, in
+# a subshell, because these assertions are about the DEFAULTS.** The conf writes
+# every one of these as `${VAR:-<default>}`, so a value exported in the caller's
+# own shell reaches the child and becomes the answer — a developer with
+# `JENOVA_MLOCK=1` set turned the two default assertions below red without
+# having changed anything in the tree, and one with `JENOVA_LLAMA_PORT` set
+# turned the port assertions red the same way. The overriding assertions further
+# down set what they need explicitly and are unaffected either way.
+ARGS=$(
+    unset JENOVA_MLOCK JENOVA_MMAP JENOVA_FLASH_ATTN JENOVA_NGL_AGENT \
+          JENOVA_DRAFT JENOVA_LLAMA_PORT JENOVA_LLAMA_EMBED_PORT
+    "$CORE" backends args 2>/dev/null
+)
 LLAMA_LINE=$(printf '%s\n' "$ARGS" | head -1)
 EMBED_LINE=$(printf '%s\n' "$ARGS" | tail -1)
 

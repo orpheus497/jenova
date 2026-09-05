@@ -19,9 +19,15 @@ import ./paths
 # as numbers a libc could disagree with.
 let
   FdSetFd {.importc: "F_SETFD", header: "<fcntl.h>".}: cint
+  FdGetFd {.importc: "F_GETFD", header: "<fcntl.h>".}: cint
   FdCloexec {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
   LockTry {.importc: "F_TLOCK", header: "<unistd.h>".}: cint
   LockRelease {.importc: "F_ULOCK", header: "<unistd.h>".}: cint
+
+## Function purpose: `std/posix` binds `pipe` and not `pipe2`, and the flag is
+## the whole point of using it — see the handshake pipe in `start`.
+proc pipe2(fds: var array[0..1, cint], flags: cint): cint
+  {.importc: "pipe2", header: "<unistd.h>".}
 
 type
   Backend* = enum
@@ -307,6 +313,32 @@ proc unlockStart*(fd: cint) =
   discard lockf(fd, LockRelease, 0)
   discard posix.close(fd)
 
+## Function purpose: the `execve` handshake's pipe, in one place so the flag it
+## depends on can be asserted rather than assumed.
+##
+## Action purpose: **`pipe2` with `O_CLOEXEC`, not `pipe` then `fcntl`.** Two
+## steps is a window, and this process forks from more than one thread: `start`
+## is reached from the window's control worker and from the watchdog, so a fork
+## taken anywhere else between the two carried both descriptors into its own
+## child. A child that outlives this call holds the write end open, and the
+## parent's read then never sees end of file and never returns — the backend has
+## started and the worker waiting on the handshake never learns it. Flagging at
+## creation closes that window rather than narrowing it.
+##
+## Both ends, not only the write end. The read end leaked the same way, and this
+## fork's child closing it explicitly says nothing about anyone else's.
+proc handshakePipe*(): tuple[ok: bool, rd, wr: cint] =
+  var efd: array[0..1, cint] = [cint(-1), cint(-1)]
+  if pipe2(efd, O_CLOEXEC) != 0: return (false, cint(-1), cint(-1))
+  (true, efd[0], efd[1])
+
+## Function purpose: exported beside it so the assertion reads the flag through
+## the same header constants the code does, rather than a number of its own.
+proc isCloexec*(fd: cint): bool =
+  if fd < 0: return false
+  let flags = fcntl(fd, FdGetFd)
+  flags >= 0 and (flags and FdCloexec) != 0
+
 ## Function purpose: answers the new pid, zero if it was already running, or a
 ## negative number if something else holds the port — three outcomes the caller
 ## has to tell apart before reporting a restart.
@@ -420,12 +452,14 @@ proc start*(l: Lifecycle, be: Backend): int =
   # that exited 127, which is the whole point of it. Refusing is the honest
   # answer: `pipe` fails on descriptor exhaustion, which is not a state to fork
   # in either.
-  var efd: array[0..1, cint] = [cint(-1), cint(-1)]
-  if pipe(efd) != 0:
+  #
+  # `handshakePipe` creates both ends close-on-exec in one call, and says why.
+  let hs = handshakePipe()
+  if not hs.ok:
     deallocCStringArray(cargs)
     deallocCStringArray(cenv)
     return 0
-  discard fcntl(efd[1], FdSetFd, FdCloexec)
+  var efd: array[0..1, cint] = [hs.rd, hs.wr]
 
   let pid = fork()
   if pid < 0:

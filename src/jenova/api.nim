@@ -475,6 +475,34 @@ proc cascadeIndexTargets(entity, id: string): seq[(string, string)] =
                         " AND is_deleted=0", id):
       if row.len > 0 and row[0].len > 0: result.add((table, row[0]))
 
+## Function purpose: the inverse of `Cascades`, derived from it rather than
+## written out. A container's delete flags every descendant in one statement per
+## table, and nothing put them back: restoring a workspace cleared its own row
+## and left every project, folder, note, uploaded file and conversation under it
+## flagged — the directory came back out of the trash and the interface showed
+## an empty workspace beside it.
+##
+## Action purpose: derived, for the reason `cascadeCount` and
+## `cascadeIndexTargets` are — a second hand-written list of what a container
+## reaches drifts from the first, and the drift is silent in both directions.
+##
+## Action purpose: **a statement the replacement did not change is dropped.**
+## That is the whole safety of deriving one list from the other: if a cascade is
+## ever spelled so this substitution misses it, the unchanged statement is the
+## *delete*, and running it here would re-delete the subtree the caller asked to
+## restore. Losing a statement costs a descendant that stays flagged, which is
+## the state this proc exists to improve on and is recoverable by restoring it
+## directly; running the wrong one is not.
+proc restoreCascades*(entity: string): seq[string] =
+  if not Cascades.hasKey(entity): return
+  for sql in Cascades[entity]:
+    let back = sql.replace(" SET is_deleted=1 ", " SET is_deleted=0 ")
+    if back != sql: result.add back
+
+## Function purpose: exported under a name that says it is SQL, so the
+## assertion can read the derived statements rather than infer them from rows.
+proc restoreCascadeSql*(entity: string): seq[string] = restoreCascades(entity)
+
 ## Function purpose: run only after the transaction commits — unfiling inside it
 ## would strip the index for a delete that then rolled back, leaving rows the
 ## interface still shows and retrieval no longer knows.
@@ -625,7 +653,45 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
     of "workspaceId": discard restoreItem("workspaces", v, ancestor, depth + 1)
     else: discard
 
-  db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
+  # Action purpose: **the row and its descendants together, in one transaction,
+  # because a delete took them together.** A container's cascade flags every
+  # project, folder, note, asset and conversation beneath it, and none of them
+  # passes through this proc — so a restored workspace was a name with nothing
+  # in it, and the only way back was to find each child in the trash and restore
+  # it by hand, which the trash view does not offer for a row whose ancestor is
+  # already live.
+  #
+  # One transaction for the same reason `dbSoftDelete` uses one: a throw part
+  # way leaves the container live and half its contents still flagged, which is
+  # a worse state than the one being repaired.
+  #
+  # **This revives every descendant, including any deleted on its own before the
+  # container was.** There is no record of which delete flagged a row — the
+  # column is a bare flag — so the two cannot be told apart without a schema
+  # change. That is also the rule the shipped client already applies one level
+  # down: restoring a conversation revives every message, "including any deleted
+  # individually beforehand", as the block below has said all along. Restoring
+  # one item too many is visible and undoable; restoring a workspace to an empty
+  # shell is neither.
+  db.begin()
+  try:
+    db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
+    # `conversations` is left to the explicit statement further down, which is
+    # the shipped contract and orders itself against the re-index beside it.
+    if e.name != "conversations":
+      for sql in restoreCascades(e.name):
+        db.exec(sql, id)
+    db.commit()
+  except CatchableError:
+    db.rollback()
+    return err(500, "restore failed: " & getCurrentExceptionMsg())
+  # Action purpose: the descendants are *not* re-indexed here, and that is a
+  # decision rather than an omission. `restoreFromTrash` calls this on the GTK
+  # thread, `rag.indexNote` costs an embedding round trip with a thirty-second
+  # timeout, and a workspace holding a few hundred notes would freeze the window
+  # for minutes. `backfillWorkspace` and `backfillChats` index exactly what has
+  # no vectors at the next start, so retrieval repairs itself; the item the user
+  # actually clicked is re-indexed below, at one round trip.
   # Action purpose: the file comes back with the row. Deletion moves it into a
   # trash tree beside a sidecar written for exactly this, and without the call
   # the sidecar is never read — leaving a note's markdown, an asset's bytes and
