@@ -144,6 +144,32 @@ proc getInt*(c: Config, key: string, default: int): int =
     raise newException(ConfigError,
       "config key " & key & " is not an integer: '" & raw & "'")
 
+## Function purpose: the switch-shaped keys, which are spelled by hand in a
+## shell file and therefore arrive in whatever spelling the operator reached
+## for. `1`/`0` is what the shipped profiles write and every other common word
+## for the same thing is accepted beside it.
+##
+## Action purpose: **falls back rather than raising, and that is the whole
+## difference from `getInt`.** These were read through `getInt`, so
+## `JENOVA_MLOCK=true` — a spelling nothing rejects and nothing documents
+## against — raised a `ConfigError` out of `llamaArgs`, through `start`, and out
+## of `startAll`: a typo in one optional performance flag refused to start the
+## inference backend at all. `getInt`'s reasoning does not carry here. A
+## silently-defaulted context size is wrong-but-plausible arithmetic; a
+## defaulted `--mlock` is a tuning flag not passed, which is the state the key
+## was absent in and is survivable by construction.
+proc getBool*(c: Config, key: string, default: bool): bool =
+  let raw = c.get(key).strip
+  if raw.len == 0: return default
+  # Any integer, not only 1: these were `getInt(...) != 0` and a profile writing
+  # `2` must keep meaning what it meant.
+  try: return parseInt(raw) != 0
+  except ValueError: discard
+  case raw.toLowerAscii
+  of "true", "yes", "on", "enabled": true
+  of "false", "no", "off", "disabled": false
+  else: default
+
 ## Function purpose: the `config` subcommand's output. Iterates `Keys` rather
 ## than the table so a key the conf never set still shows, as empty.
 proc render*(c: Config): string =

@@ -564,6 +564,43 @@ proc run*(dbPath, staticRoot: string): int =
 
   result = 0
 
+  # ---- The accept path cannot be occupied by clients that send nothing ----
+  # Action purpose: an acceptor classifies a connection by peeking at its
+  # request line, and that peek used to block in `recv` under the socket's own
+  # thirty-second receive timeout. There are two acceptor threads and nothing
+  # else accepts connections, so two clients that connected and said nothing —
+  # a pair of speculative pre-connects, or a deliberate pair — stopped the
+  # server accepting anything at all for half a minute without sending a byte.
+  #
+  # Four of them against two acceptors, so the count cannot be met by luck, and
+  # the assertion is the one a user would make: does the server still answer.
+  block silentClientsCannotStopAccepting:
+    var idlers: seq[Socket] = @[]
+    for i in 0 ..< 4:
+      let s = newSocket(buffered = false)
+      try:
+        s.connect("127.0.0.1", TestPort.Port)
+        idlers.add s
+      except CatchableError:
+        try: s.close() except CatchableError: discard
+    sleep(100)
+    let t0 = nowMs()
+    let answered = httpGet("/health").contains("\"status\":\"ok\"")
+    let ms = nowMs() - t0
+    for s in idlers:
+      try: s.close() except CatchableError: discard
+    # Two seconds is not a measurement of the budget — that is 40 ms per
+    # connection — it is a bound far below the thirty seconds the defect cost
+    # and far above anything a loaded machine adds to a loopback health check.
+    if answered and ms < 2000.0:
+      echo &"  silent clients: {idlers.len} sent nothing, /health still " &
+           &"answered in {ms:.1f} ms"
+    else:
+      echo &"  FAIL: {idlers.len} clients that sent nothing held the accept " &
+           &"path ({ms:.1f} ms, answered={answered})"
+      result = 1
+  echo ""
+
   # ---- Phase 1: the stream's cadence with nothing else running -----------
   var st: Thread[ClientArg]
   createThread(st, streamClient,

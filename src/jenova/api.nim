@@ -507,10 +507,24 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 
   case e.name
   of "workspaces":
-    if not fssync.trashWorkspace(id, prior.field "name"):
+    let r = fssync.trashWorkspace(id, prior.field "name")
+    if not r.ok:
       return err(500, "filesystem trash failed for workspace")
-    let cascaded = cascadeIndexTargets(e.name, id)
-    dbSoftDelete(e, id)
+    # Action purpose: the same compensation boundary the two branches below
+    # carry, and it was missing here alone. The directory — the whole workspace,
+    # every project, note and asset under it — is in the trash by this point, so
+    # a throw from either statement escaped with the rows still live and the
+    # tree still gone: the one entity whose delete could leave the interface
+    # listing a workspace with nothing behind it.
+    var cascaded: seq[(string, string)]
+    try:
+      cascaded = cascadeIndexTargets(e.name, id)
+      dbSoftDelete(e, id)
+    except CatchableError:
+      if r.path.len > 0 and r.original.len > 0:
+        try: moveDir(r.path, r.original)
+        except OSError: discard
+      return err(500, "delete failed: " & getCurrentExceptionMsg())
     forgetIndexed(cascaded)
 
   of "projects":

@@ -579,19 +579,25 @@ proc trashFileAsset*(id, name, folderId, projectId, workspaceId: string): bool =
 
 ## Function purpose: a workspace is a whole directory, so this takes its
 ## repository and everything below it into the global trash in one move.
-proc trashWorkspace*(id, name: string): bool =
+##
+## Action purpose: answers an `FsResult` rather than a bool, for the same reason
+## `trashProject` and `trashFolder` do — the caller flags the rows *after* this
+## has moved the directory, and when that step fails it has to put the directory
+## back. A bool says the move happened and not where it went, so the undo was
+## unavailable to a workspace and only to a workspace.
+proc trashWorkspace*(id, name: string): FsResult =
   let (workspaces, trash) = roots()
   let safe = sanitize(name)
   let path = workspaces / safe
-  if not dirExists(path): return true
+  if not dirExists(path): return FsResult(ok: true, original: path)
   ensureDir(trash)
   let dest = trash / epochPrefix() & "_" & safe
   try:
     moveDir(path, dest)
     writeTrashMetadata(dest, "workspaces", id, path)
-    true
+    FsResult(ok: true, path: dest, original: path)
   except OSError:
-    false
+    FsResult(ok: false, path: dest, original: path, msg: "rename failed")
 
 ## Function purpose: ancestry is resolved through the database first, because
 ## the on-disk path is built from ancestor names. An already-absent directory is

@@ -113,14 +113,20 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
   # only for a missing key. Getting that wrong emits a flag with an empty value.
   let flashAttn = c.get("JENOVA_FLASH_ATTN").strip
   result.add ["-fa", if flashAttn.len > 0: flashAttn else: "auto"]
-  if c.getInt("JENOVA_MLOCK", 0) != 0: result.add "--mlock"
-  if c.getInt("JENOVA_MMAP", 1) == 0: result.add "--no-mmap"
+  # Action purpose: `getBool` and not `getInt`, because these are switches an
+  # operator writes by hand. `getInt` raises on a value it cannot parse, and
+  # that exception has nowhere to go from here — it escapes `start` and
+  # `startAll`, so `JENOVA_MLOCK=true` stopped the backend from starting
+  # instead of turning a page-locking flag on.
+  if c.getBool("JENOVA_MLOCK", false): result.add "--mlock"
+  if not c.getBool("JENOVA_MMAP", true): result.add "--no-mmap"
   result.add ["-cb", "--spm-infill", "--cache-prompt", "--offline"]
   result.add ["--host", l.bindHost, "--port", $l.llamaPort]
 
   # Speculative decoding, only when a draft model exists and is not disabled.
   let draftPath = c.get("MODEL_DRAFT")
-  if draftPath.len > 0 and fileExists(draftPath) and c.getInt("JENOVA_DRAFT", 1) != 0:
+  # The third switch of the same shape, read the same way for the same reason.
+  if draftPath.len > 0 and fileExists(draftPath) and c.getBool("JENOVA_DRAFT", true):
     result.add ["-md", draftPath]
     let draftDevice = c.get("DRAFT_DEVICE")
     if draftDevice.strip().len > 0:

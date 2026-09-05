@@ -1547,6 +1547,29 @@ proc main() =
                 markdown.markupBalanced(markdown.inlineMarkup(src)),
                 markdown.inlineMarkup(src))
 
+      block mathNesting:
+        # Action purpose: the three math procs are mutually recursive over a
+        # structure the *source* dictates, so before the depth cap a reply
+        # carrying deeply nested braces recursed once per level with nothing but
+        # the C stack to stop it. This is not a rendering assertion — reaching
+        # the next line at all is the assertion. With the cap removed it is a
+        # segmentation fault, not a failure.
+        var deep = "$"
+        for _ in 0 ..< 50_000: deep.add '{'
+        deep.add "x"
+        for _ in 0 ..< 50_000: deep.add '}'
+        deep.add "$"
+        let deepOut = markdown.inlineMarkup(deep)
+        check("a formula nested past the cap declines instead of recursing",
+              deepOut == deep, deepOut[0 ..< min(40, deepOut.len)])
+
+        # The other side of the same bound: nesting a real formula reaches has
+        # to still render, or the cap would have bought safety by refusing
+        # ordinary maths.
+        let ok = markdown.inlineMarkup("$x^{a^{b^{c}}}$")
+        check("nesting that a real formula reaches still renders",
+              ok != "$x^{a^{b^{c}}}$" and markdown.markupBalanced(ok), ok)
+
       block delimiterRuns:
         # A run that opens on a blank turned arithmetic into emphasis, which is
         # the most common false positive there is in a reply about code.
@@ -3783,6 +3806,39 @@ proc main() =
                 fssync.rmFileMissing and
               not fileExists(outside / "stolen.md"))
 
+      # Action purpose: a workspace delete moves the directory first and flags
+      # the rows second, so when the second step throws the directory has to go
+      # back. Projects and folders had that undo and a workspace did not — it
+      # could not: `trashWorkspace` answered a bool, which says the move
+      # happened and not where it went, so `softDelete` had nothing to move
+      # back *with*. That is what this asserts. Forcing the database step to
+      # fail is not what is under test here; having the information the
+      # compensation needs is, and without it the undo cannot exist at all.
+      block trashingAWorkspaceSaysWhereItWent:
+        let wsRoot = getEnv("JENOVA_WORKSPACES")
+        createDir(wsRoot / "CompWs")
+        writeFile(wsRoot / "CompWs" / "kept.md", "workspace payload")
+
+        let r = fssync.trashWorkspace("comp-ws", "CompWs")
+        check("trashing a workspace reports where the directory went",
+              r.ok and r.path.len > 0 and r.original.len > 0 and
+              dirExists(r.path) and not dirExists(r.original),
+              r.path & " <- " & r.original)
+        # The compensation itself, run by hand exactly as `softDelete` runs it.
+        if r.path.len > 0 and r.original.len > 0:
+          try: moveDir(r.path, r.original)
+          except OSError: discard
+        check("...and that pair is enough to put it back where it was",
+              dirExists(wsRoot / "CompWs") and
+              fileExists(wsRoot / "CompWs" / "kept.md") and
+              readFile(wsRoot / "CompWs" / "kept.md") == "workspace payload")
+
+        # A workspace with no directory is an ordinary success and not a move,
+        # so there is nothing to compensate and the undo must not fire on it.
+        let none = fssync.trashWorkspace("comp-none", "NeverMirrored")
+        check("a workspace that was never mirrored succeeds with nothing to undo",
+              none.ok and none.path.len == 0)
+
       # Action purpose: **the static route had the same symlink hole this file's
       # storage assertions were written for, and nothing tested it.**
       # `http.resolveStatic` normalised lexically, which resolves `.` and `..`
@@ -4071,6 +4127,44 @@ proc main() =
           # Idempotent: the second call has nothing left to reap and must still
           # answer false rather than raising or blocking.
           check("asking twice is stable", not lifecycle.isAlive(pid.int))
+
+      block boolSwitches:
+        # Action purpose: these three keys are switches an operator writes by
+        # hand into a shell conf, and they were read through `config.getInt`,
+        # which raises on anything it cannot parse. `JENOVA_MLOCK=true` — a
+        # spelling nothing rejects and nothing documents against — therefore
+        # threw a `ConfigError` out of `llamaArgs`, through `start`, and out of
+        # `startAll`: one optional performance flag, misspelled, refusing to
+        # start the inference backend at all.
+        #
+        # Built as a bare `Config` rather than loaded from a file, because the
+        # subject is the accessor and not the conf files' own spelling.
+        proc argsWith(pairs: openArray[(string, string)]): seq[string] =
+          var c = config.Config()
+          for (k, v) in pairs: c.values[k] = v
+          var l = lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1")
+          l.llamaArgs()
+
+        check("`1`/`0` keep meaning what the shipped profiles mean by them",
+              "--mlock" in argsWith({"JENOVA_MLOCK": "1"}) and
+              "--no-mmap" in argsWith({"JENOVA_MMAP": "0"}))
+        check("a switch spelled as a word is honoured, not refused",
+              "--mlock" in argsWith({"JENOVA_MLOCK": "true"}) and
+              "--no-mmap" in argsWith({"JENOVA_MMAP": "off"}))
+        check("...in either direction",
+              "--mlock" notin argsWith({"JENOVA_MLOCK": "no"}) and
+              "--no-mmap" notin argsWith({"JENOVA_MMAP": "yes"}))
+        # The whole point: a value nothing can parse falls back to the default
+        # rather than escaping as an exception. `argsWith` raising is the
+        # failure, and the `try` is what turns it into one instead of a crash.
+        var fellBack = false
+        try:
+          let a = argsWith({"JENOVA_MLOCK": "maybe", "JENOVA_MMAP": "maybe"})
+          fellBack = "--mlock" notin a and "--no-mmap" notin a
+        except CatchableError:
+          fellBack = false
+        check("an unparseable switch defaults instead of raising out of start",
+              fellBack)
 
       block notOurChild:
         # A pid this process never forked. `waitpid` fails with ECHILD and

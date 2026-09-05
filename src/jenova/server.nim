@@ -42,14 +42,18 @@ const
   PeekBytes = 2048
   ClientTimeoutSec = 30
 
-  ## How long an acceptor waits in `poll` before re-reading `running`. It is the
-  ## upper bound on how long `stop` takes to join them, and it is short because
-  ## that wait is paid on every shutdown and on nothing else.
+  ## How long an acceptor waits in `poll` before re-reading `running`. It is
+  ## short because that wait is paid on every shutdown and on nothing else.
+  ##
+  ## An acceptor's shutdown is bounded by `AcceptPollMs + PeekRetries *
+  ## PeekRetryMs`, not by this alone: a connection taken on the last round
+  ## before the flag is read still goes through `peekPath`, which is why that
+  ## function's own budget had to become a bounded one too.
   AcceptPollMs = 200
 
-  ## How long `peekPath` waits for a request line that arrived split, and how
-  ## often it looks. Their product — 40 ms — is the whole budget, and it is not
-  ## the socket's 30-second receive timeout; `peekPath` says why the two differ.
+  ## How long `peekPath` waits for a request line, and how often it looks. Their
+  ## product — 40 ms — is the whole budget, and it is not the socket's
+  ## 30-second receive timeout; `peekPath` says why the two differ.
   PeekRetries = 8
   PeekRetryMs = 5
 
@@ -127,26 +131,46 @@ proc setTimeouts(fd: SocketHandle) =
 ## Function purpose: peeks rather than reads, so the worker that ends up owning
 ## the connection still parses the request from its first byte.
 ##
-## Action purpose: **the retry bound is `PeekRetryMs` and not `ClientTimeoutSec`,
-## and the difference is deliberate.** A client that has sent *nothing* is bounded
-## by the socket's receive timeout, because `recv` blocks in it — thirty seconds,
-## paid by the kernel. A client that has sent a *partial* request line is a
-## different case: `recv` returns those bytes at once, so the wait is this loop's
-## own, and it is short on purpose. There are two acceptor threads and nothing
-## else accepts connections; letting one spin for thirty seconds on a trickling
-## client would let two such clients stop the server accepting anything at all.
-## Forty milliseconds is many round trips on a loopback or a LAN, which is where
-## this server is reachable from.
+## Action purpose: **the whole budget is `PeekRetries * PeekRetryMs` and not
+## `ClientTimeoutSec`, and the difference is deliberate.** This runs on an
+## acceptor thread. There are two of them and nothing else accepts connections,
+## so every millisecond spent here is a millisecond the server is closer to
+## accepting nothing at all.
+##
+## The first wait used to be the socket's own receive timeout, because `recv`
+## blocked in it: a client that connected and sent nothing held an acceptor for
+## thirty seconds, and two of them — a pair of speculative pre-connects, or a
+## deliberate pair — stopped the server dead without sending a byte. So
+## readability is waited for in `poll` under this loop's own bound instead, and
+## the same bound then covers the partial request line, which is the case that
+## always had it. Forty milliseconds is many round trips on a loopback or a LAN,
+## which is where this server is reachable from, and an HTTP client sends its
+## request line immediately after connecting.
+##
+## `running` is read each round for the second half of the same argument: a
+## connection taken on the last poll before shutdown must not add the old
+## thirty seconds to a join.
 proc peekPath(fd: SocketHandle): string =
   var buf = newString(PeekBytes)
   for attempt in 0 ..< PeekRetries:
+    if not running.load(): return ""
+    var pfd = TPollfd(fd: cint(fd), events: POLLIN, revents: 0)
+    let ready = poll(addr pfd, Tnfds(1), PeekRetryMs)
+    # A timeout, or a signal: nothing has arrived yet, and `poll` has already
+    # paid this round's wait.
+    if ready <= 0: continue
+    if (pfd.revents and (POLLNVAL or POLLERR or POLLHUP)) != 0: return ""
+    if (pfd.revents and POLLIN) == 0: continue
     let n = posix.recv(fd, addr buf[0], PeekBytes, MSG_PEEK)
     if n <= 0:
       return ""
     let path = routes.pathFromHead(buf[0 ..< n])
     if path.len > 0:
       return path
-    # Request line not complete yet: the client is still sending.
+    # Request line not complete yet: the client is still sending. Slept rather
+    # than polled again, because a peek consumes nothing — the bytes already
+    # read stay readable, so `poll` would return at once and the retries would
+    # burn through in no time at all.
     sleep(PeekRetryMs)
   ""
 
@@ -488,9 +512,9 @@ proc acceptor(arg: AcceptorArg) {.thread.} =
     setTimeouts(cfd)
     let path = peekPath(cfd)
     if path.len == 0:
-      # Either the client sent nothing until the socket's receive timeout, or it
-      # sent a partial request line and did not finish it within `peekPath`'s own
-      # much shorter budget. Neither is a request this server can route.
+      # The client sent nothing, or sent a partial request line and did not
+      # finish it, within `peekPath`'s budget — or shutdown began while it was
+      # waiting. None of those is a request this server can route.
       nativesockets.close(cfd)
       continue
     queues[routes.classify(path)].send(cfd)

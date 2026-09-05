@@ -593,7 +593,13 @@ transcript_renders() {
     printf '' | xclip -i -selection clipboard >/dev/null 2>&1 || true
     xdotool mousemove "$cx" "$y" click 1 ||
       { TRANSCRIPT_FAILED=measure; return 1; }
-    sleep 0.4
+    # Guarded like the two waits above and below it. A `sh` without fractional
+    # sleeps does not wait a shorter time here — it fails, and prints its usage
+    # to stderr — so the clipboard is read in the same instant the button was
+    # clicked. Every row then reads back empty and the scan reports "no Copy
+    # button answered", which is a missing feature in `sh` reported as a missing
+    # widget in the transcript.
+    sleep 0.4 2>/dev/null || sleep 1
     got=$(xclip -o -selection clipboard 2>/dev/null || true)
     if [ -n "$got" ]; then
       [ "$got" = "$want" ] && return 0

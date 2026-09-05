@@ -381,34 +381,54 @@ proc mathAccent(name: string): string =
   of "mathring": "\u030A"
   else: ""
 
+const MathMaxDepth = 64
+  ## The nesting these three will follow before declining the formula. They are
+  ## mutually recursive over a structure the *source* dictates — a braced group
+  ## contains a run, a run contains items, an item opens a group — so a reply
+  ## carrying `{{{{`…`}}}}` recurses once per level with nothing but the C stack
+  ## to stop it. That source is an assistant message, and messages arrive over
+  ## the network and through import: a long enough line of balanced braces
+  ## overflows the stack, which is a crash and not a rendering fault.
+  ##
+  ## Sixty-four is about twenty brace levels — one costs three frames,
+  ## `mathItem` into `mathArg` into `mathRun` — against a real formula that
+  ## rarely passes six.
+  ## Declining costs the reader the markup and leaves the source visible, which
+  ## is what every other refusal in this renderer already does.
+
 # Mutually recursive: an argument is a run of items and an item can take an
 # argument, so both names exist before either body.
 proc mathItem(src: string, i: var int, stop: int, dst: var string,
-              upright: bool, atoms: var int): bool
+              upright: bool, atoms: var int, depth: int): bool
 proc mathRun(src: string, i: var int, stop: int, dst: var string,
-             upright: bool, atoms: var int): bool
+             upright: bool, atoms: var int, depth: int): bool
 
 ## Function purpose: what TeX takes after `^`, `_` or `\sqrt` — a braced group,
 ## a control sequence or a single character — so `x^2` and `x^{n+1}` are one
 ## code path rather than two.
 proc mathArg(src: string, i: var int, stop: int, dst: var string,
-             upright: bool, atoms: var int): bool =
+             upright: bool, atoms: var int, depth: int): bool =
+  if depth > MathMaxDepth: return false
   if i >= stop: return false
   if src[i] != '{':
-    return mathItem(src, i, stop, dst, upright, atoms)
-  var depth = 0
+    return mathItem(src, i, stop, dst, upright, atoms, depth + 1)
+  # `nest` and not `depth`: the brace counter is a different quantity from the
+  # recursion depth above it, and spelling both the same shadowed the parameter
+  # so that every recursive call passed this counter — which is zero at the
+  # break — and the cap could never be reached.
+  var nest = 0
   var j = i
   while j < stop:
-    if src[j] == '{': depth.inc
+    if src[j] == '{': nest.inc
     elif src[j] == '}':
-      depth.dec
-      if depth == 0: break
+      nest.dec
+      if nest == 0: break
     j.inc
   # An unclosed group is a formula still being typed, and rendering half of it
   # would show a subscript that is about to grow.
   if j >= stop: return false
   var k = i + 1
-  if not mathRun(src, k, j, dst, upright, atoms): return false
+  if not mathRun(src, k, j, dst, upright, atoms, depth + 1): return false
   i = j + 1
   true
 
@@ -416,7 +436,8 @@ proc mathArg(src: string, i: var int, stop: int, dst: var string,
 ## this level, because a radical has to know whether its radicand is one thing
 ## or several and Pango draws no line over it to say.
 proc mathItem(src: string, i: var int, stop: int, dst: var string,
-              upright: bool, atoms: var int): bool =
+              upright: bool, atoms: var int, depth: int): bool =
+  if depth > MathMaxDepth: return false
   let c = src[i]
   case c
   of '&':
@@ -446,7 +467,7 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
     i.inc
     true
   of '{':
-    mathArg(src, i, stop, dst, upright, atoms)
+    mathArg(src, i, stop, dst, upright, atoms, depth + 1)
   of '}':
     # A closing brace with nothing open is a formula this renderer has
     # misread, and guessing past it is how half a formula gets drawn.
@@ -456,7 +477,7 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
     dst.add(if c == '^': MathSup else: MathSub)
     var k = i + 1
     var inner = 0
-    if not mathArg(src, k, stop, dst, upright, inner): return false
+    if not mathArg(src, k, stop, dst, upright, inner, depth + 1): return false
     dst.add MathScriptEnd
     i = k
     true
@@ -493,7 +514,8 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
         var inner = ""
         var innerAtoms = 0
         var k = i
-        if not mathArg(src, k, stop, inner, upright, innerAtoms): return false
+        if not mathArg(src, k, stop, inner, upright, innerAtoms, depth + 1):
+          return false
         i = k
         # Pango has no vinculum, so nothing marks where the radicand ends. A
         # radicand of more than one atom is parenthesised, or `√x+1` reads as
@@ -520,14 +542,14 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
       return true
     of "text", "mathrm", "operatorname", "mathsf", "mathtt":
       var k = i
-      if not mathArg(src, k, stop, dst, true, atoms): return false
+      if not mathArg(src, k, stop, dst, true, atoms, depth + 1): return false
       i = k
       return true
     of "mathbf", "mathit":
       let tag = if name == "mathbf": "b" else: "i"
       dst.add "<" & tag & ">"
       var k = i
-      if not mathArg(src, k, stop, dst, true, atoms): return false
+      if not mathArg(src, k, stop, dst, true, atoms, depth + 1): return false
       i = k
       dst.add "</" & tag & ">"
       return true
@@ -537,7 +559,8 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
       var accented = ""
       var accentedAtoms = 0
       var k = i
-      if not mathArg(src, k, stop, accented, upright, accentedAtoms):
+      if not mathArg(src, k, stop, accented, upright, accentedAtoms,
+                     depth + 1):
         return false
       # A combining mark lands on one character. An accent over more than one
       # would sit over the last of them and assert something the formula does
@@ -578,9 +601,10 @@ proc mathItem(src: string, i: var int, stop: int, dst: var string,
 ## Function purpose: renders `src[i ..< stop]`, failing as a whole rather than
 ## in part, so a formula either arrives correct or stays visible as its source.
 proc mathRun(src: string, i: var int, stop: int, dst: var string,
-             upright: bool, atoms: var int): bool =
+             upright: bool, atoms: var int, depth: int): bool =
+  if depth > MathMaxDepth: return false
   while i < stop:
-    if not mathItem(src, i, stop, dst, upright, atoms): return false
+    if not mathItem(src, i, stop, dst, upright, atoms, depth + 1): return false
   true
 
 ## Function purpose: the Pango markup for one inline formula's already-escaped
@@ -592,7 +616,7 @@ proc mathMarkup(src: string): string =
   var i = 0
   var atoms = 0
   var dst = newStringOfCap(src.len * 6)
-  if not mathRun(src, i, src.len, dst, false, atoms): return ""
+  if not mathRun(src, i, src.len, dst, false, atoms, 0): return ""
   # The same guard the whole line ends on, applied to the fragment, so a
   # formula that cannot be marked up costs its own delimiters rather than every
   # word around it.
