@@ -4,9 +4,17 @@
 ##
 ## A text extractor and not a renderer: content streams and the text-showing
 ## operators only, with no reconstruction of layout, columns or reading order.
-## Two inputs yield nothing on purpose — a scanned page carries no text objects,
-## and an Identity-H font encodes glyph indices rather than characters. Both are
-## refused whole rather than attached as noise the model would answer about.
+##
+## Three inputs are meant to yield nothing: a scanned page, which carries no text
+## objects; an Identity-H font, which encodes glyph indices rather than
+## characters; and an encrypted document, whose streams do not decode. **None of
+## the three is recognised as such.** Nothing here reads `/Encrypt` and nothing
+## inspects a font's encoding — what stands in for both is `looksReadable`, a
+## ratio of printable bytes over whatever came out, beside the rule that a
+## document with any stream that will not inflate is refused entire. That is
+## best-effort and not a guarantee, and it is why the failure mode is to refuse
+## the whole document rather than to attach the readable part as noise the model
+## would answer about.
 
 import std/strutils
 import ./zlib
@@ -61,14 +69,20 @@ proc readLiteral*(s: string, i: var int): string =
       result.add c
       inc i
 
-## Function purpose: the other string form. `i` enters just past `<`; an odd
-## trailing digit is dropped rather than half-decoded.
+## Function purpose: the other string form. `i` enters just past `<`.
+##
+## Action purpose: an odd number of digits is completed with a trailing zero,
+## which is what PDF 32000-1 §7.3.4.3 says it means — a final `A` is the byte
+## `0xA0`. Dropping it instead silently lost the last character of every string
+## written that way, and a writer that omits a trailing `0` is doing something
+## the format explicitly permits rather than something malformed.
 proc readHex*(s: string, i: var int): string =
   var digits = ""
   while i < s.len and s[i] != '>':
     if s[i] in HexDigits: digits.add s[i]
     inc i
   if i < s.len: inc i
+  if digits.len mod 2 == 1: digits.add '0'
   var k = 0
   while k + 1 < digits.len:
     try:
@@ -129,6 +143,13 @@ proc textOf*(content: string): string =
 ## Function purpose: separates real text from glyph indices of a font this
 ## reader cannot map. Attaching the latter gives the model a page of noise to
 ## answer questions about, which is worse than refusing the document.
+##
+## Action purpose: a printable-byte ratio and nothing more. The font is never
+## looked at, so this is a heuristic rather than a decision: it catches the
+## common shape — a two-byte glyph index whose high byte is zero over most of
+## the range — and an encoding whose indices happened to land on printable bytes
+## would pass it. Eight in ten is a deliberate floor, since a page of real text
+## carrying a few stray bytes must not be refused.
 proc looksReadable*(s: string): bool =
   if s.len == 0: return false
   var printable = 0
@@ -175,8 +196,10 @@ proc streamsOf*(data: string): tuple[streams: seq[string], undecodable: int] =
     i = e + 9
 
 ## Function purpose: empty is the answer for a scanned document, an encrypted
-## one, and a font this reader cannot decode. The caller refuses on all three
-## rather than attaching a blank.
+## one, and a font this reader cannot decode — reached through the heuristics
+## above rather than by recognising any of the three, so it is best-effort in
+## each case. The caller refuses on an empty answer rather than attaching a
+## blank.
 proc textFrom*(data: string): string =
   if not data.startsWith("%PDF"): return ""
   let (streams, undecodable) = streamsOf(data)

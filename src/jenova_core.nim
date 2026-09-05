@@ -959,6 +959,20 @@ proc main() =
           "BT <48656C6C6F> Tj ET", flate = false))
         check("a hex string decodes", hexed.contains("Hello"), hexed)
 
+        # Action purpose: PDF 32000-1 §7.3.4.3 completes an odd number of hex
+        # digits with a trailing zero, so `<48656C6C6FA>` ends in the byte
+        # `0xA0`. Dropping the digit instead — which is what this did — loses
+        # the last character of every string a writer chooses to abbreviate that
+        # way, silently and only at the end.
+        let oddHex = pdf.textFrom(onePagePdf(
+          "BT <48656C6C6F4A> Tj ET", flate = false))
+        check("an even hex string is unaffected", oddHex.contains("HelloJ"),
+              oddHex)
+        let padHex = pdf.textFrom(onePagePdf(
+          "BT <48656C6C6F4> Tj ET", flate = false))
+        check("an odd final digit is completed with a zero, not dropped",
+              padHex.contains("Hello@"), padHex)
+
         # An escaped paren inside a literal must not end the string early.
         let escaped = pdf.textFrom(onePagePdf(
           "BT (a \\(b\\) c) Tj ET", flate = false))
@@ -6695,6 +6709,18 @@ proc main() =
           check("leaving nothing behind",
                 rag.fileAssetPath("wsidx-datauri") notin
                   indexedPaths(rag.FileRoot))
+          # Action purpose: a URI scheme is case-insensitive (RFC 3986 §3.1),
+          # and a literal prefix test let `DATA:` and `Data:` through — the same
+          # megabytes of base64, arriving from the same public route, indexed
+          # because of how the writer happened to capitalise five bytes.
+          for spelled in ["DATA:image/png;base64,", "Data:image/png;base64,",
+                          "dAtA:image/png;base64,"]:
+            let odd = spelled & repeat("iVBORw0KGgo", 200)
+            check("a data URI spelled `" & spelled[0 ..< 5] & "` is refused too",
+                  not rag.indexFileAsset("wsidx-datauri", "shot.png", odd))
+            check("...and nothing was filed under its path",
+                  rag.fileAssetPath("wsidx-datauri") notin
+                    indexedPaths(rag.FileRoot))
           # The marker is tested before the name is prepended, or the prefix
           # would hide it — and a body that merely mentions one is still text.
           check("a document that only talks about data URIs still indexes",

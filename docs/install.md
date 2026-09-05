@@ -28,12 +28,10 @@ nimble gui       # bin/jenova, the desktop application
 ./bin/jenova-core hardware apply --best
 ```
 
-The binaries land in `bin/` and are not installed onto your `PATH`. Every `jenova-core` invocation
-below is written bare for readability — run it as `./bin/jenova-core` from the repository root, or
-put `bin/` on your `PATH`.
-
-Both binaries land in `bin/`. Run `./bin/jenova` for the desktop application, or
-`./bin/jenova-core serve` for the headless server.
+Both binaries land in `bin/` and are not installed onto your `PATH`: run `./bin/jenova` for the
+desktop application, or `./bin/jenova-core serve` for the headless server. Every `jenova-core`
+invocation below is written bare for readability — run it as `./bin/jenova-core` from the
+repository root, or put `bin/` on your `PATH`.
 
 ### Build targets
 

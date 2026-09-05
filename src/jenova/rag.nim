@@ -431,7 +431,16 @@ proc indexFileAsset*(id, name, content: string): bool =
   # 300 "words" of it, producing a document that matches every query weakly and
   # nothing well. Checked before the name is prepended, or the prefix would hide
   # the marker from the test.
-  if text.len == 0 or text.startsWith("data:"):
+  #
+  # The prefix is matched case-insensitively because a URI scheme is
+  # (RFC 3986 §3.1). A literal test passed `DATA:image/png;base64,…` and
+  # `Data:…` straight through, which is the one shape a third client or another
+  # tool's export is as likely to write as the lower-case one — and it is
+  # precisely the payload this guard exists to keep out. Only the first five
+  # bytes are folded: lowering the whole value would copy the megabytes the
+  # guard is here to avoid touching.
+  if text.len == 0 or
+     (text.len >= 5 and text[0 ..< 5].toLowerAscii == "data:"):
     forgetFile(fileAssetPath(id))
     return false
   let body = (if name.len > 0: name & "\n\n" else: "") & content

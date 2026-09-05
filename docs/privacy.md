@@ -91,9 +91,12 @@ Two habits matter anyway:
 
 ## Auditing this yourself
 
-Every claim above is checkable. The two DuckDuckGo hosts are the only **direct URL targets** in the
-runtime — the only hosts it ever constructs a request *for*. Model downloads and package updates are
-commands you run, not things it does.
+Every claim above is checkable. The two DuckDuckGo hosts are the only **non-loopback URL targets**
+in the runtime — the only hosts *off this machine* it ever constructs a request for. It builds and
+sends one other request, and the qualifier is there because of it: `rag.embed` posts every chunk it
+indexes to `http://127.0.0.1:8082/v1/embeddings`, your own embedding server, which is the third row
+of the table below and is loopback by construction. Model downloads and package updates are commands
+you run, not things it does.
 
 **Redirects are followed, so a request can end at a third host.** `websearch.fetchUrl` runs
 `curl -sL` (`-L` follows redirects) or base `fetch(1)`, which follows them too. DuckDuckGo can
@@ -123,7 +126,7 @@ just as readily as a comment. The honest version is the full list, accounted for
 
 | What you will see | Where | What it is |
 |---|---|---|
-| `html.duckduckgo.com`, `api.duckduckgo.com` | `src/jenova/websearch.nim` | **The two real ones.** The only hosts the runtime builds a request for |
+| `html.duckduckgo.com`, `api.duckduckgo.com` | `src/jenova/websearch.nim` | **The two real ones.** The only hosts off this machine the runtime builds a request for |
 | `x.example`, `img.example`, `rfc.example`, `i.example` (about a dozen) | `src/jenova_core.nim` | Self-test fixtures for the markdown link renderer. Never fetched — they are compared as strings |
 | `http://{host}:{port}/v1/embeddings` | `src/jenova/rag.nim` | The embedding server on **loopback**, `127.0.0.1:8082`. Local by construction |
 | `http://127.0.0.1:<port>` | `src/jenova/gui.nim` | What the "Open Web UI" button hands to `xdg-open` — your own server |
@@ -131,8 +134,10 @@ just as readily as a comment. The honest version is the full list, accounted for
 | `"http://"`, `"https://"` | `src/jenova/markdown.nim` | The scheme allowlist for rendering a link, not a destination |
 
 So **the native runtime** — `bin/jenova` and `bin/jenova-core`, the two binaries this table covers
-— performs an outbound request from exactly one module, `websearch.nim`, and one non-runtime path
-exists beside it: two `github.com` links the About window can hand to your browser on a click.
+— sends a request that leaves this machine from exactly one module, `websearch.nim`. The other
+module that makes a request at all, `rag.nim`, addresses `127.0.0.1` and cannot reach further. One
+non-runtime path exists beside them: two `github.com` links the About window can hand to your
+browser on a click.
 
 **That sentence is about the Nim binaries and does not extend to the Web UI.** The browser client
 carries its own MCP implementation in `jca_web/src/lib/services/mcp.service.ts`, and once you

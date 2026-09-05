@@ -427,10 +427,18 @@ proc relayPhase(): int =
           &"tee {run.captured.len} bytes")
     check("...so no diagnostic header is filed in the cache",
           not run.captured.contains("X-Jenova-"), run.captured[0 ..< min(200, run.captured.len)])
+    # Action purpose: the length is checked before the slice. A tee shorter
+    # than a status line is a failure the two checks above have already
+    # reported, and slicing it raises an `IndexDefect` out of the phase — which
+    # ends the process, loses the four blocks below and turns a legible red run
+    # into a traceback. A harness must be able to report the failure it is
+    # looking for.
     check("...and the tee spliced with this request's headers is what the " &
           "client received",
+          run.captured.len >= RelayStatus.len and
           RelayStatus & RelayExtra & run.captured[RelayStatus.len .. ^1] ==
-            run.client)
+            run.client,
+          &"tee {run.captured.len} bytes")
     check("the request the upstream read carries the body and closes the " &
           "connection",
           run.request.contains("""{"messages":""") and

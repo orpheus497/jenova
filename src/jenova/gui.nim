@@ -2243,19 +2243,28 @@ proc attachFile(app: AppState, path: string) =
 ## `MaxAttachmentBytes` is refused with the same message a file gets, because
 ## the reason is the same and a paste that silently vanished would be worse than
 ## one that stayed in the box.
-proc attachPastedText(app: AppState, text: string) =
+##
+## Action purpose: **answers whether it staged anything, because the caller
+## replaces the draft with what it did not stage.** A paste over the limit is
+## refused here with a notice and nothing added — and the composer then wrote
+## `ins.remaining` into the draft regardless, so the text was in no attachment
+## and no longer in the box either. The user lost the paste to a notice
+## explaining that it was too large to attach, which reads as an explanation of
+## where it went and is not one.
+proc attachPastedText(app: AppState, text: string): bool =
   if text.len > pipeline.MaxAttachmentBytes:
     app.notice = "that paste is too large to attach — " &
                  $((text.len + 1024 * 1024 - 1) div (1024 * 1024)) & " MB " &
                  "against a limit of " &
                  $(pipeline.MaxAttachmentBytes div (1024 * 1024)) & " MB"
-    return
+    return false
   let name = composer.pastedFileName(epochTime().int64)
   app.pending.add pipeline.Attachment(
     kind: "TEXT", name: name, payload: text, bytes: text.len,
     key: name & ":" & $text.len)
   app.notice = "long paste attached as " & name &
                " — it goes to the model as a file rather than as your message"
+  true
 
 ## Function purpose: the picker is one of three ways in, and hands its result
 ## to the same staging call the other two use.
@@ -6921,8 +6930,12 @@ method view(app: AppState): Widget =
                               let ins = composer.classifyInsertion(
                                 app.draft, text,
                                 app.opts.appInt("pasteLongTextToFileLen"))
-                              if ins.divert:
-                                app.attachPastedText(ins.inserted)
+                              # The draft is shortened only where the paste was
+                              # actually staged. A refusal leaves the buffer's
+                              # own text standing, so what the window shows is
+                              # what the user pasted and the notice is advice
+                              # rather than a receipt for something deleted.
+                              if ins.divert and app.attachPastedText(ins.inserted):
                                 app.draft = ins.remaining
                               else:
                                 app.draft = text
