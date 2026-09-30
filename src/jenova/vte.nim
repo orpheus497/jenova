@@ -12,7 +12,9 @@ import ./pkgconfig
 pkgConfig("vte-2.91-gtk4", "x11-toolkits/vte3")
 
 type
-  GdkRGBA = object
+  # Action purpose: GDK's own struct, so `vte_terminal_set_colors` receives the
+  # pointer type its header declares.
+  GdkRGBA {.importc: "GdkRGBA", header: "<gdk/gdk.h>".} = object
     red, green, blue, alpha: cfloat
 
   SpawnCallback = proc(term: GtkWidget, pid: cint, err: pointer,

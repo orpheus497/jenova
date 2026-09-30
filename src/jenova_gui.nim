@@ -1,19 +1,7 @@
-## Script function and purpose: entry point for the desktop application.
-##
-## A second binary rather than another `jenova-core` subcommand, because the
-## headless server must stay buildable on a machine with no GTK — LAN mode has to
-## serve whether or not a window is running, and folding owlkettle in would make
-## a graphical toolkit a build-time requirement for a server.
-##
-## Two binaries are not two programs: both link the same core modules and this
-## one drives the backend lifecycle in-process, exactly as the server does. What
-## is deliberately not reproduced is a tray that owns the client-facing port as a
-## child process — see `gui.nim` for why that arrangement disappears.
-
-## There is no OS guard here either; `jenova_core.nim` carries the reasoning for
-## both. The window builds and runs wherever Nim, GTK4 and libadwaita do, which
-## is how it is tested — `tests/gui_build.sh` maps a real window and types into
-## it, and that has to be possible somewhere other than the target machine.
+## Script function and purpose: entry point for the desktop application. A second
+## binary rather than a `jenova-core` subcommand, so the headless server builds on
+## a machine with no GTK. Both link the same core modules; this one runs the server
+## and the backend lifecycle in-process. It builds on FreeBSD and Linux alike.
 
 import std/os
 import jenova/gui

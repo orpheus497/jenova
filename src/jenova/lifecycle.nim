@@ -12,6 +12,8 @@
 
 import std/[os, strutils, strformat, posix, times, net]
 import ./config
+import ./hardware
+import ./models
 import ./paths
 
 # Action purpose: `std/posix` binds `fcntl` and `lockf` but none of the flag
@@ -78,15 +80,42 @@ proc deviceCount(devices: string): int =
   for d in devices.split(','):
     if d.strip().len > 0: inc result
 
-## Function purpose: the agent backend's argument vector, built from the active
-## profile. Two branches carry real tuning intent: `all` layers uses auto-fit and
-## adds a tensor split only with more than one device, while an explicit layer
-## count skips both — they conflict with an explicit count, and passing them
-## together is how a single-GPU profile ends up mis-offloaded.
-proc llamaArgs*(l: Lifecycle): seq[string] =
+## Function purpose: a `DEVICES`-style value as llama.cpp device ids, noting each
+## name that matched no device. Empty, so llama-server chooses, when none resolves.
+proc deviceArg(key, spec: string, probe: tuple[devices: seq[string], ok: bool],
+               notes: var seq[string]): string =
+  if spec.strip.len == 0: return ""
+  # A probe that did not answer, or a profile's GPUs being absent, says nothing
+  # about which GPUs to use instead, so llama-server's own choice (all) stands.
+  if not probe.ok and needsDeviceList(spec):
+    notes.add key & ": llama-server --list-devices did not answer, so '" & spec &
+              "' is not applied and llama-server chooses the devices"
+    return ""
+  let r = hardware.resolveDevices(spec, probe.devices)
+  for name in r.unresolved:
+    notes.add key & ": no device matches '" & name & "'; listed: " &
+              (if probe.devices.len == 0: "none" else: probe.devices.join("; "))
+  r.ids
+
+## Function purpose: the agent backend's argument vector from the active profile,
+## with a note for each device name that could not be resolved.
+proc llamaArgs*(l: Lifecycle, notes: var seq[string]): seq[string] =
   let c = l.cfg
   let modelPath = c.get("MODEL_PATH")
-  let devices = c.get("DEVICES")
+  # Speculative decoding, only when a draft model exists and is not disabled;
+  # `getBool` for the same reason as the load-mode switches below.
+  let draftPath = c.get("MODEL_DRAFT")
+  let drafting = draftPath.len > 0 and fileExists(draftPath) and
+                 c.getBool("JENOVA_DRAFT", true)
+  # Action purpose: `--list-devices` initialises the GPU backend, so it runs only
+  # when a device that will be used is named by pattern rather than by id.
+  var probe: tuple[devices: seq[string], ok: bool] = (@[], true)
+  if needsDeviceList(c.get("DEVICES")) or
+     (drafting and needsDeviceList(c.get("DRAFT_DEVICE"))):
+    probe = hardware.probeDevices(l.paths.llamaServer, l.paths.llamaLibDir)
+  let noted = notes.len
+  let devices = deviceArg("DEVICES", c.get("DEVICES"), probe, notes)
+  let devicesWhole = notes.len == noted
   let nglAgent = c.get("NGL_AGENT", "all")
   let fitTarget = c.get("FIT_TARGET", "128")
   let tensorSplit = c.get("TENSOR_SPLIT")
@@ -98,10 +127,16 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
     result.add ["-dev", devices]
 
   result.add ["-sm", "layer"]
+  # Action purpose: `all` layers uses auto-fit, plus a tensor split only with
+  # more than one device; an explicit layer count takes neither, because with
+  # them a single-GPU profile is mis-offloaded.
   if nglAgent.len == 0 or nglAgent == "all":
     result.add ["-fitt", fitTarget]
     if deviceCount(devices) > 1 and tensorSplit.strip().len > 0:
-      result.add ["-ts", tensorSplit]
+      # The split is positional, so with a device dropped it would shift onto
+      # the wrong GPUs.
+      if devicesWhole: result.add ["-ts", tensorSplit]
+      else: notes.add "TENSOR_SPLIT: not applied, because DEVICES lost an entry"
   else:
     result.add ["-ngl", nglAgent]
 
@@ -119,27 +154,39 @@ proc llamaArgs*(l: Lifecycle): seq[string] =
   # only for a missing key. Getting that wrong emits a flag with an empty value.
   let flashAttn = c.get("JENOVA_FLASH_ATTN").strip
   result.add ["-fa", if flashAttn.len > 0: flashAttn else: "auto"]
-  # Action purpose: `getBool` and not `getInt`, because these are switches an
-  # operator writes by hand. `getInt` raises on a value it cannot parse, and
-  # that exception has nowhere to go from here — it escapes `start` and
-  # `startAll`, so `JENOVA_MLOCK=true` stopped the backend from starting
-  # instead of turning a page-locking flag on.
-  if c.getBool("JENOVA_MLOCK", false): result.add "--mlock"
-  if not c.getBool("JENOVA_MMAP", true): result.add "--no-mmap"
+  # Action purpose: JENOVA_REASONING wins; unset, a model in `models/instruct`
+  # runs without thinking — some answer inside an unclosed `<think>`, which comes
+  # back as reasoning with an empty answer — and any other keeps llama-server's auto.
+  var reasoning = c.get("JENOVA_REASONING").strip
+  if reasoning.len == 0 and roleOf(l.paths.jcaHome, modelPath) == "instruct":
+    reasoning = "off"
+  if reasoning.len > 0: result.add ["--reasoning", reasoning]
+  # Action purpose: `getBool`, because these are hand-written switches and a value
+  # `getInt` cannot parse would escape `start`. llama.cpp takes the two as one
+  # load mode, `-lm`; mmap without mlock is its default and passes nothing.
+  let mlock = c.getBool("JENOVA_MLOCK", false)
+  let mmap = c.getBool("JENOVA_MMAP", true)
+  if mlock or not mmap:
+    result.add ["-lm", (if mlock and mmap: "mmap+mlock"
+                        elif mlock: "mlock"
+                        else: "none")]
   result.add ["-cb", "--spm-infill", "--cache-prompt", "--offline"]
   result.add ["--host", l.bindHost, "--port", $l.llamaPort]
 
-  # Speculative decoding, only when a draft model exists and is not disabled.
-  let draftPath = c.get("MODEL_DRAFT")
-  # The third switch of the same shape, read the same way for the same reason.
-  if draftPath.len > 0 and fileExists(draftPath) and c.getBool("JENOVA_DRAFT", true):
+  if drafting:
     result.add ["-md", draftPath]
-    let draftDevice = c.get("DRAFT_DEVICE")
-    if draftDevice.strip().len > 0:
+    let draftDevice = deviceArg("DRAFT_DEVICE", c.get("DRAFT_DEVICE"), probe,
+                                notes)
+    if draftDevice.len > 0:
       result.add ["-devd", draftDevice]
     result.add ["-ngld", c.get("DRAFT_NGL", "all")]
     result.add ["--spec-draft-n-max", "16", "--spec-draft-n-min", "4",
                 "--spec-draft-p-min", "0.6"]
+
+## Function purpose: the argument vector alone, for callers that only show it.
+proc llamaArgs*(l: Lifecycle): seq[string] =
+  var notes: seq[string]
+  l.llamaArgs(notes)
 
 ## Function purpose: Vulkan is disabled and offload is zero deliberately — the
 ## embedding model runs on CPU so it does not compete for VRAM with the agent
@@ -346,6 +393,14 @@ proc start*(l: Lifecycle, be: Backend): int =
   if l.state(be).running:
     return l.state(be).pid
 
+  # Action purpose: built before the start lock is taken, because resolving a
+  # device name runs `llama-server --list-devices`, and another process waiting
+  # on the lock gives up after about a second.
+  var notes: seq[string]
+  let args = case be
+             of beLlama: l.llamaArgs(notes)
+             of beEmbed: l.embedArgs()
+
   createDir(l.paths.state)
   let (lock, lockStatus) = lockStart(l, be)
   defer: unlockStart(lock)
@@ -382,15 +437,19 @@ proc start*(l: Lifecycle, be: Backend): int =
   if model.len == 0 or not fileExists(model):
     return 0   # For the embed server this is a supported state, not a failure.
 
-  let args = case be
-             of beLlama: l.llamaArgs()
-             of beEmbed: l.embedArgs()
-
   createDir(l.paths.logDir)
   createDir(l.paths.state)
 
   let logPath = logFileFor(l, be)
   rotateLog(logPath)
+  # The backend appends to the same file, so these lines precede this start's
+  # output in its log.
+  if notes.len > 0:
+    try:
+      let f = open(logPath, fmAppend)
+      for n in notes: f.writeLine "jenova: " & n
+      f.close()
+    except IOError: discard
 
   # Action purpose: fork/dup2/exec rather than `startProcess`, because
   # `startProcess` hands the child a pipe and a pipe nobody reads fills at

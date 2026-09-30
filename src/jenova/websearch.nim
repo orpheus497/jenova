@@ -155,6 +155,6 @@ proc formatContext*(results: seq[string]): string =
     "that web search did not find any relevant results for this query."
   else:
     "\n--- WEB SEARCH RESULTS ---\nWeb search returned no results. " &
-    "No HTTPS client available (install curl or use FreeBSD). Cannot perform " &
+    "No HTTPS client available (install curl). Cannot perform " &
     "web searches. Answer the user's question using your own knowledge and " &
     "clearly state that web search was unavailable."

@@ -669,15 +669,24 @@ proc adw_style_manager_get_dark(m: StyleManager): cint {.importc, cdecl.}
 ## override.
 var overrideProvider = GtkCssProvider(nil)
 
-## Function purpose: only callable after GTK is initialised, which happens when
-## the window is brewed and not before. The style manager reaches the display
-## manager, and GDK aborts the process outright when that is called first — no
-## exception, no window. Use the plain resolver before the window exists and the
-## live one after it.
+## Function purpose: only callable once `brew` has run `adw_init`, since the style
+## manager needs it and GDK aborts the process otherwise; before the window
+## exists, use the plain resolver.
 proc systemPrefersDark*(): bool =
   let m = adw_style_manager_get_default()
   if pointer(m).isNil: return true
   adw_style_manager_get_dark(m) != 0
+
+## Function purpose: clears GTK's legacy dark-theme setting, which desktops such
+## as KDE write to `settings.ini` and libadwaita warns about. Call before `adw_init`.
+proc clearLegacyDarkSetting*() =
+  gtk_init()
+  let settings = gtk_settings_get_default()
+  if pointer(settings).isNil: return
+  var value = g_value_new(false)
+  g_object_set_property(pointer(settings), "gtk-application-prefer-dark-theme",
+                        value.addr)
+  g_value_unset(value.addr)
 
 ## Function purpose: turns the stored setting into a palette without touching
 ## GTK, so it is safe on the start-up path before the window exists.

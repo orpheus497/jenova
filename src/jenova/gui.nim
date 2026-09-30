@@ -1,32 +1,8 @@
 ## Script function and purpose: the desktop application — a GTK4/libadwaita
-## window built with owlkettle.
-##
-## It is two things at once. The chat window is the product; the control surface
-## — start, stop, restart, model switching, the LAN toggle and its persisted
-## flag, a status poll and the web-UI opener — is reproduced feature for feature
-## from what came before it.
-##
-## Those control actions call the lifecycle module in-process rather than
-## shelling out to a supervisor. The server, the supervisor and the window are
-## one process and the tray owns nothing, which is what makes "the daemon is up"
-## and "the client port answers" incapable of disagreeing.
-##
-## Two things do still spawn a process, and neither is a supervisor or a project
-## script. Reading the address LAN mode publishes runs `route` and `ifconfig`,
-## because no libc call answers "the address on the default route" and
-## reimplementing a routing-socket query for a status line is not a trade worth
-## making; and opening the web UI runs `xdg-open`, which is the documented way
-## to hand a URL to the desktop. Neither runs on the GTK thread — a wedged
-## routing lookup would hold the very frame meant to show its result — so both
-## are jobs on the control worker. The one synchronous call is at start-up,
-## before the window exists and before there is a frame to block.
-##
-## Chat goes over HTTP to this program's own local server rather than calling
-## the pipeline directly. That way the desktop client exercises the same path
-## every other client does — intent detection, retrieval, personas, tool
-## stripping and the cache all apply identically — and a bug in that path cannot
-## show up in one client and not the other. The socket is raw rather than
-## `std/httpclient` because a localhost request needs no TLS stack.
+## window built with owlkettle, holding the chat and the control surface (backends,
+## models, hardware, the LAN toggle, the Web UI opener). The HTTP server and the
+## backend supervisor run in this same process. Chat goes over HTTP to that server,
+## so this window takes the same request path as the Web UI.
 import std/[algorithm, atomics, base64, json, math, net, os, oids, osproc, posix,
             streams,
             strutils, tables, times]
@@ -533,18 +509,12 @@ proc setLanState(p: Paths, enabled: bool): bool =
   except CatchableError:
     false
 
-## Function purpose: the two things with no library equivalent — reading the
-## address on the default route, and handing a URL to the desktop. Always an
-## argument vector and never a shell string, so no quoting question arises.
+## Function purpose: runs a command from an argument vector, never a shell
+## string, and returns its output; it hands a URL to the desktop.
 ##
-## Action purpose: the wait comes before the read, because reading blocks until
-## the pipe reaches EOF and a hung child never gives one — and the worker this
-## runs on is serial and also carries backend control, so a child that never
-## exits would wedge more than the readout.
-##
-## That ordering is safe only while the output stays under one pipe buffer: a
-## child whose buffer fills with no reader deadlocks instead. The three commands
-## used here print a few lines each.
+## Action purpose: the wait comes before the read, because a hung child never
+## reaches EOF. The read still waits for any process the child left holding the
+## pipe, which a browser `xdg-open` starts in the foreground can be.
 proc runOutput(cmd: string, args: openArray[string],
                timeoutMs = 5000): string =
   try:
@@ -566,43 +536,46 @@ proc runCapture(cmd: string, args: openArray[string],
       return line.strip
   ""
 
-## The interface named by `route -n get default`, whose output is a block of
-## `key: value` lines.
-proc defaultInterface(routeOutput: string): string =
-  const Key = "interface:"
-  for line in routeOutput.splitLines():
-    let t = line.strip
-    if t.startsWith(Key):
-      return t[Key.len .. ^1].strip
+type
+  IfAddrs {.importc: "struct ifaddrs", header: "<ifaddrs.h>".} = object
+    ifa_next: ptr IfAddrs
+    ifa_addr: ptr SockAddr
+
+# Action purpose: libc's interface list, which neither `std/posix` nor owlkettle
+# binds; the struct comes from the header, so its layout is the platform's own.
+{.push importc, cdecl, header: "<ifaddrs.h>".}
+proc getifaddrs(ifap: var ptr IfAddrs): cint
+proc freeifaddrs(ifa: ptr IfAddrs)
+{.pop.}
+
+## Function purpose: the first non-loopback IPv4 address of any interface.
+proc interfaceAddress(): string =
+  var list: ptr IfAddrs
+  if getifaddrs(list) != 0: return ""
+  defer: freeifaddrs(list)
+  var it = list
+  while it != nil:
+    let a = it.ifa_addr
+    if a != nil and cint(a.sa_family) == posix.AF_INET:
+      var buf: array[64, char]
+      let sin = cast[ptr Sockaddr_in](a)
+      if inet_ntop(posix.AF_INET, addr sin.sin_addr, cast[cstring](addr buf[0]),
+                   int32(buf.len)) != nil:
+        let s = $cast[cstring](addr buf[0])
+        if not s.startsWith("127."): return s
+    it = it.ifa_next
   ""
 
-## The first `inet` address in an `ifconfig` block, skipping loopback when asked.
-## `ifconfig` prints `inet 10.0.0.5 netmask ...`, so the address is the second
-## field of a line whose first is `inet`.
-proc inetAddress(ifconfigOutput: string, skipLoopback: bool): string =
-  for line in ifconfigOutput.splitLines():
-    let f = line.strip.splitWhitespace()
-    if f.len > 1 and f[0] == "inet":
-      if skipLoopback and f[1] == "127.0.0.1": continue
-      return f[1]
-  ""
-
-## Function purpose: the address shown when LAN mode is on, reproducing
-## `ui.get_status_info` (`ui.lua:186-219`) — the default-route interface's
-## address, falling back to the first non-loopback address.
-##
-## The original ran `ip route get`, an iproute2 command that does not exist on
+## Function purpose: the address shown when LAN mode is on — the one on the
+## default route, else the first non-loopback address.
 proc lanAddress(): string =
-  # No shell, so there is no pipeline: `p.kill()` on a timeout reaches the whole
-  # of what was started, and the parsing that `awk` did is two procs above that
-  # can be read. The argv claim in this module's header is now true of every
-  # call rather than most of them.
-  let iface = defaultInterface(runOutput("route", ["-n", "get", "default"]))
-  if iface.len > 0:
-    let addr4 = inetAddress(runOutput("ifconfig", [iface]), skipLoopback = false)
-    if addr4.len > 0:
-      return addr4
-  inetAddress(runOutput("ifconfig", []), skipLoopback = true)
+  # Action purpose: a UDP connect sends nothing; it makes the kernel choose the
+  # route, whose local address the socket then has. 192.0.2.1 is documentation-only.
+  try:
+    let a = $getPrimaryIPAddr(parseIpAddress("192.0.2.1"))
+    if a != "0.0.0.0": return a
+  except CatchableError: discard
+  interfaceAddress()
 
 type
   ## `kind` is the table name `api.restoreEntity` takes; `label` is what
@@ -1017,7 +990,8 @@ proc hwWorker() {.thread.} =
         uiChan.send(UiMsg(kind: umNotice, text: r.msg))
       # Both actions end by reporting the current state, so applying a profile
       # shows it as current without the USER reopening the screen.
-      let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
+      let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir,
+                              j.lc.paths.jcaHome)
       uiChan.send(UiMsg(kind: umHardware, hw: h,
                         scores: hardware.scoreAll(profs, h),
                         text: hardware.currentProfile(profs,
@@ -1114,10 +1088,8 @@ viewable App:
   ## do, because the file says `0.0.0.0` every time it is read. The remedy is a
   ## different one and has to be named as such.
   lanFromConfig: bool
-  ## Cached, not computed per redraw: resolving it forks `route` and `ifconfig`,
-  ## and `view` runs on every token of a stream. `ui.poll_status` forking
-  ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
-  ## and recomputing this in `view` would be a worse version of it.
+  ## Cached, not computed per redraw: resolving it opens a socket and may read the
+  ## interface list, and `view` runs on every token of a stream.
   ## **The address the socket answers on, resolved once.** Not a property of the
   ## LAN *flag*, which is what it used to be: it was cleared and re-resolved on
   ## every flip of the flag, on the theory that the flag decided where the
@@ -1241,10 +1213,8 @@ viewable App:
   ## compositor-initiated fullscreen; it can only drive one. Escaping that case
   ## therefore takes two toggles, which is still an exit where there was none.
   fullscreen: bool
-  ## Decoded once at startup, not per redraw: `view` runs on every canvas frame,
-  ## and re-decoding a 165 KB JPEG thirty times a second is the same mistake as
-  ## re-forking `ifconfig`. A nil pixbuf is survivable — `Picture` renders empty
-  ## — so a missing icon file costs the logo, not the window.
+  ## Decoded once at startup, not per redraw: `view` runs on every canvas frame.
+  ## A nil pixbuf renders empty, so a missing icon costs the logo, not the window.
   logo: Pixbuf
   ## `opts` is what is saved and what reaches the request body; `draft` is
   ## what the open dialog is editing. Two copies, deliberately: the dialog has
@@ -7505,18 +7475,13 @@ proc run*(withTray = true, checkOnly = false) =
         true
       )
 
-  # Action purpose: the palette is a setting now, so the colour scheme is
-  # forced to match the palette rather than forced to dark unconditionally.
-  # The reason it was pinned still holds and is why this is forced rather than
-  # left at `Default`: Adwaita's own chrome — menus, tooltips, the file chooser —
-  # has to agree with the sheet, and a light desktop under the dark palette gave
-  # dark text on light chrome. `paletteFor` resolves "system" by asking
-  # libadwaita what the desktop actually wants.
-  # Nothing here may touch GTK. `brew` is what calls `adw_init`, so a GTK or
-  # libadwaita call on this line runs before there is a display and aborts the
-  # process. `paletteFor` is GTK-free for exactly that reason; "System" opens on
-  # the static default and the window's `afterBuild` hook re-resolves it.
+  # Action purpose: `paletteFor` touches no GTK, because nothing is initialised
+  # yet; "System" opens on the default and `afterBuild` re-resolves it. The colour
+  # scheme `brew` is given follows the palette, so Adwaita's chrome agrees with it.
   let startPalette = theme.paletteFor(startOpts.get("theme"))
+  # Action purpose: GTK is initialised here, ahead of `adw_init`, only to clear
+  # the desktop's legacy dark-theme setting before libadwaita reads it.
+  theme.clearLegacyDarkSetting()
 
   # Action purpose: the smoke test that would have caught the abort.
   # `nimble gui` exiting 0 says the widget tree compiles; it says nothing about
