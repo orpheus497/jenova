@@ -1,37 +1,7 @@
-## Script function and purpose: entry point for the headless binary. It resolves
-## paths and configuration, serves HTTP with per-class thread pools, owns the
-## database and the filesystem mirror, and proxies inference to `llama-server` —
-## this is the harness and that is the engine.
-##
-## It is also where every self-test lives. Each runs against a scratch database
-## and asserts a property of a module below it, so anything checkable without a
-## window is checked here rather than left to the first build on a real machine.
-##
-## The desktop application is a separate binary.
-
-## Action purpose: **there is no OS guard here, and removing it was the fix.**
-##
-## Both entry points refused to compile anywhere but FreeBSD, on the argument
-## that a hard stop now prevents an OS branch later. The argument did not
-## survive contact with the tree: nothing under `src/jenova/` has an OS
-## conditional at all — `grep -rn 'defined(freebsd)' src/` returns nothing —
-## so there was no branch to prevent. The single platform-shaped dependency is
-## `hardware.nim`, which asks `sysctl` for the machine's identity; elsewhere it
-## gets nothing back and reports an unknown machine, which is the honest answer
-## and what its self-test already asserts.
-##
-## What the guard cost was concrete and recurring. Every check of this code had
-## to be run against a patched copy, and the resulting report read "cannot be
-## built on this host" — which describes a portability problem that does not
-## exist, instead of a refusal this file was issuing on purpose. It also put
-## the binaries out of reach of any CI runner, which is the one place a
-## compiler should always be running.
-##
-## FreeBSD remains the **supported and tuned** target: the hardware profiles,
-## the install document and the backend paths are written for it, and that is
-## a claim about where this is known to run well, not about where the compiler
-## may be pointed. It is stated in `--version` and in the README, where someone
-## can read it, rather than in an error that stops them.
+## Script function and purpose: entry point for the headless binary, on FreeBSD
+## and Linux. It resolves paths and configuration, serves HTTP, owns the database
+## and the filesystem mirror, and supervises and proxies `llama-server`. Every
+## self-test lives here too. The desktop application is a separate binary.
 
 import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
@@ -64,6 +34,9 @@ proc usage() =
   echo ""
   echo "  hardware <sub>  Detect hardware and select a profile"
   echo "                  detect | list | apply <name|--best>"
+  echo ""
+  echo "  models <sub>    Show the model slots or switch the agent model"
+  echo "                  list | switch <instruct|thinking>"
   echo ""
   echo "  paths | config        Resolve and print paths / configuration"
   echo "  db-init               Create the database and schema"
@@ -133,7 +106,7 @@ proc main() =
           echo "failed to start llama-server"
           if not fileExists(p.llamaServer):
             echo "  binary not found at ", p.llamaServer
-            echo "  build it with: make llama"
+            echo "  build it with: nimble llama"
           else:
             let m = c.get("MODEL_PATH")
             if m.len == 0:
@@ -187,10 +160,11 @@ proc main() =
         echo lc.describe()
         quit(0)
       of "args":
-        # Prints the exact llama-server command line this config produces, so it
-        # can be diffed against what bin/jenova-ca builds without starting
-        # anything. Fidelity here is not checkable any other way.
-        echo p.llamaServer, " ", lc.llamaArgs().join(" ")
+        # The exact command lines `start` would run, device names resolved,
+        # without starting anything.
+        var notes: seq[string]
+        echo p.llamaServer, " ", lc.llamaArgs(notes).join(" ")
+        for n in notes: stderr.writeLine n
         echo ""
         echo p.llamaServer, " ", lc.embedArgs().join(" ")
         quit(0)
@@ -243,7 +217,7 @@ proc main() =
       let profiles = hardware.listProfiles(p.root)
       case sub
       of "detect":
-        let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+        let h = hardware.detect(p.llamaServer, p.llamaLibDir, p.jcaHome)
         echo "OS:      ", h.osName, " ", h.osRelease
         echo "CPU:     ", h.cpuModel, " (", h.cpuThreads, " threads)"
         if h.gpuDevices.len == 0:
@@ -265,7 +239,7 @@ proc main() =
         echo "current: ", (if haveCur: cur else: "none deployed")
         quit(if found: 0 else: 1)
       of "list":
-        let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+        let h = hardware.detect(p.llamaServer, p.llamaLibDir, p.jcaHome)
         for s in hardware.scoreAll(profiles, h):
           let mark = if s.disqualified: "  --" else: align($s.points, 4)
           echo mark, "  ", s.profile.name
@@ -277,7 +251,7 @@ proc main() =
           quit(2)
         var target: hardware.Profile
         if args[2] == "--best":
-          let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+          let h = hardware.detect(p.llamaServer, p.llamaLibDir, p.jcaHome)
           let (found, best) = hardware.bestProfile(profiles, h)
           if not found:
             stderr.writeLine "no profile matched this machine"
@@ -4166,11 +4140,9 @@ proc main() =
       echo "fs-selftest: FAIL (", bad, ")"
       quit(1)
     of "hardware-selftest":
-      # Action purpose: profile scoring decides which tuning the machine runs
-      # under, and a wrong score does not fail loudly — it silently runs on the
-      # wrong profile, which looks like working software that is merely slow.
-      # So the ladder is asserted here against hand-written hardware
-      # descriptions, with no sysctl call and no window.
+      # Action purpose: a wrong score silently runs the machine on the wrong
+      # tuning, so the ladder is asserted against hand-written hardware
+      # descriptions; one check alone reads this host.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
         if cond: echo "  ok   ", label
@@ -4186,8 +4158,8 @@ proc main() =
             profiles.len >= 5 and profiles.allIt(it.name.len > 0),
             "found " & $profiles.len)
 
-      # The USER's machine, per SETTLED FACTS: i5-1135G7, GTX 1650 Ti on
-      # Vulkan0, Intel Iris Xe on Vulkan1.
+      # The USER's machine under FreeBSD: i5-1135G7, GTX 1650 Ti on Vulkan0,
+      # Intel Iris Xe on Vulkan1.
       let dual = Hardware(
         osName: "FreeBSD", osRelease: "14.0-RELEASE",
         cpuModel: "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
@@ -4255,10 +4227,88 @@ proc main() =
             genBest.found and genBest.score.profile.name.contains("CPU"),
             "got " & (if genBest.found: genBest.score.profile.name else: "none"))
 
-      # A non-FreeBSD host must be disqualified from every OS-pinned profile,
-      # since MATCH_OS mismatch disqualifies rather than scoring zero.
+      # The same machine under Linux, where its two GPUs enumerate the other way
+      # round. Neither the profile it gets nor the devices it runs on may depend
+      # on that order.
+      var linux = dual
+      linux.osName = "Linux"
+      linux.gpuDevices = @[
+        "Vulkan0: Intel(R) Iris(R) Xe Graphics (TGL GT2) (11746 MiB, 10571 MiB free)",
+        "Vulkan1: NVIDIA GeForce GTX 1650 Ti (4096 MiB, 3981 MiB free)"]
+      let linuxBest = hardware.bestProfile(profiles, linux)
+      check("the same machine under Linux selects the same profile",
+            linuxBest.found and
+            linuxBest.score.profile.name == dualBest.score.profile.name,
+            "got " & (if linuxBest.found: linuxBest.score.profile.name else: "none"))
+      check("device names resolve to the right index on either OS",
+            hardware.resolveDevices("NVIDIA,Intel", linux.gpuDevices).ids ==
+              "Vulkan1,Vulkan0" and
+            hardware.resolveDevices("NVIDIA,Intel", dual.gpuDevices).ids ==
+              "Vulkan0,Vulkan1")
+      let partial = hardware.resolveDevices("NVIDIA, Vulkan3 ,AMD",
+                                            linux.gpuDevices)
+      check("a device id passes through and an unmatched name is reported",
+            partial.ids == "Vulkan1,Vulkan3" and partial.unresolved == @["AMD"],
+            partial.ids & " / " & $partial.unresolved)
+      check("a pattern matching two devices takes each once",
+            hardware.resolveDevices("Intel|NVIDIA,Intel|NVIDIA",
+                                    linux.gpuDevices).ids == "Vulkan0,Vulkan1")
+      check("only a device named by pattern needs the device list",
+            hardware.needsDeviceList("NVIDIA") and
+            not hardware.needsDeviceList("Vulkan0, cuda1") and
+            not hardware.needsDeviceList("none") and
+            not hardware.needsDeviceList(""))
+      check("a model number is a name, not a device id",
+            hardware.needsDeviceList("A770") and hardware.needsDeviceList("RTX4090"))
+      let igpuFirst = @[
+        "Vulkan0: Intel(R) UHD Graphics 770 (15360 MiB, 13060 MiB free)",
+        "Vulkan1: NVIDIA GeForce RTX 3060 (12288 MiB, 11800 MiB free)"]
+      check("a pattern matches the device name, not its memory figures",
+            hardware.resolveDevices("3060", igpuFirst).ids == "Vulkan1")
+      let twice = hardware.resolveDevices("NVIDIA,vulkan0,Intel", dual.gpuDevices)
+      check("a device named twice, by pattern and by id in any case, is taken once",
+            twice.ids == "Vulkan0,Vulkan1" and twice.unresolved.len == 0,
+            twice.ids & " / " & $twice.unresolved)
+      let mixed = hardware.resolveDevices("none,NVIDIA", linux.gpuDevices)
+      check("`none` stands only alone; beside a device it is reported, not passed",
+            hardware.resolveDevices(" none ", linux.gpuDevices).ids == "none" and
+            mixed.ids == "Vulkan1" and mixed.unresolved == @["none"],
+            mixed.ids & " / " & $mixed.unresolved)
+
+      # The Linux probes read kernel files; their parsers are checked on the
+      # formats the kernel writes, so they are checked on FreeBSD too.
+      let swaps = hardware.procSwaps(
+        "Filename\tType\tSize\tUsed\tPriority\n" &
+        "/dev/zram0                              partition\t8388604\t0\t100\n" &
+        "/swapfile                               file\t\t4194300\t0\t-2\n")
+      check("/proc/cpuinfo, /proc/meminfo and /proc/swaps parse",
+            hardware.cpuinfoModel("processor\t: 0\nvendor_id\t: GenuineIntel\n" &
+              "model name\t: 11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz\n") ==
+              "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz" and
+            hardware.meminfoKiB("MemTotal:       16163768 kB\nMemFree: 1 kB\n",
+                                "MemTotal") == 16163768 and
+            swaps.devices == @["/dev/zram0", "/swapfile"] and
+            swaps.totalKiB == 12582904,
+            $swaps)
+      let mounts = "/dev/a / ext4 rw 0 0\n/dev/b /home btrfs rw 0 0\n" &
+                   "/dev/c /homework xfs rw 0 0\ntmpfs /home tmpfs rw 0 0\n"
+      check("storage is the topmost mount on the longest prefix of the path",
+            hardware.mountFsType(mounts, "/home/u/Jenova") == "tmpfs" and
+            hardware.mountFsType(mounts, "/homework/x") == "xfs" and
+            hardware.mountFsType(mounts, "/srv") == "ext4")
+
+      let here = hardware.detect()
+      let builtFor = when defined(linux): "Linux"
+                     elif defined(freebsd): "FreeBSD"
+                     else: hostOS
+      check("detection names the OS this binary was built for, and counts its CPUs",
+            here.osName == builtFor and here.cpuThreads > 0,
+            here.osName & ", " & $here.cpuThreads & " threads")
+
+      # An OS no profile names is disqualified from every OS-pinned profile,
+      # since a MATCH_OS mismatch disqualifies rather than scoring zero.
       var alien = dual
-      alien.osName = "Linux"
+      alien.osName = "NetBSD"
       var pinned = 0
       for s in hardware.scoreAll(profiles, alien):
         if s.profile.matchOs.len > 0 and not s.profile.optIn:
@@ -4370,27 +4420,81 @@ proc main() =
           for (k, v) in pairs: c.values[k] = v
           var l = lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1")
           l.llamaArgs()
+        # The value after `-lm`, llama.cpp's load mode, or "" when none is passed.
+        proc loadMode(a: seq[string]): string =
+          let i = a.find("-lm")
+          if i >= 0 and i + 1 < a.len: a[i + 1] else: ""
 
         check("`1`/`0` keep meaning what the shipped profiles mean by them",
-              "--mlock" in argsWith({"JENOVA_MLOCK": "1"}) and
-              "--no-mmap" in argsWith({"JENOVA_MMAP": "0"}))
+              loadMode(argsWith({"JENOVA_MLOCK": "1"})) == "mmap+mlock" and
+              loadMode(argsWith({"JENOVA_MMAP": "0"})) == "none" and
+              loadMode(argsWith({"JENOVA_MLOCK": "1", "JENOVA_MMAP": "0"})) ==
+                "mlock")
         check("a switch spelled as a word is honoured, not refused",
-              "--mlock" in argsWith({"JENOVA_MLOCK": "true"}) and
-              "--no-mmap" in argsWith({"JENOVA_MMAP": "off"}))
-        check("...in either direction",
-              "--mlock" notin argsWith({"JENOVA_MLOCK": "no"}) and
-              "--no-mmap" notin argsWith({"JENOVA_MMAP": "yes"}))
+              loadMode(argsWith({"JENOVA_MLOCK": "true"})) == "mmap+mlock" and
+              loadMode(argsWith({"JENOVA_MMAP": "off"})) == "none")
+        check("...in either direction, and the default passes no load mode",
+              loadMode(argsWith({"JENOVA_MLOCK": "no"})) == "" and
+              loadMode(argsWith({"JENOVA_MMAP": "yes"})) == "" and
+              loadMode(argsWith(newSeq[(string, string)]())) == "")
         # The whole point: a value nothing can parse falls back to the default
         # rather than escaping as an exception. `argsWith` raising is the
         # failure, and the `try` is what turns it into one instead of a crash.
         var fellBack = false
         try:
           let a = argsWith({"JENOVA_MLOCK": "maybe", "JENOVA_MMAP": "maybe"})
-          fellBack = "--mlock" notin a and "--no-mmap" notin a
+          fellBack = loadMode(a) == ""
         except CatchableError:
           fellBack = false
         check("an unparseable switch defaults instead of raising out of start",
               fellBack)
+
+      block deviceNames:
+        # No `llama-server` to ask, so the probe does not answer: the names are
+        # not applied, llama-server keeps its own choice, and the log says why.
+        var c = config.Config()
+        c.values["DEVICES"] = "NVIDIA,Intel"
+        var notes: seq[string]
+        let a = lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1").llamaArgs(notes)
+        check("an unanswered device probe passes no -dev and notes why",
+              "-dev" notin a and notes.len == 1 and "did not answer" in notes[0],
+              $notes)
+        c.values["DEVICES"] = "none"
+        check("`none` is passed without asking for the device list",
+              "none" in lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1").llamaArgs())
+
+      block reasoningSwitch:
+        var c = config.Config()
+        let unset = lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1").llamaArgs()
+        c.values["JENOVA_REASONING"] = "off"
+        let off = lifecycle.Lifecycle(cfg: c, bindHost: "127.0.0.1").llamaArgs()
+        let i = off.find("--reasoning")
+        check("JENOVA_REASONING=off passes --reasoning off; unset passes nothing",
+              "--reasoning" notin unset and i >= 0 and i + 1 < off.len and
+              off[i + 1] == "off")
+
+        # The role default: an instruct model runs without thinking, a thinking
+        # one keeps llama-server's auto, and the setting overrides either.
+        let home = getTempDir() / "jenova-reasoning-" & $getCurrentProcessId()
+        createDir(home / "models" / "instruct")
+        createDir(home / "models" / "thinking")
+        writeFile(home / "models" / "instruct" / "i.gguf", "i")
+        writeFile(home / "models" / "thinking" / "t.gguf", "t")
+        proc argsFor(model, setting: string): seq[string] =
+          var cc = config.Config()
+          cc.values["MODEL_PATH"] = model
+          if setting.len > 0: cc.values["JENOVA_REASONING"] = setting
+          var lp: paths.Paths
+          lp.jcaHome = home
+          lifecycle.Lifecycle(paths: lp, cfg: cc, bindHost: "127.0.0.1").llamaArgs()
+        proc modeOf(a: seq[string]): string =
+          let j = a.find("--reasoning")
+          if j >= 0 and j + 1 < a.len: a[j + 1] else: ""
+        check("an instruct model runs without thinking unless the setting says so",
+              modeOf(argsFor(home / "models" / "instruct" / "i.gguf", "")) == "off" and
+              modeOf(argsFor(home / "models" / "thinking" / "t.gguf", "")) == "" and
+              modeOf(argsFor(home / "models" / "instruct" / "i.gguf", "on")) == "on")
+        removeDir(home)
 
       block notOurChild:
         # A pid this process never forked. `waitpid` fails with ECHILD and
@@ -7653,7 +7757,7 @@ proc main() =
         elif llamaPid == 0:
           echo "  WARNING: llama-server did not start — completions will 502"
           if not fileExists(p.llamaServer):
-            echo "           binary missing at ", p.llamaServer, " (make llama)"
+            echo "           binary missing at ", p.llamaServer, " (nimble llama)"
           else:
             let m = c.get("MODEL_PATH")
             if m.len == 0: echo "           MODEL_PATH is not set"

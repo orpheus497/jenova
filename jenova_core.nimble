@@ -2,7 +2,7 @@ import std/[os, strutils, tables]
 
 version       = "0.1.0"
 author        = "orpheus497"
-description   = "Jenova Cognitive Architecture - native FreeBSD desktop application"
+description   = "Jenova Cognitive Architecture - native desktop application for FreeBSD and Linux"
 license       = "AGPL-3.0-or-later"
 srcDir        = "src"
 binDir        = "bin"
@@ -173,15 +173,34 @@ task suites, "Build both binaries and run the test suites":
     echo "suites: no mapped-window step — missing " & missing.join(", ")
     exec "JENOVA_GUI_NO_RUN=1 sh tests/gui_build.sh"
 
+# Action purpose: a static `llama-server` is one file with no libraries of its
+# own, so the copy carries no symlinks and no library path into the build tree.
+# llama.cpp's web UI is not downloaded and its tests are not built.
 task llama, "Build the llama.cpp backend into external/ext_bin":
   let build = "external" / "llama.cpp" / "build"
+  let dest = "external" / "ext_bin" / "bin"
+  # Every GPU backend is named ON or OFF, so a switch between runs is not undone
+  # by the value CMake cached from the previous one.
+  let backend = getEnv("JENOVA_BACKEND", "vulkan").toLowerAscii
+  let gpu = case backend
+            of "vulkan": " -DGGML_VULKAN=ON -DGGML_CUDA=OFF"
+            of "cuda": " -DGGML_VULKAN=OFF -DGGML_CUDA=ON"
+            of "cpu": " -DGGML_VULKAN=OFF -DGGML_CUDA=OFF"
+            else: ""
+  if gpu.len == 0:
+    echo "JENOVA_BACKEND must be vulkan, cuda or cpu, not '" & backend & "'"
+    quit(1)
+  let (online, code) = gorgeEx("getconf _NPROCESSORS_ONLN")
+  let jobs = if code == 0 and online.strip.len > 0: online.strip else: "4"
   exec "cmake -S external/llama.cpp -B " & build &
-       " -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_CURL=OFF"
-  exec "cmake --build " & build & " --config Release -j"
-  mkDir "external" / "ext_bin" / "bin"
-  for f in listFiles(build / "bin"):
-    if f.endsWith("llama-server") or f.contains(".so"):
-      cpFile(f, "external" / "ext_bin" / "bin" / f.extractFilename)
+       " -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF" & gpu &
+       " -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF" &
+       " -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF"
+  exec "cmake --build " & build & " --config Release --target llama-server -j " &
+       jobs
+  mkDir dest
+  # `cmake -E copy` keeps the execute bit, which NimScript's `cpFile` drops.
+  exec "cmake -E copy " & (build / "bin" / "llama-server") & " " & dest
 
 task clean, "Remove build artifacts":
   rmFile "bin/jenova-core"

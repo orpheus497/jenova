@@ -1,19 +1,15 @@
-## Script function and purpose: detect the machine, score every profile against
-## it, and deploy the winner. Kept below the window because a wrong score does
-## not fail loudly — it silently runs the machine on the wrong tuning — so all of
-## it has to be assertable with no window and no backend.
-##
-## No kernel tunable is ever applied and `/etc/sysctl.conf` is never written.
-## Reading a `sysctl` to learn what the machine *is* is detection; setting one
-## would be tuning, and that is out of scope here.
+## Script function and purpose: detect the machine — through `sysctl` on FreeBSD,
+## `/proc` and `/sys` on Linux — score every profile against it, and deploy the
+## winner. Kept below the window because a wrong score does not fail loudly, so
+## all of it is assertable with no window. It reads the kernel and never tunes it.
 
-import std/[algorithm, os, osproc, re, streams, strtabs, strutils]
+import std/[algorithm, os, osproc, re, sequtils, streams, strtabs, strutils]
 
 type
   Hardware* = object
-    ## The three `*Raw` fields are the strings a profile's patterns are tested
-    ## against; the rest exist only to be shown.
-    osName*: string        ## always "FreeBSD" — see `detectOs`
+    ## `osName`, `cpuModel`, `gpuDevices` and `swapInfo` are what a profile's
+    ## patterns are tested against; the rest exist only to be shown.
+    osName*: string        ## the OS this binary was built for — see `detectOs`
     osRelease*: string
     cpuModel*: string
     cpuThreads*: int
@@ -50,6 +46,9 @@ type
 
 const
   ProfilesDirName* = "hardware-profiles"
+
+  ## The llama.cpp backends whose devices are GPUs, named `<backend><index>`.
+  DeviceBackends = ["Vulkan", "CUDA", "ROCm", "SYCL"]
 
   ## The numbers that decide which profile a machine gets, named rather than
   ## inlined. The penalty in particular is the whole reason a dual-GPU profile
@@ -131,19 +130,69 @@ proc sysctlStr(key: string): string =
 proc sysctlInt(key: string): int =
   try: parseInt(sysctlStr(key)) except ValueError: 0
 
-## Action purpose: the OS name is hardcoded rather than read from `uname -s`.
-## Under the Linuxulator `uname -s` answers "Linux", which selects a Linux
-## profile on a FreeBSD host. The release still comes from the kernel.
+## Function purpose: a `/proc` or `/sys` file, empty when it cannot be read.
+proc readKernelFile(path: string): string =
+  try: readFile(path) except IOError, OSError: ""
+
+## Function purpose: the first `model name` in `/proc/cpuinfo`.
+proc cpuinfoModel*(cpuinfo: string): string =
+  for raw in cpuinfo.splitLines:
+    let colon = raw.find(':')
+    if colon > 0 and raw[0 ..< colon].strip == "model name":
+      return raw[colon + 1 .. ^1].strip
+  ""
+
+## Function purpose: one `/proc/meminfo` field, in KiB.
+proc meminfoKiB*(meminfo, key: string): int =
+  for raw in meminfo.splitLines:
+    let f = raw.splitWhitespace
+    if f.len >= 2 and f[0] == key & ":":
+      try: return parseInt(f[1]) except ValueError: return 0
+  0
+
+## Function purpose: the device paths in `/proc/swaps` and their total size in KiB.
+proc procSwaps*(swaps: string): tuple[devices: seq[string], totalKiB: int] =
+  for raw in swaps.splitLines:
+    let f = raw.splitWhitespace
+    if f.len >= 3 and f[0].startsWith("/"):
+      result.devices.add f[0]
+      try: result.totalKiB += parseInt(f[2]) except ValueError: discard
+
+## Function purpose: the filesystem type of the `/proc/self/mounts` entry holding
+## `path`: the longest mount point over it, and of equal ones the last (on top).
+proc mountFsType*(mounts, path: string): string =
+  var longest = -1
+  for raw in mounts.splitLines:
+    let f = raw.splitWhitespace
+    if f.len < 3: continue
+    let mnt = f[1].replace("\\040", " ")
+    if (mnt == "/" or path == mnt or path.startsWith(mnt & "/")) and
+       mnt.len >= longest:
+      longest = mnt.len
+      result = f[2]
+
+## Function purpose: the OS this binary was built for; the release is the running
+## kernel's.
 proc detectOs(h: var Hardware) =
-  h.osName = "FreeBSD"
-  h.osRelease = sysctlStr("kern.osrelease")
+  when defined(freebsd):
+    h.osName = "FreeBSD"
+    h.osRelease = sysctlStr("kern.osrelease")
+  elif defined(linux):
+    h.osName = "Linux"
+    h.osRelease = readKernelFile("/proc/sys/kernel/osrelease").strip
+  else:
+    h.osName = hostOS
   if h.osRelease.len == 0: h.osRelease = "unknown"
 
 ## Function purpose: the model string is what the CPU patterns match against,
 ## so it is taken verbatim rather than normalised.
 proc detectCpu(h: var Hardware) =
-  h.cpuModel = sysctlStr("hw.model")
-  h.cpuThreads = sysctlInt("hw.ncpu")
+  when defined(linux):
+    h.cpuModel = cpuinfoModel(readKernelFile("/proc/cpuinfo"))
+    h.cpuThreads = countProcessors()
+  else:
+    h.cpuModel = sysctlStr("hw.model")
+    h.cpuThreads = sysctlInt("hw.ncpu")
 
 ## Function purpose: `execCmdEx` has no timeout, and the GPU probe below
 ## initialises Vulkan — which can be arbitrarily slow while the agent model is
@@ -193,81 +242,124 @@ proc runBounded(exe: string, args: seq[string], libDir: string,
   try: p.close() except CatchableError: discard
   (outp, true)
 
-## Function purpose: the GPU list comes from `llama-server --list-devices`
-## rather than `vulkaninfo` or `pciconf`, because it reports the devices the
-## inference engine can actually use — which is the only question a profile
-## asks. Failure is not fatal: a machine with no working Vulkan still scores, it
-## just cannot win a GPU-matched profile.
-proc detectGpu(h: var Hardware, llamaServer, llamaLibDir: string) =
+## Function purpose: the GPUs `llama-server --list-devices` reports, one
+## `Vulkan0: <name> (...)` line each, and whether it answered at all.
+proc probeDevices*(llamaServer, llamaLibDir: string):
+    tuple[devices: seq[string], ok: bool] =
   if llamaServer.len == 0 or not fileExists(llamaServer): return
   # An enumeration that has not answered by then is not going to, and the
   # caller would rather report no GPU than never return.
   let (outp, ok) = runBounded(llamaServer, @["--list-devices"], llamaLibDir,
                               10_000)
   if not ok: return
+  result.ok = true
   for raw in outp.splitLines:
     let line = raw.strip
-    # The device name between the colon and the parenthesis is what the
-    # profiles' GPU patterns are written against.
     if line.len == 0 or not line.contains(':'): continue
     let head = line.split(':')[0].strip
-    if not (head.startsWith("Vulkan") or head.startsWith("CUDA") or
-            head.startsWith("ROCm") or head.startsWith("SYCL")): continue
-    h.gpuDevices.add line
+    if DeviceBackends.anyIt(head.startsWith(it)): result.devices.add line
+
+## Function purpose: from the engine rather than `vulkaninfo`, because the
+## devices it can use are the only question a profile asks.
+proc detectGpu(h: var Hardware, llamaServer, llamaLibDir: string) =
+  h.gpuDevices = probeDevices(llamaServer, llamaLibDir).devices
 
 ## Function purpose: swap is detected as well as RAM because one profile
 ## identifies itself by its swap device rather than by its memory size.
 proc detectMemory(h: var Hardware) =
-  let physBytes = sysctlInt("hw.physmem")
-  if physBytes > 0: h.ramGiB = physBytes div (1024 * 1024 * 1024)
-  # `swapinfo -k` prints a header then one row per device, so the rows to sum
-  # are the ones whose first field is a path.
   var swapKiB = 0
-  try:
-    let (outp, code) = execCmdEx("swapinfo -k")
-    if code == 0:
-      for raw in outp.splitLines:
-        let parts = raw.splitWhitespace
-        if parts.len >= 2 and parts[0].startsWith("/"):
-          try: swapKiB += parseInt(parts[1]) except ValueError: discard
-  except OSError, IOError:
-    discard
+  when defined(linux):
+    let kib = meminfoKiB(readKernelFile("/proc/meminfo"), "MemTotal")
+    if kib > 0: h.ramGiB = kib div (1024 * 1024)
+    swapKiB = procSwaps(readKernelFile("/proc/swaps")).totalKiB
+  else:
+    let physBytes = sysctlInt("hw.physmem")
+    if physBytes > 0: h.ramGiB = physBytes div (1024 * 1024 * 1024)
+    # `swapinfo -k` prints a header then one row per device, so the rows to sum
+    # are the ones whose first field is a path.
+    try:
+      let (outp, code) = execCmdEx("swapinfo -k")
+      if code == 0:
+        for raw in outp.splitLines:
+          let parts = raw.splitWhitespace
+          if parts.len >= 2 and parts[0].startsWith("/"):
+            try: swapKiB += parseInt(parts[1]) except ValueError: discard
+    except OSError, IOError:
+      discard
   h.swapGiB = swapKiB div (1024 * 1024)
 
 ## Function purpose: reported rather than scored — no profile matches on
 ## storage, but the screen shows it beside the rest.
-proc detectStorage(h: var Hardware) =
-  h.storage = if execCmdEx("zpool list").exitCode == 0: "ZFS" else: "UFS"
+proc detectStorage(h: var Hardware, jcaHome: string) =
+  when defined(linux):
+    let dir = if jcaHome.len > 0: jcaHome else: getHomeDir()
+    let home = try: expandFilename(dir) except OSError: absolutePath(dir)
+    h.storage = mountFsType(readKernelFile("/proc/self/mounts"), home)
+    if h.storage.len == 0: h.storage = "unknown"
+  else:
+    h.storage = if execCmdEx("zpool list").exitCode == 0: "ZFS" else: "UFS"
 
 ## Function purpose: the swap patterns are tested against device names plus the
 ## NVMe controller listing, because the profile that uses them is identifying a
 ## swap device by its controller model.
 proc detectSwapHardware(h: var Hardware) =
   var parts: seq[string]
-  try:
-    let (outp, code) = execCmdEx("swapinfo")
-    if code == 0:
-      for raw in outp.splitLines:
-        let f = raw.splitWhitespace
-        if f.len >= 1 and f[0].startsWith("/"): parts.add f[0]
-  except OSError, IOError: discard
-  try:
-    let (outp, code) = execCmdEx("nvmecontrol devlist")
-    if code == 0:
-      for raw in outp.splitLines:
-        if raw.strip.len > 0: parts.add raw.strip
-  except OSError, IOError: discard
+  when defined(linux):
+    parts.add procSwaps(readKernelFile("/proc/swaps")).devices
+    for dir in walkDirs("/sys/class/nvme/nvme*"):
+      let model = readKernelFile(dir / "model").strip
+      if model.len > 0: parts.add dir.lastPathPart & ": " & model
+  else:
+    try:
+      let (outp, code) = execCmdEx("swapinfo")
+      if code == 0:
+        for raw in outp.splitLines:
+          let f = raw.splitWhitespace
+          if f.len >= 1 and f[0].startsWith("/"): parts.add f[0]
+    except OSError, IOError: discard
+    try:
+      let (outp, code) = execCmdEx("nvmecontrol devlist")
+      if code == 0:
+        for raw in outp.splitLines:
+          if raw.strip.len > 0: parts.add raw.strip
+    except OSError, IOError: discard
   h.swapInfo = if parts.len == 0: "None" else: parts.join(" ")
 
-## Function purpose: the whole probe in one call, so a caller cannot run half
-## of it and score against a partly-filled record.
-proc detect*(llamaServer = "", llamaLibDir = ""): Hardware =
+## Function purpose: the whole probe in one call, so a caller cannot score a
+## partly-filled record. On Linux the storage reported is `jcaHome`'s.
+proc detect*(llamaServer = "", llamaLibDir = "", jcaHome = ""): Hardware =
   detectOs(result)
   detectCpu(result)
   detectGpu(result, llamaServer, llamaLibDir)
   detectMemory(result)
-  detectStorage(result)
+  detectStorage(result, jcaHome)
   detectSwapHardware(result)
+
+## Function purpose: a llama.cpp GPU id such as `Vulkan1` or `CUDA0`, in any case.
+proc isDeviceId(entry: string): bool =
+  for b in DeviceBackends:
+    if entry.len > b.len and entry.toLowerAscii.startsWith(b.toLowerAscii) and
+       entry[b.len .. ^1].allCharsInSet(Digits):
+      return true
+  false
+
+## Function purpose: whether a `DEVICES` value names a device by pattern and so
+## needs `probeDevices` to resolve. `none` is llama.cpp's only when it stands alone.
+proc needsDeviceList*(spec: string): bool =
+  if spec.strip == "none": return false
+  for raw in spec.split(','):
+    let entry = raw.strip
+    if entry.len > 0 and not isDeviceId(entry): return true
+  false
+
+## Function purpose: a `--list-devices` line's device name, without its id and
+## the memory figures after it, so a pattern cannot match a number of MiB.
+proc deviceName(line: string): string =
+  let colon = line.find(':')
+  result = line[colon + 1 .. ^1].strip
+  let memory = result.rfind(" (")
+  if memory > 0 and result.endsWith(")") and "MiB" in result[memory .. ^1]:
+    result = result[0 ..< memory]
 
 # ------------------------------------------------------------------ scoring --
 
@@ -283,6 +375,33 @@ proc matchesRe(hay, pattern: string): bool =
 ## so a CPU model containing metacharacters cannot change what it means.
 proc matchesFixed(hay, needle: string): bool =
   needle.len > 0 and hay.toLowerAscii.contains(needle.toLowerAscii)
+
+## Function purpose: a `DEVICES` value as llama.cpp device ids — an id passes
+## through, any other entry names a GPU by pattern, since its index varies by OS.
+proc resolveDevices*(spec: string, listed: seq[string]):
+    tuple[ids: string, unresolved: seq[string]] =
+  if spec.strip == "none": return ("none", @[])
+  var picked: seq[string]
+  # Device ids compare case-insensitively in llama.cpp, and a device named twice
+  # would have its memory counted twice by the layer split.
+  proc taken(id: string): bool = picked.anyIt(cmpIgnoreCase(it, id) == 0)
+  for raw in spec.split(','):
+    let entry = raw.strip
+    if entry.len == 0: continue
+    if isDeviceId(entry):
+      if not taken(entry): picked.add entry
+      continue
+    var found = ""
+    for line in listed:
+      let colon = line.find(':')
+      if colon <= 0: continue
+      let id = line[0 ..< colon].strip
+      if not taken(id) and matchesRe(deviceName(line), entry):
+        found = id
+        break
+    if found.len > 0: picked.add found
+    else: result.unresolved.add entry
+  result.ids = picked.join(",")
 
 ## Function purpose: three conditions disqualify rather than merely score zero,
 ## which is the part of the ladder that decides most outcomes — a profile out of

@@ -483,6 +483,17 @@ const SourceRoles* = ["instruct", "thinking"]
   ## The only two directories a switch may draw from. The user owns them and
   ## this module reads them without managing them.
 
+## Function purpose: the source role (`instruct` or `thinking`) a model path
+## resolves into, following the `agent/active.gguf` link; "" for anywhere else.
+proc roleOf*(jcaHome, modelPath: string): string =
+  if modelPath.len == 0: return ""
+  let real = try: modelPath.expandFilename except OSError: modelPath
+  for role in SourceRoles:
+    let dir = jcaHome / "models" / role
+    let realDir = try: dir.expandFilename except OSError: dir
+    if real.startsWith(realDir & "/"): return role
+  ""
+
 ## Function purpose: what the selector draws. `discover` cannot answer it — that
 ## resolves one path per role and discards the rest of the directory.
 ##
