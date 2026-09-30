@@ -1,12 +1,25 @@
 # Report 08 — Math Rendering (P-A5): the plan
 
-**Status:** plan, **no source changed**
+**Status as of 2026-09-29T22:38Z (baseline `4acedfa0`; host Arch Linux).** M-1, M-2 and M-3 are
+implemented: inline markup in `markdown.nim`, layout in `mathtex.nim`, the font in `mathfont.nim`,
+and `gui.nim`'s `bkMath` draw — size variants drawn by FreeType glyph index, the formula's own LaTeX
+source as the fallback, and a layout whose metrics come partly from HarfBuzz: the MATH constants,
+a glyph's horizontal advance, and a size variant's advance and italic correction are the font's,
+while a glyph's ascent and descent are fixed fractions of the size (0.75/0.25, italic correction
+0.08 of the size) and a variant's are 0.8/0.2 of its advance, with its width fixed at 0.55 of the
+size. Open: M-4, and M-3's screenshot gate. §9 lists the remaining work and §10
+the maths fonts per OS; forward work is in PLANS.md.
+**Re-checked 2026-09-30T01:16Z:** every claim a code verification flagged was read against the code
+and corrected in place.
+
 **Ruling:** the USER put math **in scope** (session 9). Report 05's "Open decisions" item 1 —
 *"Pango-drawn subset (native, limited), external TeX renderer (correct, heavy), or out of
 scope"* — is answered here, and the answer is neither of the first two as posed.
 **Method:** every capability claim below was **measured on a real host**, with the probe source
 kept. Where a claim comes from a header, a library or `jca_web`'s own code it is quoted verbatim.
-**Measured at commit:** `2f30d1c`
+[2026-09-29T22:38Z: the probe sources, `mathprobe.c` and `pangoprobe.c`, were session-local and
+are not in the tree.]
+**Measured at commit:** `2f30d1c` (reflog-only; its content reached main in `989c2b5d`)
 
 ---
 
@@ -34,12 +47,13 @@ Tier 2 in markup is impossible.
 **Tier 1 alone is already worth shipping**, and it ships first: today `$\alpha$` renders as the
 literal seven characters `$\alpha$`. *(It said five. It is seven — counted after the fact, which
 is exactly the kind of number this report is supposed to measure rather than estimate.)*
+[2026-09-29T22:38Z: shipped — `markdown.inlineMarkup` renders it as α.]
 
 ### The three options as report 05 framed them
 
 | Option | Verdict |
 |---|---|
-| External TeX renderer | **Rejected.** It needs a TeX installation, a process spawn per formula, and a temp file. `gui.nim`'s header documents exactly two process spawns and the argument for each; a third, per rendered formula, on the GTK thread, is not in the same class. It also fails offline-first: a formula that renders only when a toolchain is installed is a formula that usually does not render. |
+| External TeX renderer | **Rejected.** It needs a TeX installation, a process spawn per formula, and a temp file. `gui.nim`'s own code starts processes for two purposes — `route`/`ifconfig` for the LAN address and `xdg-open` for the Web UI, both through `runOutput` — and the window reaches more through the modules it calls: `lifecycle` forks and execs the backends, `nvimctl` runs `nvim --server … --remote-expr`, and `vte.nim` spawns the editor in its terminal. One more per rendered formula, on the GTK thread, is not in the same class as any of those. It also fails offline-first: a formula that renders only when a toolchain is installed is a formula that usually does not render. |
 | Pango-drawn subset | **Adopted as Tier 1 only.** Correct for inline, and provably incapable of display maths — Pango markup has no fraction, no radical and no vertical stacking. |
 | Out of scope | Overtaken by the ruling. |
 | **A native Cairo layout over the font's own MATH table** | **Adopted as Tier 2.** Not offered in report 05's framing, because the enabling fact below had not been measured: this needs no new dependency. |
@@ -66,9 +80,15 @@ from `hb-ot-math.h`:
 
 Those constants are the same quantities *The TeXbook*'s Appendix G lays out over — axis height,
 numerator and denominator shifts, rule thickness, gaps, and the variant/assembly machinery that
-grows a delimiter to fit its contents. **A math layout engine here needs no new library, no new
-port entry, and no process.** That is the fact the whole plan rests on, and it is why "native"
-stopped being the expensive option.
+grows a delimiter to fit its contents. **A math layout engine here needs no package outside the
+GTK/Pango/Cairo stack, and no process.** That is the fact the whole plan rests on, and it is why
+"native" stopped being the expensive option. It is not "no new library" in the build, though: the
+code links HarfBuzz explicitly — `pkgConfig("harfbuzz", "print/harfbuzz")` in `mathfont.nim`, which
+`jenova_core.nim` also imports for `math-selftest`, so `jenova-core` links it too — and M-3's
+glyph-index draw links FreeType into the window (`pkgConfig("freetype2", "print/freetype2")` in
+`gui.nim`). Both are build-time pkg-config requirements, so a build without their development files
+fails, even though GTK, Pango and Cairo depend on the same libraries. The install docs list neither —
+see PLANS.md. The Arch host has HarfBuzz 14.5.0 and Pango 1.58.2, and `hb-ot-math.h` is present.
 
 The window already draws with Cairo (`import owlkettle/cairo`) and already owns a
 `DrawingArea`-backed renderable (`NeuralCanvas`), so the drawing surface is precedent, not new
@@ -80,7 +100,7 @@ ground.
 
 ### `hb_ot_math_has_data()` returning true is **not** sufficient
 
-Measured with `scratchpad/mathprobe.c` (built against `pkg-config --cflags --libs harfbuzz`),
+Measured with `scratchpad/mathprobe.c` (session-local; built against `pkg-config --cflags --libs harfbuzz`),
 reading `AXIS_HEIGHT`, `FRACTION_NUMERATOR_SHIFT_UP` and `FRACTION_RULE_THICKNESS`, and counting
 vertical glyph variants for `U+0028`:
 
@@ -100,22 +120,34 @@ asks only `has_data` picks DejaVu on almost every machine and renders confident 
 
 **So the probe is three questions, not one:** `hb_ot_math_has_data(face)`, *and*
 `FRACTION_NUMERATOR_SHIFT_UP != 0`, *and* at least one vertical variant for a known stretchy
-delimiter. Walk a preference list — Latin Modern Math, STIX Two Math, a TeX Gyre math face,
-FreeSerif — take the first that passes all three, and **if none does, degrade Tier 2 to Tier 1
-rendering with a visible note rather than drawing something wrong.** A formula rendered badly is
-worse than a formula rendered plainly, because only one of them tells the reader to distrust it.
+delimiter. Walk a preference list, take the first that passes all three, and **if none does,
+render something plain with a visible note rather than draw something wrong.** A formula rendered
+badly is worse than a formula rendered plainly, because only one of them tells the reader to
+distrust it.
+
+As built (`mathfont.chooseFont`): if `JENOVA_MATH_FONT` is set, that file is the only font tried,
+and an unusable one is reported as not found with no fallback search. Otherwise one walk of five
+fixed font roots collects candidates, and the first copy of these, in this order, that passes all
+three checks wins: `latinmodern-math.otf`, `STIXTwoMath-Regular.otf`, `STIXMath-Regular.otf`,
+`DejaVuMathTeXGyre.ttf`, `texgyrepagella-math.otf`, `texgyretermes-math.otf`, `FreeSerif.ttf`. The
+degrade, as §8 decides, is to plain source rather than Tier 1: a display formula with no usable font
+— or one the parser refuses — renders as its literal LaTeX in a plain `Label` inside a code-block
+frame, and with no font `mathfont.unavailableReason` sits beside it, naming the files and
+directories searched.
 
 **FreeBSD port names are deliberately not asserted here.** They must be read off the target with
 `pkg search`, and `docs/install.md` updated from what that says — this session could not reach a
 FreeBSD ports index and will not guess. What *is* safe to state: GNU FreeFont carries a usable
 table, so **the fallback tier does not require a TeX installation**, and math is not gated on the
-user installing anything.
+user installing anything. [2026-09-29T22:38Z: the targets are now FreeBSD and Linux (Arch, Debian,
+Fedora). §10 lists what is known per OS — verified for Arch only — and §8 puts the recommendation
+in docs/usage.md, not docs/install.md.]
 
 ---
 
 ## 3. Tier 1's primitives are verified against a real Pango parser
 
-`scratchpad/pangoprobe.c` calls `pango_parse_markup()` directly:
+`scratchpad/pangoprobe.c` (session-local) calls `pango_parse_markup()` directly:
 
 ```
 pango runtime 1.52.1
@@ -134,15 +166,17 @@ TeX sets variables in italic and function names upright.
 > wrong verification, and it contradicted a requirement two paragraphs below.** Pango does accept
 > `&#945;`, which is what the probe shows. But this codebase does not let a string reach Pango
 > unchecked — every markup fragment must pass `markupBalanced`, and that guard
-> (`src/jenova/markdown.nim:128`) accepts exactly five entity names:
+> (its `'&'` branch, `src/jenova/markdown.nim:128-131`) accepts exactly five entity names:
 >
 > ```nim
 > if semi < 0 or s[i + 1 ..< semi] notin ["amp", "lt", "gt", "quot", "apos"]:
 >   return false
 > ```
 >
-> A `&#945;` therefore fails the guard, the whole line falls back to escaped source, and the
-> Greek letter never draws. **The two requirements in this section could not both be satisfied**,
+> A `&#945;` therefore fails the guard and the Greek letter never draws. (As built, the guard runs
+> per formula first: `mathMarkup` returns an empty string for a fragment that fails
+> `markupBalanced`, and `inlineMarkup` then leaves only that formula's source visible while the rest
+> of the line still renders; the whole-line fallback is not reached for this case.) **The two requirements in this section could not both be satisfied**,
 > and the error was verifying the wrong layer: the toolkit's parser rather than the guard this
 > project puts in front of it. M-1 emits the UTF-8 codepoint directly, which needs no entity, no
 > guard exemption and no probe.
@@ -152,7 +186,9 @@ TeX sets variables in italic and function names upright.
 1.52.1; **the FreeBSD target's Pango version was not checked in this session.** If `<sup>` is
 used, that version is a precondition to verify with `pkg-config --modversion pango`. If it is not
 verified, use the `rise` form, which needs no check. **Do not assert which Pango release added
-`<sup>` without reading Pango's own NEWS — this session did not.**
+`<sup>` without reading Pango's own NEWS — this session did not.** [2026-09-29T22:38Z: settled by
+construction — M-1 uses the `rise` form (`MathSup`/`MathSub` in `markdown.nim`), so no Pango version
+needs checking on any target. The Arch host has Pango 1.58.2.]
 
 Pango markup is XML, so `<`, `>` and `&` must be escaped before reaching it. `markdown.nim`
 already solves this for `bkText`; **reuse that path, do not write a second escaper.** This is not
@@ -185,8 +221,10 @@ Four obligations follow, and the third is the one that gets missed:
 
 1. **Delimiters:** `\(…\)` and `$…$` inline; `\[…\]` and `$$…$$` display.
 2. **Code is excised first.** A `$` inside a fenced block or a code span is never maths.
-   `markdown.nim` already separates `bkCode`, which covers fenced blocks; the **inline span**
-   half still has to be handled within `bkText`.
+   `markdown.nim` separates `bkCode`, which covers fenced blocks. The **inline span** half is
+   handled inside `bkText` too: `inlineMarkup` lifts code spans into NUL-delimited placeholders
+   before the maths pass, and `mathItem` refuses any formula containing a placeholder byte;
+   `markdown-selftest` asserts both.
 3. **`(?<!\\)` is load-bearing, and the Web UI's comment cites its sources**: `Definitions\\(also
    called macros)` — the title of chapter 20 of *The TeXbook* — and `\\[4pt]`, a LaTeX line
    break. An escaped delimiter is not maths. Getting this wrong turns ordinary prose into a
@@ -212,6 +250,10 @@ fixed, and it needs assertions of its own.
 | new `src/jenova/mathtex.nim` | the parser and the box layout. Pure: `string -> tree -> boxes`. No GTK, no Cairo, no owlkettle — so it links into `jenova-core` and is asserted there |
 | new `src/jenova/mathfont.nim` | the three-question font probe and the HarfBuzz MATH constants. Thin FFI, the shape `sourceview.nim` already uses |
 | `src/jenova/gui.nim` | one more branch beside `bkText` (`:3373`) and `bkTable` (`:3388`), drawing a `bkMath` box tree on a `DrawingArea` renderable modelled on `NeuralCanvas` |
+
+[2026-09-29T22:38Z: every site landed. The `gui.nim` branch is `mdBlock`'s `bkMath` case — at
+`4acedfa0` `bkText` is `:3717`, `bkTable` `:3732` and `bkMath` `:3759`. It draws on owlkettle's own
+`DrawingArea` inside a `ContentScroll`, not a `NeuralCanvas`-style renderable.]
 
 **`mathtex.nim` must not import owlkettle.** That is what keeps the layout assertable: `gui.nim`
 links into no test binary, which is why `composer.nim` and `convmd.nim` exist. The parser and the
@@ -250,7 +292,7 @@ window is better than it was.**
 > a child carrying both `x` and `y` needs no second packing rule — drawing is translate and
 > recurse. `MathFont` is `MathConstants` plus two closures, `measure` and `variants`, so the
 > module imports only `std/[strutils, tables]` and stays assertable without a font.
-| **M-3** (font half ✅, metrics contract ✅) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw remains: `bkMath` renders. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch |
+| **M-3** ✅ (2026-09-10; gate open) | `mathfont.nim` done — the three-question probe, the constants reader, and a fallback table. The Cairo draw is done too: `bkMath` draws size variants by FreeType glyph index and falls back to its own source; its layout takes the MATH constants, horizontal advances, and variant advances and italic correction from HarfBuzz, while glyph ascent and descent are fixed fractions of the size and no glyph extents are read from the font. Font probe with the three-question test and the honest degrade path | `tests/gui_build.sh` seeds a conversation containing a display formula and photographs it. Report 07 V-14 applies — the gate must actually build the branch. **Open:** `gui_build.sh` seeds no formula, and its mapped-window tier cannot run on this host (no Xvfb, xdotool or xclip) |
 
 > **M-3's draw had a prerequisite this report never stated, and it is now closed.** The two
 > modules declared *separate* `MathConstants` types — `mathfont`'s of 24 fields, `mathtex`'s of 44
@@ -262,7 +304,11 @@ window is better than it was.**
 > same table drifted without either file being wrong on its own. `mathtex` declares
 > `MathConstants` — it is the consumer, and it is the pure half that stays assertable without a
 > font — and `mathfont` now imports it and fills it in. There is no second declaration to drift.
-> A field the layout adds is a compile error in the font module rather than a zero at run time.
+> A field the layout adds is not a type error, though: `MathConstants` is a plain object with no
+> `{.requiresInit.}`, so a constructor that omits the field still compiles and leaves it at 0.0. The
+> build fails only through the `static:` block's `fieldPairs` walk over `defaultConstants()`;
+> `readConstants` is unchecked and would read the new field as zero at run time until it is added
+> there.
 >
 > What the old reader actually did, recorded because the shape of it is the lesson: it filled 24
 > of the 44 fields, left 20 at zero, and read **five display-style constants into the text-style
@@ -273,18 +319,22 @@ window is better than it was.**
 > formula drawn badly is worse than one drawn plainly — applies to the metrics and not only to the
 > glyphs.
 >
-> **Guarded at compile time, because neither half of it is visible in output.** `mathfont` carries
-> a `static:` block asserting the constant ordinals against `hb_ot_math_constant_t`, asserting that
-> every text-style constant is immediately followed by its display-style counterpart (which is what
-> catches a transposition), walking `defaultConstants()` with `fieldPairs` to refuse any field left
-> at zero, and asserting that display-style values exceed their text-style partners. Reintroducing
-> the original mapping now **fails the build**, with the failing field named. Verified by doing it.
+> **Guarded at compile time, as far as a compile-time guard can reach.** `mathfont`'s `static:`
+> block pins four ordinals to their `hb_ot_math_constant_t` values (0, 55, 5 and 38) — the others
+> are not checked against HarfBuzz — asserts for all eight text/display pairs that the display-style
+> constant immediately follows its text-style one (which catches a transposition in the enum),
+> walks `defaultConstants()` with `fieldPairs` to refuse any field left at zero, naming it, and
+> asserts that display-style values exceed their text-style partners in the default table. What it
+> cannot reach is `readConstants`, which runs at run time against a font: reading a display-style
+> constant into a text-style field there, or omitting a field from its constructor, still compiles.
+> So a mis-numbered paired ordinal or a zero field in `defaultConstants` fails the build — only the
+> latter names the field — while the original reader's mapping would not.
 >
 > Two values are still not font values and are stated as such: the `MATH` table has no matrix
 > column or row spacing, so those come from plain TeX — the `\quad` `\matrix` puts between columns,
 > and `\jot` between the lines of a display. §6's correction 2 predicted exactly this and it holds.
 
-| **M-4** | Polish: display-math alignment, `\begin{align}`, spacing classes (ord/op/bin/rel), and `docs/usage.md` stating exactly which LaTeX subset is supported | assertions per feature; **the doc must name what is *not* supported**, per §4.4 |
+| **M-4** — open, not started (§9) | Polish: display-math alignment, `\begin{align}`, spacing classes (ord/op/bin/rel), and `docs/usage.md` stating exactly which LaTeX subset is supported | assertions per feature; **the doc must name what is *not* supported**, per §4 item 4 |
 
 **M-1 is the whole of the visible win for most replies.** M-2 is the real engineering and it is
 pure, testable code. M-3 is the smallest of the three and the only one that needs a window.
@@ -301,10 +351,15 @@ pure, testable code. M-3 is the smallest of the three and the only one that need
   mechanism, exactly as P-B4's per-block copy turned out to be.
 * **No selection inside a display formula.** A Cairo-drawn block is a picture to GTK. That is a
   real regression against the Web UI, where KaTeX output is selectable HTML, and it is the honest
-  price of not shipping a browser. Inline maths — the common case — stays selectable, because
-  Tier 1 keeps it inside the paragraph's own `Label`.
+  price of not shipping a browser. Inline maths — the common case — sits inside the paragraph's own
+  markup `Label` through Tier 1, but that `Label` is not selectable either: owlkettle's `Label` at
+  `ac61ecf` has no `selectable` property and nothing in `src/` calls `gtk_label_set_selectable`, so
+  no transcript text is selectable in the window.
 * **The FreeBSD font port names and the target's Pango version are unverified** (§2, §3). Both
   are preconditions to check on the target before M-3 lands, not assumptions to build on.
+  [2026-09-29T22:38Z: M-3 landed without either. The Pango question is moot because M-1 uses
+  `rise`. The font packages are now a four-OS question — §10, with the recommendation to go in
+  docs/usage.md; see PLANS.md.]
 
 ---
 
@@ -322,7 +377,7 @@ degrades to plain text if none does. It renders either way.
 
 ### Why it looked like a blocker
 
-`docs/install.md:46`, verbatim:
+`docs/install.md:53` (`:46` when this was written), verbatim:
 
 > Everything installs from `pkg(8)`. **There is no optional tier** — a package that cannot be
 > installed stops the build.
@@ -339,9 +394,10 @@ kind of thing that table describes, so it does not belong in that table, and the
 tension with anything.
 
 The misreading was treating "no optional tier" as "no optional anything". `docs/install.md`
-already distinguishes these: `fetch(1)` is tried before `curl` and the document says so at `:92`
-— *"`curl` is the fallback, not an optional extra"* — which is a runtime preference between two
-things, described outside the dependency table. A font preference is the same shape.
+already distinguishes these: `fetch(1)` is tried before `curl` and the document says so at `:99`
+(`:92` when this was written) — *"`curl` is the fallback, not an optional extra"* — which is a
+runtime preference between two things, described outside the dependency table. A font preference
+is the same shape.
 
 ### The decision
 
@@ -352,7 +408,65 @@ things, described outside the dependency table. A font preference is the same sh
 | **`docs/usage.md`** | states, where the maths feature is documented, that a maths font improves the result, names Latin Modern Math, and says what happens without one |
 | **Rationale** | Latin Modern's constants *are* TeX's — it is the digital descendant of the font Knuth designed for it — and it carries 8 delimiter sizes against FreeSerif's 4. But FreeSerif is far more likely to be present already, and it is genuinely usable (§2), so the fallback is not a consolation prize |
 
+[2026-09-29T22:38Z: as built, `mathfont.FontCandidates` runs Latin Modern Math → STIX Two Math →
+STIX Math → DejaVu Math TeX Gyre → TeX Gyre Pagella Math → TeX Gyre Termes Math → GNU FreeSerif
+(`FreeSerif.ttf`) → the formula's source with a note. It lacks TeX Gyre Bonum, Schola and DejaVu as
+`.otf`, `FreeSerif.otf`, Noto Sans Math and Libertinus Math (§9). docs/install.md is unchanged, as
+decided. docs/usage.md has no maths section yet — that is M-4 (§9).]
+
 **M-3 therefore has no precondition on the USER.** The two real preconditions stand and are
 technical, not editorial: read the FreeBSD font port names off the target with `pkg search`
 before writing them into any document (§2), and check the target's Pango version before relying
-on `<sup>` rather than the `rise` spelling (§3).
+on `<sup>` rather than the `rise` spelling (§3). [2026-09-29T22:38Z: M-3 shipped with neither
+check, and the Pango one no longer applies (§7). The package-name check now covers four OSes (§10).
+Since GPL is allowed (USER ruling, DECISIONS_LOG 2026-09-29T22:29Z), GNU FreeFont may be recommended; whether a maths font
+should be named as a recommended package per OS is the USER's call — see PLANS.md.]
+
+---
+
+## 9. Remaining work
+
+As of 2026-09-29T22:38Z; sequenced in PLANS.md.
+
+- **Base glyphs can come from a different font than the one measured.** `initMathFont` stores the
+  preference-list label as the family, and `drawMathBox` draws every non-variant glyph through
+  Cairo's toy text API by that name. "GNU FreeSerif" and "JENOVA_MATH_FONT" are not fontconfig
+  family names, so fontconfig substitutes (here `fc-match 'GNU FreeSerif'` → Noto Serif). Draw base
+  glyphs by index through the FreeType face already opened for size variants.
+- **Italic is a synthetic slant** of the maths face, not the Mathematical Alphanumeric Symbols.
+- **`buildMathLayoutFont`'s metrics are proportions, not glyph extents:** ascent 0.75 em, descent
+  0.25 em, italic correction 0.08 em, 0.55 em for a rune the font lacks; variants take a 0.55 em
+  width and a 0.8/0.2 split of their advance.
+- **No glyph assembly.** Past the tallest size variant, `drawMathBox` stretches that glyph;
+  `hb_ot_math_get_glyph_assembly` is unbound.
+- **The fallback frame hides why** a formula was refused (`MathLayout.error`), and an unusable
+  `JENOVA_MATH_FONT` gets the generic "No usable maths font found" text.
+- **M-3's gate:** seed a display formula in `tests/gui_build.sh` and photograph it. That needs Xvfb,
+  xdotool and xclip, which this host lacks.
+- **Font discovery.** `FontRoots` lacks the TeX Live trees — `/usr/share/texmf-dist/fonts` (Arch),
+  `/usr/share/texlive/texmf-dist/fonts` (Fedora, Debian's texlive), `/usr/local/share/texmf-dist/fonts`
+  (FreeBSD) — and user font directories; `walkDirRec`'s defaults also skip symlinked files and
+  directories. `FontCandidates` lacks `FreeSerif.otf` (the only form Arch ships),
+  `texgyre{bonum,schola,dejavu}-math.otf`, `NotoSansMath-Regular.ttf` and
+  `LibertinusMath-Regular.otf`. Each must pass `usable`'s three questions before joining; Noto and
+  Libertinus are unverified.
+- **M-4.** TeX's inter-atom spacing table over `AtomClass` — the classes exist, `layoutRow` inserts
+  no space, and there is no inner class. `align`, `aligned`, `cases`, `gather`, `array` and a
+  top-level `\\` line break, which are today refused by name or drawn as a literal `\\`. And a
+  maths section in docs/usage.md: the delimiters, the supported commands and environments, what is
+  not supported (§7, plus the environments above until they land), the source fallback,
+  `JENOVA_MATH_FONT`, and a font note naming Latin Modern Math. The code is a few hundred lines in
+  `mathtex.nim` plus `math-selftest` assertions; `gui.nim` is unaffected.
+
+## 10. Maths fonts per OS
+
+Arch is verified from this host's pacman sync and file databases as of 2026-09-29T22:38Z. The
+other rows are best knowledge — confirm with `pkg search`, `apt-file` or `dnf provides` before
+documenting them.
+
+| OS | Found by today's `mathfont` | Missed |
+|---|---|---|
+| **Arch** (verified) | `otf-latinmodern-math` → `/usr/share/fonts/OTF/latinmodern-math.otf`; `ttf-dejavu` → `DejaVuMathTeXGyre.ttf`, the face chosen on this host | `gnu-free-fonts` ships `FreeSerif.otf`, not `.ttf`. `texlive-fontsrecommended` and `texlive-fontsextra` (Latin Modern, TeX Gyre, STIX Two and STIX maths) sit under `/usr/share/texmf-dist`, which is not searched. `noto-fonts` (Noto Sans Math, installed here) and `otf-libertinus` are not candidates. `tex-gyre-fonts` has no maths faces |
+| **Debian** (best knowledge) | `fonts-lmodern` and `fonts-texgyre-math` under `/usr/share/texmf/fonts`; `fonts-freefont-ttf` → `/usr/share/fonts/truetype/freefont/FreeSerif.ttf` | `fonts-freefont-otf`; TeX Live under `/usr/share/texlive`; Noto Sans Math (`fonts-noto-core`); `fonts-stix` and `fonts-dejavu-extra` unconfirmed |
+| **Fedora** (best knowledge) | `latinmodern-math-fonts` → `/usr/share/fonts/latinmodern-math/` | `texlive-*` under `/usr/share/texlive`; `stix-math-fonts` and `gnu-free-serif-fonts` depend on their file names; Noto Sans Math |
+| **FreeBSD** (best knowledge) | `x11-fonts/stix-fonts`, `x11-fonts/freefont-ttf`, `x11-fonts/dejavu` under `/usr/local/share/fonts`, if their file names match | `print/texlive-texmf` under `/usr/local/share/texmf-dist`; no standalone Latin Modern Math port confirmed |

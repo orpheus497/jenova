@@ -1,42 +1,40 @@
 # BRIEFING
 
-**Current as of 2026-09-10T00:18Z.** Overwritten each session.
-
-All eleven trackers the Workspace Architecture mandates exist and are synchronized.
-
-`AGENTS.md` is present at the repository root and tracked in git (`5606d418`).
+**Current as of 2026-09-30T04:36Z.** Overwritten each session.
 
 ## Where the project is
 
-Both binaries (`bin/jenova-core` and `bin/jenova`) build natively in this workspace and pass validation (`gui_check` passes, `bin/jenova --check` verifies the GTK window tree).
-
-**All twenty-one socket-free self-tests pass natively.**
-Only `serve-selftest` binds a listener (port 18642) to drive load against a fake upstream;
-an earlier claim that `relay-selftest` also binds a listener was false — its source in
-`src/jenova_core.nim` tests `upstream.spliceHeaders` purely in memory on a fixed string buffer.
-Neither `serve-selftest` nor the shell suites were run under the standing instruction not to bind listeners.
-
-**This workspace is a Linux container hosted on a FreeBSD system.**
-Kernel-level inspections, `sysctl` probes, and hardware detection paths must account for
-container isolation. The `sysctl` probe, the `fork`/`setsid`/`execv` backend path, the
-D-Bus tray, the Neovim page, and the GUI screenshots remain outstanding functional work.
+- **Code:** `main` = `4acedfa0` (PR #118). The branch `idk` is rebuilt as `main` plus this session's
+  commits: the llama.cpp update to `a6ea155d3`, Stages 1 and 2 with the thinking setting, the
+  `.gitignore` and `jvim/` cleanup, and the documentation. Its previous tip, `154e0cf9` (a commit that
+  only made every file executable), is dropped from the branch and kept on `idk-before-cleanup`.
+  Nothing is pushed.
+- **Host:** bare-metal Arch Linux (HP ENVY, i5-1135G7, Iris Xe + GTX 1650 Ti). `bin/` and
+  `external/ext_bin/` hold Linux builds; `nimble suites` passes end to end.
+- **Deployed** to `~/Jenova` from the checkout (no install step yet — Stage 3): profile
+  `Vulkan/dgpu-igpu-i5-1135g7`; `models/instruct/` holds the Nemotron3-Nano 4B Q8_K_P (active),
+  `models/thinking/` the Qwen3.5 9B Q4_K_M, `models/embed/` nomic-embed-text 1.5. Instruct runs with
+  thinking off and a `5,1` split (`~/Jenova/etc/jenova.local.conf`), about 8 tok/s; thinking about 3.
+  Start it with `./bin/jenova` (window) or `./bin/jenova-core serve`.
+- **Rulings:** `DECISIONS_LOG.md` 2026-09-29T23:30Z, 2026-09-30T03:07Z and 04:36Z — including git back
+  in scope for this branch, and `jvim/` being Jenova's own Neovim config under Jenova's licence.
 
 ## What this session accomplished
 
-1. **M-3 (Display Math Rendering Pipeline):**
-   - **Markdown Parsing (`markdown.nim`):** Added `bkMath` to `BlockKind`. Implemented delimiter parser supporting single-line and multi-line display math blocks (`$$...$$` and `\[...\]`) while preserving half-open streaming fences as `bkText`. Gated by 6 new assertions in `markdown-selftest` (all passing).
-   - **Font Metrics Bridge (`mathfont.nim`):** Added `hb_font_get_glyph_h_advance` FFI binding and included installed `("DejaVu Math TeX Gyre", "DejaVuMathTeXGyre.ttf")` in `FontCandidates`. Implemented `buildMathLayoutFont` and `buildDefaultMathFont` supplying real `measure` and `variants` closures to `mathtex.MathFont`. Gated by live font assembly assertions in `math-selftest` (all passing).
-   - **GUI & Cairo Screen Drawing (`gui.nim`, `theme.nim`):** Bound Cairo text and state FFI (`cairo_show_text`, `cairo_save`, `cairo_restore`). Implemented cached math layout font retrieval, theme-adaptive foreground color resolution, and recursive `MathBox` Cairo drawing (`bxRule` filled rectangles and `bxGlyph` scaled font glyphs). Wired `bkMath` rendering inside `mdBlock` with horizontally scrollable `ContentScroll` and a graceful fallback container showing literal LaTeX on invalid formulas or parse failures. Added `.md-math` stylesheet rule.
-   - **Validation:** Both `bin/jenova` and `bin/jenova-core` compiled with zero hints or warnings. All 21 socket-free self-tests passed cleanly. `gui_check.sh` passed. `bin/jenova --check` verified widget hierarchy.
+1. Stages 1 and 2 (build and OS detection on FreeBSD and Linux).
+2. The Linux build and a tested deployment with the USER's models.
+3. `JENOVA_REASONING`, with instruct models defaulting to no thinking; llama.cpp's `-lm`.
+4. `.gitignore` fixed; `jvim/` repository leftovers removed; every doc checked against the code.
 
-## Blockers
+## Blockers — needs the USER
 
-None. Standing instruction: do not bind listeners (`serve-selftest` or shell test suites).
+- Approval of Stage 3 and each later stage. `PLANS.md` 4.6 (the Web UI creates new FOCUS notes on
+  every page load) is the most urgent defect found.
+- The Push/Pull decision (remove it from the Web UI, or re-specify it as backup/restore).
+- Whether to push `idk`.
 
-## Next 3-5 steps
+## Next steps (after approval)
 
-1. Phase 2.2: reduce the three render memos (`BlockMemo`, `ParseMemo`, `thumbCache`) to viewport scale rather than conversation scale.
-2. Concurrency design for retrieval layer: address the two deferred races from report 03 (`forgetMessage` against restore-and-update indexing, and descendant discovery against fork creation).
-3. Phase 4.3: implement the command palette in the desktop GUI.
-4. Reachable hardware & platform integrations: FreeBSD `sysctl` probe, `fork`/`setsid`/`execv` path, D-Bus tray against real watcher.
-5. Capture `png/gui-*.png` screenshots to unblock README reordering.
+1. Stage 3 — the install step in the Nim build.
+2. Stages 4 and 5 — 4.6 first.
+3. Stage 7, then Stage 8 (tests) last. Cleanup only on confirmation.

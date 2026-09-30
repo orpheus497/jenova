@@ -6,7 +6,7 @@
 
 ## Key Features & Philosophy
 
-- **100% First-Party Native UI Architecture**: Replaces generic third-party UI plugins (*Telescope*, *Nvim-Tree*, *Lualine*, *Bufferline*, *Which-Key*, *Indent-Blankline*, *Trouble*, *Edgy*, *Noice*, *Nvim-Notify*) with custom, lightweight, native modules built specifically for Neovim 0.10+.
+- **100% First-Party Native UI Architecture**: Replaces generic third-party UI plugins (*Telescope*, *Nvim-Tree*, *Lualine*, *Bufferline*, *Which-Key*, *Indent-Blankline*, *Trouble*, *Edgy*, *Noice*, *Nvim-Notify*) with custom, lightweight, native modules built specifically for Neovim 0.10+. Those plugins are still vendored under `pack/jenova/start/`, and Neogit still uses Telescope for its pickers.
 - **Vendored & Self-Contained Ecosystem**: Core backend capabilities (LSP config, Treesitter, Git integration, Conform formatting, CMP engine) live directly inside the `pack/` directory. Zero package manager overhead and zero internet required on initial boot.
 - **Jenova AI Integration**: Built-in local FIM (Fill-in-the-middle) code completion (`llama.vim`), interactive AI Chat drawer, context compaction, autonomous tool execution engine, LAN server discovery, and backend telemetry monitoring.
 - **Cross-Platform & FreeBSD Detection**: Automatically detects system compiler and language server versions across Linux, macOS, and FreeBSD (e.g., versioned `clangd19`, `py311-pyright`, `nimlsp`/`nimlangserver`).
@@ -15,17 +15,14 @@
 
 ## Installation & Setup
 
-### Quick Installation (Deploy Script)
+`jvim` is part of the Jenova repository. Inside Jenova it needs no installation: the desktop
+application's editor page starts Neovim with `NVIM_APPNAME=jvim` and `XDG_CONFIG_HOME` set to the
+repository root, so Neovim loads this directory as its configuration
+(`src/jenova/nvimctl.nim` `editorEnv`).
 
-Run the provided installation script to symlink the configuration to `~/.config/jvim` and add the `jvi` terminal alias to your shell profile (`~/.bashrc` / `~/.zshrc`):
+### Standalone Use
 
-```bash
-./install.sh
-```
-
-### Manual Installation
-
-1. Symlink or copy this repository to your Neovim configuration directory:
+1. Symlink this directory to your Neovim configuration directory:
    ```bash
    ln -s "$(pwd)" ~/.config/jvim
    ```
@@ -55,11 +52,9 @@ jvi
 ```
 jvim/
 ├── init.lua                   # Entry point: global options, spec runner, keymaps, health checks
-├── install.sh                 # Deployment script for symlinking & shell alias creation
-├── LICENSE                    # BSD 2-Clause License
 ├── README.md                  # Comprehensive user-facing documentation
 ├── colors/
-│   └── jvim.lua               # Custom jvim dark theme and highlight groups
+│   └── jvim.vim               # Custom jvim dark theme and highlight groups, beside Neovim's stock schemes
 ├── doc/
 │   └── jvim.txt               # Native Vim help tag documentation (:help jvim)
 ├── lua/
@@ -296,10 +291,12 @@ Popup menu that appears after pressing leader prefix combinations, displaying av
 | :--- | :--- | :--- |
 | `JENOVA_CONNECT_HOST` | `127.0.0.1` | Explicit remote Jenova CA IP/hostname |
 | `JENOVA_HOST` | `127.0.0.1` | Fallback Jenova backend bind host |
-| `JENOVA_PORT` | `8080` | Main API proxy & intelligence server port |
-| `JENOVA_LLAMA_PORT` | `8081` | Dedicated FIM completion server port |
-| `JENOVA_LAN_MODE` | `0` | Set to `1` to force auto-scanning local subnet on startup |
-| `JENOVA_ROOT` | *(none)* | Root directory of Jenova system workspace |
+| `JENOVA_PORT` | `8080` | Jenova's server: chat, storage, and FIM completion (`/infill`) |
+| `JENOVA_LLAMA_PORT` | `8081` | The llama-server port `:JenovaMonitor` polls |
+| `JENOVA_LLAMA_EMBED_PORT` | `8082` | The embedding server port `:JenovaMonitor` polls |
+| `JENOVA_LAN_MODE` | `0` | `1`: when no server answers, scan the local subnet. With `JENOVA_ROOT` unset the scan runs anyway |
+| `JENOVA_LAN_SCAN` | *(on)* | `0` or `false` turns the subnet scan off |
+| `JENOVA_ROOT` | *(none)* | Root directory of the Jenova repository; set by Jenova when it starts the editor |
 
 ---
 
@@ -328,4 +325,5 @@ If AI features or LSP integration exhibit issues:
 
 ## License
 
-This project is licensed under the BSD 2-Clause License. See the [LICENSE](LICENSE) file for details.
+`jvim` is part of Jenova and is licensed with it, under the GNU AGPL v3.0 or later. See
+[../LICENSE](../LICENSE).

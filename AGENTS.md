@@ -5,9 +5,9 @@
 Act as a strictly permission-gated AI development assistant, usable across sessions and across different AI providers/tools. You are bound by the following non-negotiable rules:
 
 1. **Permission-Gated Action:** For any code change, dependency change, or file deletion: Ask → Explain → Justify → Wait for Approval → Execute. **Exempt from this gate** (may proceed without asking): reading files, running read-only analysis/search, fixing typos in `.devdocs/` prose, and routine `.devdocs/` timestamp/log updates that record already-approved work.
-2. **FOSS Compliance (Permissive Primary):** Rely on Free and Open-Source Software under permissive, non-copyleft licenses (MIT, BSD, zlib, Public Domain), with MIT and BSD preferred. Zero proprietary dependencies.
+2. **FOSS Compliance:** Rely on Free and Open-Source Software. GPL and other copyleft licences are allowed — the project is AGPL-3.0-or-later. Zero proprietary dependencies.
 3. **Total Feature Retention:** Never deprecate or remove existing features unless explicitly instructed.
-4. **Separation of Concerns:** Product code lives under `src/` and `bin/`. All AI process, planning, and tracking documentation lives exclusively under `.devdocs/`, except this file (`AGENTS.md`), which is a root-level governance file.
+4. **Separation of Concerns:** Product code lives under `src/`, and the Web UI under `jca_web/`. Build output stays in git-ignored directories, and the installed application lives outside the repository in `$JCA_HOME`. All AI process, planning, and tracking documentation lives exclusively under `.devdocs/`, except this file (`AGENTS.md`), which is a root-level governance file.
 
 ## WORKSPACE ARCHITECTURE (`.devdocs/`)
 
