@@ -1,20 +1,9 @@
 # Jenova — .gitignore
-#
-# Consolidated 2026-09-01 (Session 019). Rules for paths that no longer exist
-# were removed rather than carried: /jenova-cli, /cli-agent, /models, /backups,
-# conductor/, /.kdev4, the installation-audit artifacts and the shellcheck
-# report. Duplicate entries for .jenova/ and .crush/ were folded into one.
-#
-# ONE KNOWN INCONSISTENCY, deliberately left for the USER to decide:
-# `bin/jenova` is listed below AND is tracked in git, because it was committed
-# before the rule existed and .gitignore does not untrack an existing file. It
-# is therefore a ~2 MB binary re-committed on every build. Untracking it
-# (`git rm --cached bin/jenova`) removes it from the repository on the next
-# commit, which changes what a clone gets — so it is not done here.
 
 # --- Build artifacts ---------------------------------------------------------
-# Both binaries are built by `nimble core` and `nimble gui` (never `make` — this
-# project has no Makefile, D-AM).
+# Built by `nimble core`, `nimble gui`, `nimble llama` and `nimble web`.
+# llama.cpp's own build tree, `external/llama.cpp/build/`, is ignored by the
+# submodule's `.gitignore`.
 /bin/jenova
 /bin/jenova-core
 /bin/llama-server
@@ -27,17 +16,23 @@ nimcache/
 *.a
 *.dylib
 
-# --- jvim: TRACKED ON PURPOSE — do not add an ignore rule here ---------------
-# `jvim/` is the configuration for the Neovim this application embeds, added by
-# the USER 2026-09-01 and ruled **D-BS**: it is configuration, not product Lua,
-# so the no-Lua rule (D-AM, D-AZ) does not archive it and it is not ignored.
-#
-# `jvim/pack/` is vendored third-party plugins and is tracked deliberately —
-# the distribution's promise is zero package manager and no network on first
-# boot, which only holds if the vendored tree ships with it. ~28 MB total.
-#
-# Its runtime noise (shada, swap, undo, *.log) is handled by `jvim/.gitignore`,
-# which git honours in place. `*.log` below also covers `jvim/nvim.log`.
+# --- jvim: TRACKED ON PURPOSE ------------------------------------------------
+# `jvim/` is Jenova's own Neovim configuration (NVIM_APPNAME=jvim, loaded from
+# this repository) with its vendored plugins in `jvim/pack/`, tracked so the
+# editor needs no package manager and no network on first start. Only Neovim's
+# runtime noise under it is ignored; a rule that matches a plugin's own file
+# drops it from every clone. `*.log` below covers `jvim/nvim.log`.
+/jvim/**/*.shada
+/jvim/**/Session.vim
+/jvim/**/.netrwhist
+/jvim/**/undo/
+/jvim/**/[._]*.s[a-v][a-z]
+/jvim/**/[._]*.un~
+/jvim/**/.DS_Store?
+/jvim/**/._*
+/jvim/**/.Spotlight-V100
+/jvim/**/.Trashes
+/jvim/**/ehthumbs.db
 
 # --- Models (never commit multi-GB weights) ----------------------------------
 *.gguf
@@ -58,9 +53,7 @@ nimcache/
 /.system/
 
 # --- AI assistant working directories ----------------------------------------
-# `.devdocs/` is deliberately NOT here: the process record is tracked and public
-# in repository history. A previous revision of this file claimed otherwise and
-# was wrong on both counts.
+# `.devdocs/` is deliberately NOT here: the process record is tracked.
 .claude/
 .crush/
 .gemini/
@@ -92,9 +85,8 @@ secrets.json
 auth.json
 
 # --- Local configuration overrides -------------------------------------------
-# `jenova.local.conf` is the USER's machine file. `hardware.applyProfile`
-# never writes it, and that is asserted (D-BN) — silently overwriting it is the
-# one way the profile feature could do real damage.
+# `jenova.local.conf` is the user's machine file; `hardware.applyProfile` never
+# writes it, and `hardware-selftest` asserts that.
 /etc/jenova.conf.local
 /etc/jenova.conf.bak.*
 /etc/jenova.local.conf
@@ -117,8 +109,10 @@ auth.json
 *.7z
 *.bak
 *.tmp
+# Crash dumps are `core` or `core.<pid>`; `core.*` would also hide source files
+# such as nvim-cmp's `lua/cmp/core.lua`.
 core
-core.*
+core.[0-9]*
 *.dmp
 
 # --- System and IDE ----------------------------------------------------------
@@ -132,7 +126,7 @@ Thumbs.db
 *.swo
 \#*\#
 
-# --- Web UI build output (jca_web is frozen, D-Z — read it, never edit it) ----
+# --- Web UI build output -----------------------------------------------------
 /jca_web/node_modules/
 /jca_web/.svelte-kit/
 /jca_web/build/
