@@ -10,7 +10,7 @@
 /public/
 /external/ext_bin/
 nimcache/
-
+/.devdocs/
 *.o
 *.so
 *.a
