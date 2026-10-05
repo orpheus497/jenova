@@ -18,8 +18,9 @@ management layer, running entirely on your own hardware.
   One source builds on both. Hardware detection is the one part that differs by OS, chosen when
   building: `sysctl`, `swapinfo`, `zpool` and `nvmecontrol` on FreeBSD, `/proc` and `/sys` on
   Linux; the GPU probe, `llama-server --list-devices`, is the same on both. `nimble llama` builds a
-  static `llama-server`, with Vulkan by default. ZFS is detected and reported, not tuned, and
-  nothing creates swap-backed or `mdmfs` model storage.
+  static `llama-server` with the Vulkan and CPU backends, and on Linux with CUDA as well when `nvcc`
+  is found. ZFS is detected and reported, not tuned, and nothing creates swap-backed or `mdmfs`
+  model storage.
 
 ## Components
 
@@ -33,7 +34,7 @@ builds on a headless or LAN-server host without a graphical toolkit.
 |---|---|---|
 | `bin/jenova` | The desktop application: chat window, workspace tree, canvas, tray, backend control. **Starts the HTTP server and both backends in its own process.** Its control worker polls the chat backend's health, reports a backend that exited, and starts, stops and restarts on request; it runs no automatic watchdog. On quit it stops the embedding server and deliberately leaves `llama-server` running, so the next start does not reload the model | Nim, owlkettle, GTK4/libadwaita (`src/jenova_gui.nim`) |
 | `bin/jenova-core` | The same program without GTK: HTTP server, database, filesystem mirror, retrieval. `serve` adds a watchdog thread that restarts a failed backend | Nim (`src/jenova_core.nim`) |
-| `llama-server` | GGUF inference | C++ (llama.cpp, built with Vulkan) |
+| `llama-server` | GGUF inference | C++ (llama.cpp, built with Vulkan and CPU, and CUDA on Linux) |
 | Embedding server | A second `llama-server` in embedding mode | C++ |
 | Web UI | Browser workspace and chat, served by the HTTP server | SvelteKit / Svelte 5 / Tailwind 4 |
 
@@ -85,8 +86,9 @@ falls back to keywords.
    chunk by chunk without buffering, so streamed tokens reach the client as the model produces
    them. The only change to the response is the request's `X-Jenova-*` diagnostic headers, spliced
    in after the status line.
-4. **Inference** runs in `llama-server`. `nimble llama` builds it with Vulkan, or with CUDA under
-   `JENOVA_BACKEND=cuda` for the opt-in CUDA profile (`DEVICES=CUDA0`).
+4. **Inference** runs in `llama-server`. `nimble llama` builds it with Vulkan and CPU, and on Linux
+   with CUDA too when `nvcc` is on the `PATH` of `sh`, `bash` or `csh`; `JENOVA_BACKEND` builds one
+   backend instead. The opt-in CUDA profile names its device `CUDA0`.
 5. **Embeddings** for retrieval are requested from `:8082` by `rag.nim`.
 6. **Workspace state** is served by `src/jenova/api.nim`: `/api/db/*` from SQLite, mirrored to
    disk by `src/jenova/fssync.nim`; `/api/fs/*` (the trash and the tree) and `/api/storage/*` (raw
@@ -256,7 +258,10 @@ wider context than the discrete GPU alone allows — and coordination costs a li
 both are llama.cpp behaviour, not something this code settles. The devices are named because the
 driver's numbering differs between systems: the i5-1135G7 laptop's GTX 1650 Ti is `Vulkan0` on
 FreeBSD and `Vulkan1` on Linux, so the same profile passes `-dev Vulkan0,Vulkan1` on one and
-`-dev Vulkan1,Vulkan0` on the other; see [../hardware-profiles/README.md](../hardware-profiles/README.md).
+`-dev Vulkan1,Vulkan0` on the other. On Linux with CUDA built, `llama-server` lists the GTX first as
+`CUDA0`, so the name `NVIDIA` resolves to it and the profile passes `-dev CUDA0,Vulkan0`: the GTX
+through CUDA and the Iris Xe through Vulkan. See
+[../hardware-profiles/README.md](../hardware-profiles/README.md).
 
 **Memory.** On FreeBSD with ZFS, capping `vfs.zfs.arc_max` stops the ARC competing with the model
 — worth doing, and **yours to do: Jenova sets no kernel tunable and never writes

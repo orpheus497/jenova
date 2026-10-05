@@ -14,7 +14,7 @@ git clone --recurse-submodules https://github.com/orpheus497/jenova
 cd jenova
 
 # 2. Install the dependencies below, then build
-nimble llama     # llama-server with Vulkan, into external/ext_bin/bin/
+nimble llama     # llama-server into external/ext_bin/bin/ (Vulkan; on Linux also CUDA)
 nimble web       # the Web UI, into public/
 nimble core      # bin/jenova-core, the headless server
 nimble gui       # bin/jenova, the desktop application
@@ -34,7 +34,7 @@ repository root, or put `bin/` on your `PATH`.
 |---|---|
 | `nimble core` | `bin/jenova-core`, the headless server |
 | `nimble gui` | `bin/jenova`, the desktop application |
-| `nimble llama` | A static `llama-server` — one file, no shared libraries of its own — into `external/ext_bin/bin/`. Vulkan by default; `JENOVA_BACKEND=cuda` or `JENOVA_BACKEND=cpu` builds the CUDA or the CPU-only backend instead. llama.cpp's own web UI is not downloaded, and its tests are not built |
+| `nimble llama` | A static `llama-server` — one file, no shared libraries of its own — into `external/ext_bin/bin/`. On FreeBSD it builds the Vulkan and CPU backends; on Linux Vulkan, CPU and CUDA, where CUDA is built when `nvcc` is on the `PATH` of a login `sh` or `bash`, or of `csh` (`tcsh` where `csh` is not installed), and skipped with the reason printed otherwise. `JENOVA_BACKEND=vulkan`, `cuda` or `cpu` builds that backend, with the CPU, instead. It optimises for the machine it builds on (`GGML_NATIVE`), and a new build tree uses Ninja when it is installed. llama.cpp's own web UI is not downloaded, and its tests are not built |
 | `nimble web` | The SvelteKit Web UI into `public/` (runs `npm install`, which fetches from the npm registry) |
 | `nimble suites` | Builds both binaries and the Web UI, then runs the 22 `jenova-core <name>-selftest` subcommands, the six `tests/test_*.sh` suites, `tests/gui_check.sh` and `tests/gui_build.sh` (which runs only its build tier when an X display, ImageMagick, `xwininfo`, `xdotool`, `xclip` or `nc` is missing) |
 | `nimble clean` | Remove `bin/jenova-core`, `bin/jenova` and `nimcache` |
@@ -67,8 +67,9 @@ What the build and the runtime need, by role:
 | SQLite | `libsqlite3.so` at run time | The workspace database and the retrieval index. `src/jenova/db.nim` loads it by name when it starts rather than linking it; FTS5 is checked at run time, and without it retrieval skips the keyword index |
 | PCRE2 | `libpcre2-8.so.0` at run time | Nim's `std/re`, used by hardware detection; loaded by name, both binaries |
 | git | `git` | Cloning and the `external/llama.cpp` submodule, **and at run time**: every workspace is a git repository (`src/jenova/fssync.nim` runs `git init` and `git add`) |
-| cmake, a `make` program, a C/C++ compiler | `cmake`, `make`, `cc`/`c++` | `external/llama.cpp`'s build. `nimble llama` runs cmake with its default generator, which needs a `make` program to drive the compile |
-| Vulkan loader, `glslc`, SPIR-V headers | `vulkan`, `glslc` | The Vulkan build of llama.cpp and GPU offload |
+| cmake, Ninja or a `make` program, a C/C++ compiler | `cmake`, `ninja` or `make`, `cc`/`c++` | `external/llama.cpp`'s build. `nimble llama` configures a new build tree with Ninja when `ninja` is installed, otherwise with cmake's default generator, which needs a `make` program |
+| Vulkan loader, `glslc`, SPIR-V headers | `vulkan`, `glslc` | The Vulkan build of llama.cpp and GPU offload. `nimble llama` stops before configuring when `glslc` is not on `PATH` |
+| CUDA toolkit (Linux) | `nvcc` | The CUDA build of llama.cpp. Without `nvcc` on the `PATH` of `sh`, `bash` or `csh`, `nimble llama` builds Vulkan and CPU only and says so |
 | Node.js and npm | `node`, `npm` | Building the Web UI into `public/` |
 | An HTTPS client | `fetch` or `curl` | Web search. `fetch(1)` is tried first, then `curl`; on Linux that means `curl` |
 | `xdg-open` | `xdg-open` | The "Open Web UI" action |
@@ -154,7 +155,8 @@ for web search, and Neovim. Check the GTK and libadwaita versions against the fl
 
 ### Vulkan (default)
 
-Vulkan is what `nimble llama` builds, and what NVIDIA, AMD and Intel hardware all use by default.
+`nimble llama` builds Vulkan on FreeBSD and on Linux. It is what AMD and Intel hardware use, and
+what NVIDIA hardware uses wherever CUDA is not built.
 
 For AMD graphics on FreeBSD, install the kernel drivers:
 
@@ -173,19 +175,25 @@ profiles name their GPUs — `DEVICES="NVIDIA,Intel.*(Iris|Xe)"` — and when Je
 each name the number of the first device whose name matches it. `jenova-core backends args` shows
 the result.
 
-### CUDA (opt-in)
+### CUDA (Linux)
 
-CUDA is **never auto-selected** — the `CUDA/dgpu-generic` profile sets `PROFILE_OPT_IN=1`, which
+On Linux `nimble llama` builds CUDA beside Vulkan when it finds `nvcc`, the CUDA toolkit's compiler,
+on the `PATH` of a login `sh` or `bash`, or of `csh` (`tcsh` where `csh` is not installed). It
+prints the `nvcc` it found and the shell that found it, or that CUDA was skipped. Put the toolkit's
+`bin/` on your shell's `PATH` and run `nimble llama` again to add CUDA later.
+`JENOVA_BACKEND=cuda nimble llama` builds CUDA without Vulkan, and stops when no `nvcc` is found.
+FreeBSD builds no CUDA.
+
+With CUDA built, `llama-server --list-devices` lists the CUDA devices before the Vulkan ones, so an
+NVIDIA GPU appears twice — on the i5-1135G7 laptop under Linux as `CUDA0` and `Vulkan1`, with the
+Iris Xe as `Vulkan0`. A profile that names its GPU `NVIDIA` gets `CUDA0`; one that gives a device
+number, such as `Vulkan0`, keeps it.
+
+The `CUDA/dgpu-generic` profile is still **never auto-selected** — it sets `PROFILE_OPT_IN=1`, which
 excludes it from detection. To use it deliberately:
 
 ```sh
 jenova-core hardware apply CUDA/dgpu-generic
-```
-
-and build the backend with CUDA (`-DGGML_CUDA=ON`), which needs the CUDA toolkit:
-
-```sh
-JENOVA_BACKEND=cuda nimble llama
 ```
 
 ---
