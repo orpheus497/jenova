@@ -14,7 +14,7 @@ uniform depth of two:
 
 ```
 hardware-profiles/
-├── Vulkan/                       # Vulkan backend — the default, and what `nimble llama` builds
+├── Vulkan/                       # Vulkan backend — built by `nimble llama` on FreeBSD and Linux
 │   ├── apu-ryzen7-5700u/         # Ryzen 7 5700U, Vega 8 UMA, partial offload
 │   ├── dgpu-i5-1135g7/           # i5-1135G7 + GTX 1650 Ti, dGPU only
 │   ├── dgpu-igpu-i5-1135g7/      # i5-1135G7 + GTX 1650 Ti + Iris Xe, dual GPU
@@ -77,6 +77,10 @@ GPUs.
 i5-1135G7 laptop's GTX 1650 Ti `Vulkan0`, Linux its Iris Xe. So the i5-1135G7 profiles and
 `dgpu-generic-12gb` set `DEVICES` to names, which Jenova turns into numbers when it starts the
 backend (see [`jenova.conf`](#jenovaconf)); `apu-ryzen7-5700u` has one GPU and keeps `Vulkan0`.
+
+On Linux, when `nimble llama` built CUDA, `llama-server` lists the CUDA devices first, so an NVIDIA
+GPU appears as `CUDA0` ahead of its own Vulkan number. A name such as `NVIDIA` then resolves to
+`CUDA0` and that GPU runs through CUDA: the dual-GPU profile passes `-dev CUDA0,Vulkan0` there.
 
 ### `Vulkan/dgpu-i5-1135g7` — single dGPU, Optane swap
 
@@ -168,12 +172,12 @@ GPU-less host would get `dgpu-generic-12gb`, with full offload and a 32K context
 **Hardware:** NVIDIA GPU, CUDA backend
 **Strategy:** Full offload via CUDA.
 
-**This profile is never auto-selected.** NVIDIA hardware is driven through Vulkan by default;
-its `profile.conf` sets `PROFILE_OPT_IN=1`, which excludes it from detection. Without that, its
-broad NVIDIA pattern would score 25 on any NVIDIA host: a tie with `Vulkan/dgpu-generic-12gb` on a
-listed card, which `CUDA/` would win by sorting first, and a win over `CPU/generic` on an unlisted
-one — on exactly the hardware that should default to Vulkan. It would not beat the i5-1135G7
-profiles.
+**This profile is never auto-selected.** Its `DEVICES=CUDA0` needs a `llama-server` built with
+CUDA, which `nimble llama` produces only on Linux with `nvcc` found, and its `profile.conf` sets
+`PROFILE_OPT_IN=1`, which excludes it from detection. Without that, its broad NVIDIA pattern would
+score 25 on any NVIDIA host: a tie with `Vulkan/dgpu-generic-12gb` on a listed card, which `CUDA/`
+would win by sorting first, and a win over `CPU/generic` on an unlisted one — on hardware the
+`Vulkan/` profiles are written for. It would not beat the i5-1135G7 profiles.
 
 Deploy it deliberately:
 

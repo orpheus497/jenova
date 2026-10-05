@@ -180,7 +180,7 @@ Full detail — scoring, the priority ladder, every setting, and how to add a pr
 | **Targets** | FreeBSD 15+ (amd64, aarch64); Linux — Arch, Debian, Fedora |
 | **Toolkit floor** | Nim 2.2.10, GTK 4.10, libadwaita 1.4 |
 | **Storage** | Any. ZFS is detected and reported; no profile tunes it (the ARC cap in [docs/install.md](docs/install.md#zfs) is yours to apply) |
-| **GPU** | Vulkan, which `nimble llama` builds. CUDA is opt-in and never auto-selected; `JENOVA_BACKEND=cuda nimble llama` builds it |
+| **GPU** | `nimble llama` builds Vulkan and CPU on FreeBSD, and Vulkan, CPU and CUDA on Linux — CUDA when `nvcc` is on the `PATH` of `sh`, `bash` or `csh`. `JENOVA_BACKEND=vulkan`, `cuda` or `cpu` builds one backend instead. The CUDA profile stays opt-in and is never auto-selected |
 | **Swap** | Detected and scored where a profile asks; Jenova creates no swap or model store of its own |
 
 **One source, both systems.** The OS is detected when building and when running. Hardware

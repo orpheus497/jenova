@@ -173,29 +173,91 @@ task suites, "Build both binaries and run the test suites":
     echo "suites: no mapped-window step — missing " & missing.join(", ")
     exec "JENOVA_GUI_NO_RUN=1 sh tests/gui_build.sh"
 
+# Function purpose: the `nvcc` a login `sh` or `bash`, or `csh`, would run; the
+# PATH that `nimble` itself started with need not include the CUDA toolkit.
+proc findNvcc(): tuple[path, shell: string] =
+  var probes = @[("sh", "sh -lc 'command -v nvcc'"),
+                 ("bash", "bash -lc 'command -v nvcc'")]
+  # Action purpose: where `csh` is not installed, `tcsh` answers for its family.
+  for csh in ["csh", "tcsh"]:
+    if findExe(csh).len > 0:
+      probes.add (csh, csh & " -c 'which nvcc'")
+      break
+  for probe in probes:
+    if findExe(probe[0]).len == 0: continue
+    let (output, code) = gorgeEx(probe[1] & " </dev/null")
+    let lines = output.strip.splitLines
+    let path = if lines.len > 0: lines[^1].strip else: ""
+    if code == 0 and path.startsWith("/") and fileExists(path):
+      return (path, probe[0])
+
 # Action purpose: a static `llama-server` is one file with no libraries of its
 # own, so the copy carries no symlinks and no library path into the build tree.
 # llama.cpp's web UI is not downloaded and its tests are not built.
 task llama, "Build the llama.cpp backend into external/ext_bin":
   let build = "external" / "llama.cpp" / "build"
   let dest = "external" / "ext_bin" / "bin"
-  # Every GPU backend is named ON or OFF, so a switch between runs is not undone
-  # by the value CMake cached from the previous one.
-  let backend = getEnv("JENOVA_BACKEND", "vulkan").toLowerAscii
-  let gpu = case backend
-            of "vulkan": " -DGGML_VULKAN=ON -DGGML_CUDA=OFF"
-            of "cuda": " -DGGML_VULKAN=OFF -DGGML_CUDA=ON"
-            of "cpu": " -DGGML_VULKAN=OFF -DGGML_CUDA=OFF"
-            else: ""
-  if gpu.len == 0:
-    echo "JENOVA_BACKEND must be vulkan, cuda or cpu, not '" & backend & "'"
+  if hostOS notin ["linux", "freebsd"]:
+    echo "llama: builds on Linux and FreeBSD, not " & hostOS
     quit(1)
+  var backend = getEnv("JENOVA_BACKEND", "auto").toLowerAscii
+  if backend.len == 0: backend = "auto"
+  var vulkan, cuda: bool
+  case backend
+  of "auto":
+    vulkan = true
+    cuda = hostOS == "linux"
+  of "vulkan": vulkan = true
+  of "cuda": cuda = true
+  of "cpu": discard
+  else:
+    echo "JENOVA_BACKEND must be auto, vulkan, cuda or cpu, not '" &
+         backend & "'"
+    quit(1)
+  if cuda and hostOS == "freebsd":
+    echo "llama: CUDA is not built on FreeBSD"
+    quit(1)
+  if vulkan and findExe("glslc").len == 0:
+    echo "llama: the Vulkan build needs glslc, the shader compiler, on PATH"
+    quit(1)
+  var nvcc: tuple[path, shell: string]
+  if cuda:
+    nvcc = findNvcc()
+    if nvcc.path.len == 0:
+      if backend == "cuda":
+        echo "llama: nvcc is not on the PATH of sh, bash or csh"
+        quit(1)
+      echo "llama: CUDA skipped, nvcc is not on the PATH of sh, bash or csh"
+      cuda = false
+  # Action purpose: CMake refuses a generator other than the one a build tree was
+  # configured with, so Ninja is chosen only for a tree with no cache yet.
+  let cached = fileExists(build / "CMakeCache.txt")
+  let ninja = not cached and findExe("ninja").len > 0
+  var backends: seq[string]
+  if vulkan: backends.add "Vulkan"
+  if cuda: backends.add "CUDA"
+  backends.add "CPU"
+  var summary = "llama: " & hostOS & ", " & backends.join(" + ")
+  if cuda: summary.add ", nvcc " & nvcc.path & " (found by " & nvcc.shell & ")"
+  summary.add(if cached: ", generator as cached" elif ninja: ", Ninja"
+              else: ", cmake's default generator")
+  echo summary
   let (online, code) = gorgeEx("getconf _NPROCESSORS_ONLN")
   let jobs = if code == 0 and online.strip.len > 0: online.strip else: "4"
-  exec "cmake -S external/llama.cpp -B " & build &
-       " -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF" & gpu &
-       " -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF" &
-       " -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF"
+  # Action purpose: every GPU backend is named ON or OFF so a value cached by the
+  # last run cannot undo a switch, and `GGML_NATIVE` is named because ggml turns
+  # it off by itself when `SOURCE_DATE_EPOCH` is set.
+  var configure = "cmake -S external/llama.cpp -B " & build &
+    (if ninja: " -G Ninja" else: "") &
+    " -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF" &
+    " -DGGML_NATIVE=ON -DGGML_OPENMP=ON -DGGML_LTO=OFF -DGGML_CPU=ON" &
+    " -DGGML_VULKAN=" & (if vulkan: "ON" else: "OFF") &
+    " -DGGML_CUDA=" & (if cuda: "ON" else: "OFF") &
+    " -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON" &
+    " -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF" &
+    " -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF"
+  if cuda: configure.add " -DCMAKE_CUDA_COMPILER=" & quoteShell(nvcc.path)
+  exec configure
   exec "cmake --build " & build & " --config Release --target llama-server -j " &
        jobs
   mkDir dest
